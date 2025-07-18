@@ -77,7 +77,7 @@ export default function AppLayout() {
         }}
       />
       <Tabs.Screen
-        name="courses"
+        name="courses/index"
         options={{
           title: 'Courses',
           tabBarIcon: ({ color }) => <Ionicons name="book" size={24} color={color} />,
@@ -130,14 +130,11 @@ export default function AppLayout() {
           headerShown: true,
         }}
       />
-      {/* Add more tabs here as needed */}
     </Tabs>
   );
 }
 
 const styles = StyleSheet.create({
-  // ... (keep existing styles)
-
   headerRightContainer: {
     marginRight: 15,
     // Add any container specific styles if needed
