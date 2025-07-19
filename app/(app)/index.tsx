@@ -150,6 +150,7 @@ export default function HomeScreen() {
       style={styles.enrolledCourseCard}
       onPress={() => {
         console.log('Viewing enrolled course:', item.title);
+        router.push(`/courses/${item.id}`);
         // router.push(`/course-details/${item.id}`);
       }}
     >

@@ -45,89 +45,80 @@ export default function AppLayout() {
         tabBarLabelStyle: {
           fontSize: 12,
         },
-        headerStyle: {
-          backgroundColor: '#007bff',
-        },
-        headerTintColor: '#fff',
-        headerTitleStyle: {
-          fontWeight: 'bold',
-        },
+        // IMPORTANT: Remove headerStyle, headerTintColor, headerTitleStyle from here
+        // These should be managed by the nested Stack if headerShown is false
+        // for the Tabs.
+        headerShown: false, // This should make the Tabs *not* render a header at all
       }}
     >
-      <Tabs.Screen
-        name="index" // This matches app/(app)/index.tsx (Dashboard)
+       <Tabs.Screen
+        name="index" // Dashboard
         options={{
-          title: 'Dashboard',
+          title: 'Olin', 
           tabBarIcon: ({ color }) => <Ionicons name="home" size={24} color={color} />,
-          headerRight: () => (
-            <TouchableOpacity
-              onPress={() => router.push('/settings')}
-              style={styles.headerRightContainer} // Use a style for the container
-            >
-              {initials ? (
-                <View style={styles.initialsCircle}>
-                  <Text style={styles.initialsText}>{initials}</Text>
-                </View>
-              ) : (
-                // Fallback to a default icon if initials are not yet loaded or available
-                <Ionicons name="person-circle-outline" size={30} color="#fff" />
-              )}
-            </TouchableOpacity>
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="courses/index"
-        options={{
-          title: 'Courses',
-          tabBarIcon: ({ color }) => <Ionicons name="book" size={24} color={color} />,
           headerShown: true,
           headerRight: () => (
             <TouchableOpacity
               onPress={() => router.push('/settings')}
-              style={styles.headerRightContainer} // Use a style for the container
+              style={styles.headerRightContainer}
             >
               {initials ? (
                 <View style={styles.initialsCircle}>
                   <Text style={styles.initialsText}>{initials}</Text>
                 </View>
               ) : (
-                // Fallback to a default icon if initials are not yet loaded or available
                 <Ionicons name="person-circle-outline" size={30} color="#fff" />
               )}
             </TouchableOpacity>
           ),
+          headerStyle: { backgroundColor: '#007bff' },
+          headerTintColor: '#fff',
+          headerTitleStyle: { fontWeight: 'bold' },
+        }}
+      />
+      <Tabs.Screen
+        name="courses" // My Courses tab
+        options={{
+          title: 'Olin', 
+          tabBarIcon: ({ color }) => <Ionicons name="book" size={24} color={color} />,
+          headerShown: false, // <--- **THIS IS THE KEY CHANGE for the Courses Tab**
+                              // The nested Stack in app/(app)/courses/_layout.tsx will handle the header
         }}
       />
       <Tabs.Screen
         name="assessments"
         options={{
-          title: 'Assessments',
+          title: 'Olin', 
           tabBarIcon: ({ color }) => <Ionicons name="document-text" size={24} color={color} />,
-          headerShown: true,
+          headerShown: true, // Let Assessments manage its own header
           headerRight: () => (
             <TouchableOpacity
               onPress={() => router.push('/settings')}
-              style={styles.headerRightContainer} // Use a style for the container
+              style={styles.headerRightContainer}
             >
               {initials ? (
                 <View style={styles.initialsCircle}>
                   <Text style={styles.initialsText}>{initials}</Text>
                 </View>
               ) : (
-                // Fallback to a default icon if initials are not yet loaded or available
                 <Ionicons name="person-circle-outline" size={30} color="#fff" />
               )}
             </TouchableOpacity>
           ),
+          headerStyle: { backgroundColor: '#007bff' }, // Apply header styles here
+          headerTintColor: '#fff',
+          headerTitleStyle: { fontWeight: 'bold' },
         }}
       />
       <Tabs.Screen
         name="settings"
         options={{
-          title: 'Settings',
+          title: 'Olin', 
           tabBarIcon: ({ color }) => <Ionicons name="settings" size={24} color={color} />,
-          headerShown: true,
+          headerShown: true, // Let Settings manage its own header
+          headerStyle: { backgroundColor: '#007bff' }, // Apply header styles here
+          headerTintColor: '#fff',
+          headerTitleStyle: { fontWeight: 'bold' },
         }}
       />
     </Tabs>
