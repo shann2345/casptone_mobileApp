@@ -1,14 +1,14 @@
 // app/(app)/_layout.tsx
 import { Ionicons } from '@expo/vector-icons';
 import { Tabs, useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react'; // Import useEffect and useState
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native'; // Import Text
+import React, { useEffect, useState } from 'react';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
-import { getUserData } from '../../lib/api'; // Import getUserData
+import { getUserData } from '../../lib/api';
 
 export default function AppLayout() {
   const router = useRouter();
-  const [initials, setInitials] = useState<string>(''); // State to store initials
+  const [initials, setInitials] = useState<string>('');
 
   useEffect(() => {
     const fetchUserNameAndSetInitials = async () => {
@@ -18,17 +18,16 @@ export default function AppLayout() {
           const firstLetter = userData.name.charAt(0).toUpperCase();
           setInitials(firstLetter);
         } else {
-          // Fallback if no user data or name, perhaps show a default icon
-          setInitials('?'); // Or an empty string to hide it, or 'U' for 'User'
+          setInitials('?');
         }
       } catch (error) {
         console.error('Error fetching user data for initials:', error);
-        setInitials('?'); // Fallback on error
+        setInitials('?');
       }
     };
 
     fetchUserNameAndSetInitials();
-  }, []); // Empty dependency array means this runs once on mount
+  }, []);
 
   return (
     <Tabs
@@ -45,18 +44,16 @@ export default function AppLayout() {
         tabBarLabelStyle: {
           fontSize: 12,
         },
-        // IMPORTANT: Remove headerStyle, headerTintColor, headerTitleStyle from here
-        // These should be managed by the nested Stack if headerShown is false
-        // for the Tabs.
-        headerShown: false, // This should make the Tabs *not* render a header at all
+        headerShown: false, // Ensure the Tabs component itself doesn't render a header
       }}
     >
-       <Tabs.Screen
+      <Tabs.Screen
         name="index" // Dashboard
         options={{
-          title: 'Olin', 
+          tabBarLabel: 'Home', // This is for the tab label at the bottom
+          headerTitle: 'Olin', // This is for the header title
           tabBarIcon: ({ color }) => <Ionicons name="home" size={24} color={color} />,
-          headerShown: true,
+          headerShown: true, // Show header for this screen
           headerRight: () => (
             <TouchableOpacity
               onPress={() => router.push('/settings')}
@@ -79,18 +76,18 @@ export default function AppLayout() {
       <Tabs.Screen
         name="courses" // My Courses tab
         options={{
-          title: 'Olin', 
+          tabBarLabel: 'Courses', // Tab label
           tabBarIcon: ({ color }) => <Ionicons name="book" size={24} color={color} />,
-          headerShown: false, // <--- **THIS IS THE KEY CHANGE for the Courses Tab**
-                              // The nested Stack in app/(app)/courses/_layout.tsx will handle the header
+          headerShown: false, // The nested Stack in app/(app)/courses/_layout.tsx will handle the header for courses
         }}
       />
       <Tabs.Screen
         name="assessments"
         options={{
-          title: 'Olin', 
+          tabBarLabel: 'Assessment', // Tab label
+          headerTitle: 'Olin', // Header title
           tabBarIcon: ({ color }) => <Ionicons name="document-text" size={24} color={color} />,
-          headerShown: true, // Let Assessments manage its own header
+          headerShown: true, // Show header for this screen
           headerRight: () => (
             <TouchableOpacity
               onPress={() => router.push('/settings')}
@@ -105,7 +102,7 @@ export default function AppLayout() {
               )}
             </TouchableOpacity>
           ),
-          headerStyle: { backgroundColor: '#007bff' }, // Apply header styles here
+          headerStyle: { backgroundColor: '#007bff' },
           headerTintColor: '#fff',
           headerTitleStyle: { fontWeight: 'bold' },
         }}
@@ -113,10 +110,11 @@ export default function AppLayout() {
       <Tabs.Screen
         name="settings"
         options={{
-          title: 'Olin', 
+          tabBarLabel: 'Settings', // Tab label
+          headerTitle: 'Olin', // Header title
           tabBarIcon: ({ color }) => <Ionicons name="settings" size={24} color={color} />,
-          headerShown: true, // Let Settings manage its own header
-          headerStyle: { backgroundColor: '#007bff' }, // Apply header styles here
+          headerShown: true, // Show header for this screen
+          headerStyle: { backgroundColor: '#007bff' },
           headerTintColor: '#fff',
           headerTitleStyle: { fontWeight: 'bold' },
         }}
@@ -128,21 +126,20 @@ export default function AppLayout() {
 const styles = StyleSheet.create({
   headerRightContainer: {
     marginRight: 15,
-    // Add any container specific styles if needed
   },
   initialsCircle: {
-    width: 30, // Adjust size as needed
-    height: 30, // Adjust size as needed
-    borderRadius: 15, // Half of width/height to make it a circle
-    backgroundColor: '#1E90FF', // A distinct background color for the circle
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#1E90FF',
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 1, // Optional: add a border
-    borderColor: '#fff', // Optional: border color
+    borderWidth: 1,
+    borderColor: '#fff',
   },
   initialsText: {
-    color: '#fff', // White text color
-    fontSize: 16, // Adjust font size to fit the circle
+    color: '#fff',
+    fontSize: 16,
     fontWeight: 'bold',
   },
 });

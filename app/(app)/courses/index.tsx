@@ -1,9 +1,9 @@
 // app/(app)/courses/index.tsx
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router'; // Import useRouter
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import api from '../../../lib/api'; // Ensure your api utility is correctly imported
+import api from '../../../lib/api';
 
 // Interface for course data (re-used from index.tsx)
 interface Course {
@@ -34,37 +34,53 @@ interface EnrolledCourse extends Course {
 
 export default function CoursesScreen() {
   const [enrolledCourses, setEnrolledCourses] = useState<EnrolledCourse[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isLoading, setIsLoading] = useState<boolean>(true); // Initial state set to true
   const [error, setError] = useState<string | null>(null);
-  const router = useRouter(); // Initialize router
+  const router = useRouter();
+  const params = useLocalSearchParams();
 
   useEffect(() => {
+    // This function handles fetching the enrolled courses
     const fetchEnrolledCourses = async () => {
+      setIsLoading(true); // Always set loading to true when starting a fetch
+      setError(null);
       try {
-        setIsLoading(true);
-        setError(null);
-        const response = await api.get('/my-courses'); // Adjust endpoint if different
+        const response = await api.get('/my-courses');
         setEnrolledCourses(response.data.courses);
       } catch (err: any) {
-        console.error('Error fetching enrolled courses:', err.response?.data || err.message);
-        setError('Failed to load your courses. Please try again.');
-        Alert.alert('Error', 'Failed to load your courses.');
+        console.error('Failed to fetch enrolled courses:', err.response?.data || err.message);
+        setError('Failed to load courses.');
+        Alert.alert('Error', 'Failed to load enrolled courses.');
       } finally {
-        setIsLoading(false);
+        setIsLoading(false); // Always set loading to false when the fetch operation completes (success or error)
       }
     };
 
+    // --- Deep Link Navigation Logic ---
+    // This block runs if a 'courseId' parameter is present (e.g., from Dashboard click)
+    if (params.courseId) {
+      const courseIdToNavigate = params.courseId;
+      router.setParams({ courseId: undefined });
+
+      // Immediately push to the specific course details page
+      router.push(`/courses/${courseIdToNavigate}`);
+      
+      setIsLoading(false);
+      
+      return; // Exit the effect early if we are deep-linking
+    }
+
+    // --- Normal List Fetch Logic ---
+    // This block runs if there's no 'courseId' param (e.g., direct tab press, or navigating back)
     fetchEnrolledCourses();
-  }, []);
+
+  }, [params.courseId]);
+
 
   const renderCourseCard = ({ item }: { item: EnrolledCourse }) => (
     <TouchableOpacity
       style={styles.courseCard}
-      onPress={() => {
-        console.log('Navigating to course details for:', item.title);
-        // Navigate to the course details screen using expo-router
-        router.push(`/courses/${item.id}`); // Correct navigation path
-      }}
+      onPress={() => router.push(`/courses/${item.id}`)} // Direct push within this stack
     >
       <View style={styles.cardHeader}>
         <Ionicons name="book-outline" size={24} color="#007bff" style={styles.cardIcon} />
@@ -88,7 +104,7 @@ export default function CoursesScreen() {
       <View style={styles.centeredContainer}>
         <Ionicons name="alert-circle-outline" size={50} color="#dc3545" />
         <Text style={styles.errorText}>{error}</Text>
-        <TouchableOpacity style={styles.retryButton} onPress={() => {}}>
+        <TouchableOpacity style={styles.retryButton} onPress={() => { /* Consider re-fetching here */ }}>
           <Text style={styles.retryButtonText}>Retry</Text>
         </TouchableOpacity>
       </View>
@@ -127,9 +143,9 @@ export default function CoursesScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f0f2f5', // Light background
+    backgroundColor: '#f0f2f5',
     paddingHorizontal: 20,
-    paddingTop: 40, // Add some top padding
+    paddingTop: 40,
   },
   centeredContainer: {
     flex: 1,
@@ -139,7 +155,7 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   title: {
-    fontSize: 28, // Larger title
+    fontSize: 28,
     fontWeight: 'bold',
     color: '#2c3e50',
     marginBottom: 25,
@@ -184,15 +200,15 @@ const styles = StyleSheet.create({
     lineHeight: 24,
   },
   flatListContent: {
-    paddingBottom: 20, // Space at the bottom of the list
+    paddingBottom: 20,
   },
   courseCard: {
     backgroundColor: '#ffffff',
     borderRadius: 15,
     padding: 20,
-    marginBottom: 15, // Space between cards
+    marginBottom: 15,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 }, // More pronounced shadow
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.1,
     shadowRadius: 6,
     elevation: 6,
@@ -209,7 +225,7 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: 'bold',
     color: '#007bff',
-    flexShrink: 1, // Allows title to wrap if long
+    flexShrink: 1,
   },
   cardCode: {
     fontSize: 15,
@@ -235,6 +251,6 @@ const styles = StyleSheet.create({
   cardStatus: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#28a745', // Green for status
+    color: '#28a745',
   },
 });

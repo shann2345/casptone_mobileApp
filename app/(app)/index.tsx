@@ -150,8 +150,11 @@ export default function HomeScreen() {
       style={styles.enrolledCourseCard}
       onPress={() => {
         console.log('Viewing enrolled course:', item.title);
-        router.push(`/courses/${item.id}`);
-        // router.push(`/course-details/${item.id}`);
+        // Change this navigation logic:
+        router.navigate({
+          pathname: '/courses', // This will activate the 'courses' tab
+          params: { courseId: item.id.toString() }, // Pass the course ID as a param
+        });
       }}
     >
       <Ionicons name="book-outline" size={30} color="#007bff" />
