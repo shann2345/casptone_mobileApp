@@ -95,20 +95,20 @@ export default function CourseDetailsScreen() {
   };
 
   const handleAccessCodeSubmit = () => {
-    setAccessCodeError(null); // Clear previous errors
+  setAccessCodeError(null); // Clear previous errors
 
-    if (!currentAssessment || !currentAssessment.access_code) {
-      setAccessCodeError("No access code defined for this assessment.");
-      return;
-    }
-    if (enteredAccessCode === currentAssessment.access_code) { // Simulating correct code
-      setAccessCodeModalVisible(false);
-      setEnteredAccessCode(''); // Clear input
-      router.push("/settings");
-    } else {
-      setAccessCodeError('Incorrect access code. Please try again.');
-    }
-  };
+  if (!currentAssessment || !currentAssessment.access_code) {
+    setAccessCodeError("No access code defined for this assessment.");
+    return;
+  }
+  if (enteredAccessCode === currentAssessment.access_code) { // Simulating correct code
+    setAccessCodeModalVisible(false);
+    setEnteredAccessCode(''); // Clear input
+    router.push(`/courses/assessments/${currentAssessment.id}`); // Corrected line
+  } else {
+    setAccessCodeError('Incorrect access code. Please try again.');
+  }
+};
 
 
   if (loading) {
@@ -204,7 +204,7 @@ export default function CourseDetailsScreen() {
                           setCurrentAssessment(assessment);
                           setAccessCodeModalVisible(true);
                         } else {
-                          router.push(`/settings`);
+                          router.push(`/courses/assessments/${assessment.id}`);
                         }
                       } else {
                         Alert.alert('Not Available Yet', `This assessment will be available on ${formatDate(assessment.available_at!)}.`);
@@ -273,7 +273,7 @@ export default function CourseDetailsScreen() {
                 setCurrentAssessment(assessment);
                 setAccessCodeModalVisible(true);
               } else {
-                router.push(`/settings`);
+                router.push(`/courses/assessments/${assessment.id}`);
               }
             } else {
               Alert.alert('Not Available Yet', `This assessment will be available on ${formatDate(assessment.available_at!)}.`);

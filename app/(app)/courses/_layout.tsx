@@ -100,6 +100,28 @@ export default function CoursesLayout() {
           ),
         }}
       />
+      <Stack.Screen
+        name="assessments/[assessmentId]" // Match the folder structure
+        options={{
+          headerStyle: { backgroundColor: '#007bff' },
+          headerTintColor: '#fff',
+          headerTitleStyle: { fontWeight: 'bold' },
+          headerRight: () => (
+            <TouchableOpacity
+              onPress={() => router.push('/settings')}
+              style={styles.headerRightContainer}
+            >
+              {initials ? (
+                <View style={styles.initialsCircle}>
+                  <Text style={styles.initialsText}>{initials}</Text>
+                </View>
+              ) : (
+                <Ionicons name="person-circle-outline" size={30} color="#fff" />
+              )}
+            </TouchableOpacity>
+          ),
+        }}
+      />
     </Stack>
   );
 }

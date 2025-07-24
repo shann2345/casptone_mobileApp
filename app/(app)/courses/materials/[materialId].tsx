@@ -1,4 +1,4 @@
-// app/(app)/courses/[id]/materials/[materialId].tsx
+// app/(app)/courses/materials/[materialId].tsx
 import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system'; // Import FileSystem
 import * as MediaLibrary from 'expo-media-library'; // Import MediaLibrary (for saving to gallery/downloads)
