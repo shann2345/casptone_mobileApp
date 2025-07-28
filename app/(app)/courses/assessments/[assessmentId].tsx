@@ -1,63 +1,90 @@
 import { Ionicons } from '@expo/vector-icons';
-import * as DocumentPicker from 'expo-document-picker'; // For file picking
+import { useFocusEffect } from '@react-navigation/native'; // Import useFocusEffect
+import * as DocumentPicker from 'expo-document-picker';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react'; // Added useCallback
 import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import api from '../../../../lib/api'; // Adjust path as necessary
-// Removed: import { useAuth } from '../../../context/AuthContext'; // No AuthContext
+import api from '../../../../lib/api';
 
 interface AssessmentDetail {
   id: number;
   course_id: number;
   title: string;
   description?: string;
-  type: 'quiz' | 'exam' | 'assignment' | 'activity' | 'project' ; // Corrected types
+  type: 'quiz' | 'exam' | 'assignment' | 'activity' | 'project';
   available_at?: string;
   unavailable_at?: string;
-  max_attempts?: number;
+  max_attempts?: number; // Max attempts defined on the assessment itself
   duration_minutes?: number;
   points: number;
-  // Add other fields as needed
+}
+
+interface AttemptStatus {
+  max_attempts: number | null;
+  attempts_made: number;
+  attempts_remaining: number | null;
+  can_start_new_attempt: boolean;
+  has_in_progress_attempt: boolean;
+  in_progress_submitted_assessment_id: number | null;
 }
 
 export default function AssessmentDetailsScreen() {
   const { id: courseId, assessmentId } = useLocalSearchParams();
   const router = useRouter();
-  // Removed: const { user } = useAuth(); // No AuthContext
 
   const [assessmentDetail, setAssessmentDetail] = useState<AssessmentDetail | null>(null);
+  const [attemptStatus, setAttemptStatus] = useState<AttemptStatus | null>(null); // New state for attempt status
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<DocumentPicker.DocumentPickerAsset | null>(null);
   const [submissionLoading, setSubmissionLoading] = useState(false);
 
-  useEffect(() => {
-    if (assessmentId) {
-      fetchAssessmentDetails();
-    }
-  }, [assessmentId]);
+  // Wrap fetch function in useCallback to stabilize it for useFocusEffect
+  const fetchAssessmentDetailsAndAttemptStatus = useCallback(async () => {
+    if (!assessmentId) return; // Ensure assessmentId is available
 
-  const fetchAssessmentDetails = async () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await api.get(`/assessments/${assessmentId}`);
-      if (response.status === 200) {
-        // --- ADDED CONSOLE LOG HERE ---
-        console.log("Fetched Assessment Details:", JSON.stringify(response.data.assessment, null, 2));
-        setAssessmentDetail(response.data.assessment);
+      // Fetch assessment details
+      const assessmentResponse = await api.get(`/assessments/${assessmentId}`);
+      if (assessmentResponse.status === 200) {
+        setAssessmentDetail(assessmentResponse.data.assessment);
       } else {
-        setError('Failed to fetch assessment details. Status: ' + response.status);
+        setError('Failed to fetch assessment details.');
         Alert.alert('Error', 'Failed to fetch assessment details.');
+        setLoading(false);
+        return; // Exit early if assessment details fail
       }
+
+      // Fetch attempt status only for quiz/exam types
+      const assessmentType = assessmentResponse.data.assessment.type;
+      if (assessmentType === 'quiz' || assessmentType === 'exam') {
+        const attemptStatusResponse = await api.get(`/assessments/${assessmentId}/attempt-status`);
+        if (attemptStatusResponse.status === 200) {
+          setAttemptStatus(attemptStatusResponse.data);
+        } else {
+          setError('Failed to fetch attempt status.');
+          Alert.alert('Error', 'Failed to fetch attempt status.');
+        }
+      } else {
+        setAttemptStatus(null); // Clear attempt status for non-quiz/exam types
+      }
+
     } catch (err: any) {
-      console.error('Failed to fetch assessment details:', err.response?.data || err.message);
-      setError('Network error or unable to load assessment details.');
-      Alert.alert('Error', error);
+      console.error('Failed to fetch assessment details or attempt status:', err.response?.data || err.message);
+      setError('Network error or unable to load assessment details/attempt status.');
+      Alert.alert('Error', 'Failed to fetch assessment details or attempt status.');
     } finally {
       setLoading(false);
     }
-  };
+  }, [assessmentId]); // Depend on assessmentId
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchAssessmentDetailsAndAttemptStatus();
+    }, [fetchAssessmentDetailsAndAttemptStatus])
+  );
 
   const isAssessmentAvailable = (assessment: AssessmentDetail) => {
     if (!assessment.available_at) return true;
@@ -67,14 +94,20 @@ export default function AssessmentDetailsScreen() {
 
   const formatDate = (dateString?: string) => {
     if (!dateString) return 'N/A';
-    const options: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+    const options: Intl.DateTimeFormatOptions = { 
+      year: 'numeric', 
+      month: 'long', 
+      day: 'numeric', 
+      hour: '2-digit', 
+      minute: '2-digit' 
+    };
     return new Date(dateString).toLocaleDateString(undefined, options);
   };
 
   const handlePickDocument = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: '*/*', // Allow all file types
+        type: '*/*',
         copyToCacheDirectory: true,
       });
 
@@ -98,19 +131,38 @@ export default function AssessmentDetailsScreen() {
       return;
     }
 
+    // Check attempt status before starting
+    if (attemptStatus && !attemptStatus.has_in_progress_attempt && !attemptStatus.can_start_new_attempt) {
+      Alert.alert(
+        'Attempt Limit Reached',
+        `You have used all ${attemptStatus.max_attempts} attempts for this ${assessmentDetail.type}.`
+      );
+      return;
+    }
+
     setSubmissionLoading(true);
     try {
-      // Call the new backend endpoint to start a quiz attempt
-      // The backend will get the student_id from the authenticated user via Sanctum
       const response = await api.post(`/assessments/${assessmentDetail.id}/start-quiz-attempt`);
 
-      if (response.status === 200 || response.status === 201) { // 200 for resuming, 201 for new
-        Alert.alert('Success', response.data.message);
-        // Navigate to the attempt-quiz screen, passing the submitted_assessment_id
-        router.push({
-          pathname: '/courses/assessments/[assessmentID]/attempt-quiz',
-          params: { submittedAssessmentId: response.data.submitted_assessment.id },
-        });
+      if (response.status === 200 || response.status === 201) {
+        const submittedAssessment = response.data.submitted_assessment;
+        // No longer need to explicitly call fetchAssessmentDetailsAndAttemptStatus here,
+        // as useFocusEffect will handle it when navigating back.
+        Alert.alert('Success', response.data.message, [
+          {
+            text: 'Start Quiz',
+            onPress: () => {
+              router.push({
+                pathname: '/courses/assessments/[assessmentId]/attempt-quiz',
+                params: { 
+                  assessmentId: assessmentDetail.id.toString(),
+                  submittedAssessmentId: submittedAssessment.id.toString()
+                },
+              });
+            }
+          }
+        ]);
+        
       } else {
         Alert.alert('Error', response.data.message || 'Failed to start quiz attempt.');
       }
@@ -119,6 +171,9 @@ export default function AssessmentDetailsScreen() {
       Alert.alert('Error', err.response?.data?.message || 'Failed to start quiz attempt due to network error.');
     } finally {
       setSubmissionLoading(false);
+      // Re-fetch status to update UI after attempting to start an attempt
+      // This is a fallback in case navigation doesn't perfectly trigger useFocusEffect
+      fetchAssessmentDetailsAndAttemptStatus();
     }
   };
 
@@ -134,8 +189,10 @@ export default function AssessmentDetailsScreen() {
     }
 
     if (!selectedFile) {
-      // Use optional chaining for assessmentDetail.type
-      Alert.alert(`No File Selected`, `Please select a file to upload for your ${assessmentDetail.type?.toLowerCase() || 'assessment'}.`);
+      Alert.alert(
+        `No File Selected`, 
+        `Please select a file to upload for your ${assessmentDetail.type?.toLowerCase() || 'assessment'}.`
+      );
       return;
     }
 
@@ -145,10 +202,9 @@ export default function AssessmentDetailsScreen() {
       formData.append('assignment_file', {
         uri: selectedFile.uri,
         name: selectedFile.name,
-        type: selectedFile.mimeType || 'application/octet-stream', // Use mimeType or fallback
-      } as any); // Type assertion needed for FormData with file objects
+        type: selectedFile.mimeType || 'application/octet-stream',
+      } as any);
 
-      // The backend will get the student_id from the authenticated user via Sanctum
       const response = await api.post(`/assessments/${assessmentDetail.id}/submit-assignment`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
@@ -157,8 +213,7 @@ export default function AssessmentDetailsScreen() {
 
       if (response.status === 200) {
         Alert.alert('Success', response.data.message || 'Assignment submitted successfully!');
-        setSelectedFile(null); // Clear selected file after successful upload
-        // You might want to refresh assessment details or navigate back
+        setSelectedFile(null);
       } else {
         Alert.alert('Error', response.data.message || 'Failed to submit assignment.');
       }
@@ -178,6 +233,27 @@ export default function AssessmentDetailsScreen() {
 
   const isAvailable = assessmentDetail ? isAssessmentAvailable(assessmentDetail) : false;
 
+  // Determine if the quiz/exam button should be disabled
+  let isQuizAttemptButtonDisabled = !isAvailable || submissionLoading;
+  let quizButtonText = 'Start Quiz';
+
+  if (assessmentDetail && (assessmentDetail.type === 'quiz' || assessmentDetail.type === 'exam') && attemptStatus) {
+    if (attemptStatus.has_in_progress_attempt) {
+      quizButtonText = 'Resume Quiz';
+      isQuizAttemptButtonDisabled = submissionLoading; // Only disable if loading
+    } else if (!isAvailable) {
+      quizButtonText = 'Quiz Not Yet Available';
+      isQuizAttemptButtonDisabled = true;
+    } else if (!attemptStatus.can_start_new_attempt) {
+      quizButtonText = 'Attempt Limit Reached';
+      isQuizAttemptButtonDisabled = true;
+    }
+  } else if (!isAvailable) {
+    quizButtonText = 'Quiz Not Yet Available';
+    isQuizAttemptButtonDisabled = true;
+  }
+
+
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -191,7 +267,7 @@ export default function AssessmentDetailsScreen() {
     return (
       <View style={styles.centeredContainer}>
         <Text style={styles.errorText}>{error}</Text>
-        <TouchableOpacity style={styles.retryButton} onPress={fetchAssessmentDetails}>
+        <TouchableOpacity style={styles.retryButton} onPress={fetchAssessmentDetailsAndAttemptStatus}>
           <Text style={styles.retryButtonText}>Retry</Text>
         </TouchableOpacity>
       </View>
@@ -218,7 +294,6 @@ export default function AssessmentDetailsScreen() {
           )}
           <View style={styles.typeContainer}>
             <Ionicons name="clipboard-outline" size={18} color="#666" style={styles.icon} />
-            {/* Added optional chaining and fallback for toUpperCase */}
             <Text style={styles.assessmentType}>{assessmentDetail.type || 'N/A'}</Text>
           </View>
         </View>
@@ -258,6 +333,25 @@ export default function AssessmentDetailsScreen() {
               <Text style={styles.detailLabel}>Max Attempts:</Text> {assessmentDetail.max_attempts ?? 'Unlimited'}
             </Text>
           </View>
+          {/* Display current attempt status for quizzes/exams */}
+          {(assessmentDetail.type === 'quiz' || assessmentDetail.type === 'exam') && attemptStatus && (
+            <>
+              <View style={styles.detailRow}>
+                <Ionicons name="checkmark-done-circle-outline" size={18} color="#666" style={styles.icon} />
+                <Text style={styles.detailText}>
+                  <Text style={styles.detailLabel}>Attempts Made:</Text> {attemptStatus.attempts_made}
+                </Text>
+              </View>
+              {attemptStatus.max_attempts !== null && (
+                <View style={styles.detailRow}>
+                  <Ionicons name="hourglass-outline" size={18} color="#666" style={styles.icon} />
+                  <Text style={styles.detailText}>
+                    <Text style={styles.detailLabel}>Attempts Remaining:</Text> {attemptStatus.attempts_remaining}
+                  </Text>
+                </View>
+              )}
+            </>
+          )}
         </View>
 
         {/* Action Section based on Assessment Type */}
@@ -265,9 +359,9 @@ export default function AssessmentDetailsScreen() {
           {assessmentDetail.type === 'quiz' || assessmentDetail.type === 'exam' ? (
             // Quiz/Exam Type
             <TouchableOpacity
-              style={[styles.actionButton, !isAvailable && styles.actionButtonDisabled]}
+              style={[styles.actionButton, isQuizAttemptButtonDisabled && styles.actionButtonDisabled]}
               onPress={handleStartQuizAttempt}
-              disabled={!isAvailable || submissionLoading}
+              disabled={isQuizAttemptButtonDisabled}
             >
               {submissionLoading ? (
                 <ActivityIndicator color="#fff" />
@@ -275,7 +369,7 @@ export default function AssessmentDetailsScreen() {
                 <>
                   <Ionicons name="play-circle-outline" size={24} color="#fff" style={styles.icon} />
                   <Text style={styles.actionButtonText}>
-                    {isAvailable ? 'Attempt Now' : 'Quiz Not Yet Available'}
+                    {quizButtonText}
                   </Text>
                 </>
               )}
@@ -291,7 +385,6 @@ export default function AssessmentDetailsScreen() {
               >
                 <Ionicons name="folder-open-outline" size={20} color="#007bff" />
                 <Text style={styles.pickFileButtonText}>
-                  {/* Added optional chaining and fallback */}
                   {selectedFile ? selectedFile.name : `Select ${assessmentDetail.type || 'assessment'} File`}
                 </Text>
               </TouchableOpacity>
@@ -312,7 +405,6 @@ export default function AssessmentDetailsScreen() {
                   <>
                     <Ionicons name="cloud-upload-outline" size={24} color="#fff" style={styles.icon} />
                     <Text style={styles.actionButtonText}>
-                      {/* Added optional chaining and fallback */}
                       {isAvailable ? `Submit ${assessmentDetail.type || 'assessment'}` : `${assessmentDetail.type || 'assessment'} Not Yet Available`}
                     </Text>
                   </>
@@ -433,7 +525,7 @@ const styles = StyleSheet.create({
   actionButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#28a745', // Green for action
+    backgroundColor: '#28a745',
     borderRadius: 8,
     padding: 15,
     justifyContent: 'center',
