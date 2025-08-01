@@ -218,6 +218,7 @@ export default function AssessmentDetailsScreen() {
             }
           }
         ]);
+        console.log("API Response for Quiz type attempt Submission:", JSON.stringify(response.data, null, 2));
         
       } else {
         Alert.alert('Error', response.data.message || 'Failed to start quiz attempt.');

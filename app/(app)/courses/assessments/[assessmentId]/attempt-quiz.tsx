@@ -1,6 +1,6 @@
 // app/(app)/courses/assessments/[assessmentId]/attempt-quiz.tsx
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -74,8 +74,15 @@ export default function AttemptQuizScreen() {
   const [error, setError] = useState<string | null>(null);
   const [studentAnswers, setStudentAnswers] = useState<StudentAnswers>({});
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
-  const [timerInterval, setTimerInterval] = useState<NodeJS.Timeout | null>(null);
+  const [timerInterval, setTimerInterval] = useState<ReturnType<typeof setTimeout> | null>(null);
   const [savingAnswers, setSavingAnswers] = useState<Set<number>>(new Set());
+  const debounceTimers = useRef<{ [key: number]: ReturnType<typeof setTimeout> | null }>({});
+  const studentAnswersRef = useRef<StudentAnswers>(studentAnswers);
+
+  // Update the ref whenever studentAnswers state changes
+  useEffect(() => {
+    studentAnswersRef.current = studentAnswers;
+  }, [studentAnswers]);
 
   useEffect(() => {
     if (submittedAssessmentId) {
@@ -86,6 +93,10 @@ export default function AttemptQuizScreen() {
       if (timerInterval) {
         clearInterval(timerInterval);
       }
+      // Clean up all debounce timers on unmount
+      Object.values(debounceTimers.current).forEach(timer => {
+        if (timer) clearTimeout(timer);
+      });
     };
   }, [submittedAssessmentId]);
 
@@ -126,8 +137,7 @@ export default function AttemptQuizScreen() {
         const fetchedSubmittedAssessment = response.data.submitted_assessment;
         setSubmittedAssessment(fetchedSubmittedAssessment);
         initializeStudentAnswers(fetchedSubmittedAssessment.submitted_questions);
-        console.log("API Response for Assessment Details:", JSON.stringify(response.data, null, 2));
-      
+        console.log("API Response for Submitted Quiz Details:", JSON.stringify(response.data, null, 2));
       } else {
         setError(response.data?.message || 'Failed to fetch submitted quiz details.');
       }
@@ -152,19 +162,8 @@ export default function AttemptQuizScreen() {
     setStudentAnswers(initialAnswers);
   };
 
-  const handleAnswerChange = (submittedQuestionId: number, type: SubmittedQuestion['question_type'], value: string | number | number[]) => {
-    setStudentAnswers((prevAnswers) => ({
-      ...prevAnswers,
-      [submittedQuestionId]: { type, answer: value, isDirty: true },
-    }));
-
-    setTimeout(() => {
-      saveAnswer(submittedQuestionId);
-    }, 1000);
-  };
-
   const saveAnswer = async (submittedQuestionId: number) => {
-    const answerData = studentAnswers[submittedQuestionId];
+    const answerData = studentAnswersRef.current[submittedQuestionId];
     if (!answerData || !answerData.isDirty) return;
 
     setSavingAnswers(prev => new Set(prev.add(submittedQuestionId)));
@@ -181,11 +180,11 @@ export default function AttemptQuizScreen() {
       const response = await api.patch(`/submitted-questions/${submittedQuestionId}/answer`, payload);
 
       if (response.status === 200) {
-        console.log("API Response for Assessment Details:", JSON.stringify(response.data, null, 2)); 
         setStudentAnswers(prev => ({
           ...prev,
           [submittedQuestionId]: { ...prev[submittedQuestionId], isDirty: false }
         }));
+        console.log("API Response for Submitted Quiz Details:", JSON.stringify(response.data, null, 2));
       }
     } catch (err: any) {
       console.error('Error saving answer:', err.response?.data || err);
@@ -197,6 +196,22 @@ export default function AttemptQuizScreen() {
       });
     }
   };
+
+  const handleAnswerChange = (submittedQuestionId: number, type: SubmittedQuestion['question_type'], value: string | number | number[]) => {
+    setStudentAnswers((prevAnswers) => ({
+      ...prevAnswers,
+      [submittedQuestionId]: { type, answer: value, isDirty: true },
+    }));
+
+    if (debounceTimers.current[submittedQuestionId]) {
+      clearTimeout(debounceTimers.current[submittedQuestionId] as unknown as NodeJS.Timeout);
+    }
+
+    debounceTimers.current[submittedQuestionId] = setTimeout(() => {
+      saveAnswer(submittedQuestionId);
+    }, 1000);
+  };
+
 
   const handleFinalizeQuiz = async () => {
     if (!submittedAssessment) {
@@ -233,7 +248,7 @@ export default function AttemptQuizScreen() {
                     onPress: () => router.replace(`/courses/assessments/${submittedAssessment.assessment_id}`)
                   }
                 ]);
-                console.log("API Response for Assessment Details:", JSON.stringify(response.data, null, 2));
+                console.log("API Response for Submitted Quiz Details:", JSON.stringify(response.data, null, 2));
               } else {
                 Alert.alert('Submission Failed', response.data?.message || 'Could not submit quiz.');
               }
@@ -311,15 +326,7 @@ export default function AttemptQuizScreen() {
           {/* Multiple Choice / True False */}
           {(question.question_type === 'multiple_choice' || question.question_type === 'true_false') && (
             <View style={styles.optionsContainer}>
-              {(question.submitted_options && question.submitted_options.length > 0
-                ? question.submitted_options
-                : question.question_type === 'true_false'
-                  ? [
-                      { id: 1, question_option_id: 1, option_text: 'True' },
-                      { id: 2, question_option_id: 0, option_text: 'False' }
-                    ]
-                  : []
-              ).map((option) => {
+              {(question.submitted_options || []).map((option) => {
                 const isSelected = (studentAnswers[question.id]?.answer as number[] || []).includes(option.question_option_id);
                 return (
                   <TouchableOpacity
@@ -334,7 +341,7 @@ export default function AttemptQuizScreen() {
                         // For multiple choice, allow single selection (toggle)
                         newSelection = isSelected ? [] : [option.question_option_id];
                       } else if (question.question_type === 'true_false') {
-                        // For true/false, ensure only one is selected at a time (radio button behavior)
+                        // For true/false, only allow single selection
                         newSelection = [option.question_option_id];
                       } else {
                         newSelection = isSelected ? [] : [option.question_option_id];
@@ -363,6 +370,10 @@ export default function AttemptQuizScreen() {
                   </TouchableOpacity>
                 );
               })}
+              {/* Show fallback only if not MC/TF */}
+              {(!question.submitted_options || question.submitted_options.length === 0) && question.question_type !== 'true_false' && (
+                <Text style={styles.errorText}>No options available for this question</Text>
+              )}
             </View>
           )}
 
@@ -384,13 +395,10 @@ export default function AttemptQuizScreen() {
             />
           )}
 
-          {/* Show points */}
           <Text style={styles.pointsText}>Points: {question.max_points}</Text>
 
-          {/* Show score if graded */}
           {question.score_earned !== null && (
             <Text style={[styles.scoreText, question.is_correct ? styles.correctScore : styles.incorrectScore]}>
-              Score: {question.score_earned}/{question.max_points}
               {question.is_correct !== null && (question.is_correct ? ' ✓' : ' ✗')}
             </Text>
           )}
