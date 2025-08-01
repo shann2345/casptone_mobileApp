@@ -13,7 +13,6 @@ import {
 } from 'react-native';
 import api from '../../../../../lib/api';
 
-
 interface SubmittedOption {
   id: number;
   submitted_question_id: number;
@@ -36,7 +35,6 @@ interface SubmittedQuestion {
   submitted_options?: SubmittedOption[];
 }
 
-
 interface AssessmentDetail {
   id: number;
   course_id: number;
@@ -46,7 +44,6 @@ interface AssessmentDetail {
   duration_minutes?: number;
   points: number;
 }
-
 
 interface SubmittedAssessmentData {
   id: number;
@@ -60,7 +57,6 @@ interface SubmittedAssessmentData {
   submitted_questions: SubmittedQuestion[];
   assessment: AssessmentDetail;
 }
-
 
 type StudentAnswers = {
   [submittedQuestionId: number]: {
@@ -130,6 +126,8 @@ export default function AttemptQuizScreen() {
         const fetchedSubmittedAssessment = response.data.submitted_assessment;
         setSubmittedAssessment(fetchedSubmittedAssessment);
         initializeStudentAnswers(fetchedSubmittedAssessment.submitted_questions);
+        console.log("API Response for Assessment Details:", JSON.stringify(response.data, null, 2));
+      
       } else {
         setError(response.data?.message || 'Failed to fetch submitted quiz details.');
       }
@@ -183,7 +181,7 @@ export default function AttemptQuizScreen() {
       const response = await api.patch(`/submitted-questions/${submittedQuestionId}/answer`, payload);
 
       if (response.status === 200) {
-
+        console.log("API Response for Assessment Details:", JSON.stringify(response.data, null, 2)); 
         setStudentAnswers(prev => ({
           ...prev,
           [submittedQuestionId]: { ...prev[submittedQuestionId], isDirty: false }
@@ -235,6 +233,7 @@ export default function AttemptQuizScreen() {
                     onPress: () => router.replace(`/courses/assessments/${submittedAssessment.assessment_id}`)
                   }
                 ]);
+                console.log("API Response for Assessment Details:", JSON.stringify(response.data, null, 2));
               } else {
                 Alert.alert('Submission Failed', response.data?.message || 'Could not submit quiz.');
               }
@@ -310,9 +309,17 @@ export default function AttemptQuizScreen() {
           </View>
 
           {/* Multiple Choice / True False */}
-          {(question.question_type === 'multiple_choice' || question.question_type === 'true_false') && question.submitted_options && (
+          {(question.question_type === 'multiple_choice' || question.question_type === 'true_false') && (
             <View style={styles.optionsContainer}>
-              {question.submitted_options.map((option) => {
+              {(question.submitted_options && question.submitted_options.length > 0
+                ? question.submitted_options
+                : question.question_type === 'true_false'
+                  ? [
+                      { id: 1, question_option_id: 1, option_text: 'True' },
+                      { id: 2, question_option_id: 0, option_text: 'False' }
+                    ]
+                  : []
+              ).map((option) => {
                 const isSelected = (studentAnswers[question.id]?.answer as number[] || []).includes(option.question_option_id);
                 return (
                   <TouchableOpacity
@@ -323,9 +330,12 @@ export default function AttemptQuizScreen() {
                     ]}
                     onPress={() => {
                       let newSelection: number[];
-                      if (question.question_type === 'multiple_choice' || question.question_type === 'true_false') {
-                        // For multiple choice and true/false, allow single selection (toggle)
+                      if (question.question_type === 'multiple_choice') {
+                        // For multiple choice, allow single selection (toggle)
                         newSelection = isSelected ? [] : [option.question_option_id];
+                      } else if (question.question_type === 'true_false') {
+                        // For true/false, ensure only one is selected at a time (radio button behavior)
+                        newSelection = [option.question_option_id];
                       } else {
                         newSelection = isSelected ? [] : [option.question_option_id];
                       }
@@ -333,9 +343,15 @@ export default function AttemptQuizScreen() {
                     }}
                     disabled={submittedAssessment.status !== 'in_progress'}
                   >
-                    <View style={styles.radioCircle}>
-                      {isSelected && <View style={styles.radioChecked} />}
-                    </View>
+                    {question.question_type === 'true_false' ? (
+                      <View style={styles.radioCircle}>
+                        {isSelected && <View style={styles.radioChecked} />}
+                      </View>
+                    ) : (
+                      <View style={styles.checkboxSquare}>
+                        {isSelected && <Text style={styles.checkboxCheck}>✓</Text>}
+                      </View>
+                    )}
                     <Text
                       style={[
                         styles.optionText,
@@ -657,5 +673,19 @@ const styles = StyleSheet.create({
     width: 10,
     borderRadius: 5,
     backgroundColor: '#333',
+  },
+  checkboxSquare: {
+    height: 20,
+    width: 20,
+    borderWidth: 2,
+    borderColor: '#777',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+    borderRadius: 4, // Slightly rounded corners for a softer look
+  },
+  checkboxCheck: {
+    color: '#333',
+    fontSize: 14,
   },
 });
