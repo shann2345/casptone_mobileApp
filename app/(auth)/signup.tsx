@@ -1,4 +1,4 @@
-// app/(auth)/signup.tsx
+// app/(auth)/signup.tsx - Updated for multi-account system
 
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
@@ -10,7 +10,9 @@ import {
   Text, TextInput, TouchableOpacity,
   View,
 } from 'react-native';
-import api, { storeAuthToken, storeUserData } from '../../lib/api'; // Import storeUserData
+import api, { storeAuthToken, storeUserData } from '../../lib/api';
+// Import the new multi-account function
+import { saveUserForOfflineAccess } from '../../lib/localDb';
 
 interface Errors {
   name?: string;
@@ -47,6 +49,8 @@ export default function SignupScreen() {
     setErrors({});
 
     try {
+      console.log('📡 Creating new account...');
+      
       const response = await api.post('/register', {
         name,
         email,
@@ -57,9 +61,20 @@ export default function SignupScreen() {
       const { token, user, needs_verification } = response.data;
 
       if (token && user) {
+        console.log('✅ Account created successfully');
+        
+        // Store for current online session
         await storeAuthToken(token);
-        await storeUserData(user); // Store user data
-        Alert.alert('Success', response.data.message || 'Registration successful!');
+        await storeUserData(user); 
+        
+        // --- NEW: Save account for offline access ---
+        await saveUserForOfflineAccess(user, password);
+        console.log('💾 Account saved for offline access');
+
+        Alert.alert(
+          'Success', 
+          `${response.data.message || 'Registration successful!'}\n\nYour account has been saved for offline access.`
+        );
 
         if (needs_verification) {
           router.replace('/verify-notice');
@@ -68,7 +83,7 @@ export default function SignupScreen() {
         }
       }
     } catch (error: any) {
-      console.error('Signup error:', error);
+      console.error('❌ Signup error:', error);
       if (error.response && error.response.data && error.response.data.errors) {
         setErrors(error.response.data.errors);
       } else if (error.response && error.response.data && error.response.data.message) {
@@ -88,6 +103,13 @@ export default function SignupScreen() {
     >
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <Text style={styles.title}>Sign Up</Text>
+        
+        {/* Info about offline access */}
+        <View style={styles.infoBox}>
+          <Text style={styles.infoText}>
+            ℹ️ Your account will be saved for offline access after registration
+          </Text>
+        </View>
 
         <View style={styles.inputGroup}>
           <Text style={styles.label}>Name:</Text>
@@ -168,6 +190,22 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f0f2f5' },
   scrollContent: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
   title: { fontSize: 32, fontWeight: 'bold', color: '#2c3e50', marginBottom: 30 },
+  
+  infoBox: {
+    backgroundColor: '#e7f3ff',
+    borderLeftWidth: 4,
+    borderLeftColor: '#007bff',
+    padding: 12,
+    borderRadius: 6,
+    marginBottom: 20,
+    width: '100%',
+  },
+  infoText: {
+    fontSize: 14,
+    color: '#0056b3',
+    textAlign: 'center',
+  },
+  
   inputGroup: { width: '100%', marginBottom: 15 },
   label: { fontSize: 16, color: '#34495e', marginBottom: 5, fontWeight: '600' },
   input: {

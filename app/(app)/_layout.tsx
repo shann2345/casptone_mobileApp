@@ -4,6 +4,7 @@ import { Tabs, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
+import { useNetworkStatus } from '../../context/NetworkContext'; // Adjust path as needed
 import { getUserData } from '../../lib/api';
 
 export default function AppLayout() {
@@ -55,17 +56,8 @@ export default function AppLayout() {
           tabBarIcon: ({ color }) => <Ionicons name="home" size={24} color={color} />,
           headerShown: true, // Show header for this screen
           headerRight: () => (
-            <TouchableOpacity
-              onPress={() => router.push('/settings')}
-              style={styles.headerRightContainer}
-            >
-              {initials ? (
-                <View style={styles.initialsCircle}>
-                  <Text style={styles.initialsText}>{initials}</Text>
-                </View>
-              ) : (
-                <Ionicons name="person-circle-outline" size={30} color="#fff" />
-              )}
+            <TouchableOpacity onPress={() => router.push('/settings')} style={styles.headerRightContainer}>
+              <HeaderRight initials={initials} />
             </TouchableOpacity>
           ),
           headerStyle: { backgroundColor: '#007bff' },
@@ -88,20 +80,7 @@ export default function AppLayout() {
           headerTitle: 'Olin', // Header title
           tabBarIcon: ({ color }) => <Ionicons name="document-text" size={24} color={color} />,
           headerShown: true, // Show header for this screen
-          headerRight: () => (
-            <TouchableOpacity
-              onPress={() => router.push('/settings')}
-              style={styles.headerRightContainer}
-            >
-              {initials ? (
-                <View style={styles.initialsCircle}>
-                  <Text style={styles.initialsText}>{initials}</Text>
-                </View>
-              ) : (
-                <Ionicons name="person-circle-outline" size={30} color="#fff" />
-              )}
-            </TouchableOpacity>
-          ),
+          headerRight: () => <HeaderRight initials={initials} />,
           headerStyle: { backgroundColor: '#007bff' },
           headerTintColor: '#fff',
           headerTitleStyle: { fontWeight: 'bold' },
@@ -123,6 +102,40 @@ export default function AppLayout() {
   );
 }
 
+const HeaderRight = ({ initials }: { initials: string }) => {
+  const { isConnected } = useNetworkStatus();
+
+  return (
+    <View style={{ justifyContent: 'center', alignItems: 'center' }}>
+      <View>
+        {initials ? (
+          <View style={styles.initialsCircle}>
+            <Text style={styles.initialsText}>{initials}</Text>
+            {/* Status Dot */}
+            <View
+              style={[
+                styles.statusDot,
+                { backgroundColor: isConnected ? '#28a745' : '#dc3545' },
+              ]}
+            />
+          </View>
+        ) : (
+          <View>
+            <Ionicons name="person-circle-outline" size={30} color="#fff" />
+            {/* Status Dot */}
+            <View
+              style={[
+                styles.statusDot,
+                { backgroundColor: isConnected ? '#28a745' : '#dc3545' },
+              ]}
+            />
+          </View>
+        )}
+      </View>
+    </View>
+  );
+};
+
 const styles = StyleSheet.create({
   headerRightContainer: {
     marginRight: 15,
@@ -141,5 +154,16 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  statusDot: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: '#fff',
+    zIndex: 2,
   },
 });
