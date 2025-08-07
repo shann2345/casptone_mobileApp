@@ -1,3 +1,5 @@
+// file: index.tsx
+
 // app/(app)/index.tsx - Updated with better error handling and DB initialization
 
 import { Ionicons } from '@expo/vector-icons';
@@ -6,7 +8,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useNetworkStatus } from '../../context/NetworkContext';
 import api, { clearAuthToken, getAuthToken, getUserData } from '../../lib/api';
-import { getEnrolledCoursesFromDb, initDb, saveCourseToDb } from '../../lib/localDb';
+import { getEnrolledCoursesFromDb, initDb, saveCourseDetailsToDb, saveCourseToDb } from '../../lib/localDb';
 
 interface Course {
   id: number;
@@ -121,12 +123,17 @@ export default function HomeScreen() {
           for (const course of courses) {
             try {
               await saveCourseToDb(course, userEmail);
+              // Also fetch and save course details for offline viewing
+              const courseDetailResponse = await api.get(`/courses/${course.id}`);
+              if (courseDetailResponse.status === 200) {
+                await saveCourseDetailsToDb(courseDetailResponse.data.course, userEmail);
+              }
             } catch (saveError) {
-              console.error('⚠️ Failed to save course to DB:', saveError);
+              console.error('⚠️ Failed to save course or its details to DB:', saveError);
               // Continue with other courses even if one fails
             }
           }
-          console.log('🔄 Synced courses to local DB.');
+          console.log('🔄 Synced courses and their details to local DB.');
         } else {
           // OFFLINE MODE: Fetch from local DB for the specific user
           console.log('⚠️ Offline: Fetching courses from local DB.');
@@ -222,6 +229,11 @@ export default function HomeScreen() {
       // Save the course to the local SQLite database for the specific user
       try {
         await saveCourseToDb(course, userEmail);
+        // Also fetch and save course details for the newly enrolled course
+        const courseDetailResponse = await api.get(`/courses/${course.id}`);
+        if (courseDetailResponse.status === 200) {
+          await saveCourseDetailsToDb(courseDetailResponse.data.course, userEmail);
+        }
       } catch (saveError) {
         console.error('⚠️ Failed to save enrolled course to local DB:', saveError);
         // Don't block the enrollment process if local save fails

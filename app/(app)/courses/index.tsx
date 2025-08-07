@@ -1,9 +1,11 @@
-// app/(app)/courses/index.tsx
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import api from '../../../lib/api';
+import { ActivityIndicator, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useNetworkStatus } from '../../../context/NetworkContext'; // Import this
+import api, { getUserData } from '../../../lib/api'; // Import getUserData
+import { getEnrolledCoursesFromDb, initDb, saveCourseToDb } from '../../../lib/localDb';
+
 
 // Interface for course data (re-used from index.tsx)
 interface Course {
@@ -33,54 +35,115 @@ interface EnrolledCourse extends Course {
 }
 
 export default function CoursesScreen() {
-  const [enrolledCourses, setEnrolledCourses] = useState<EnrolledCourse[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(true); // Initial state set to true
-  const [error, setError] = useState<string | null>(null);
-  const router = useRouter();
-  const params = useLocalSearchParams();
+  const [enrolledCourses, setEnrolledCourses] = useState<EnrolledCourse[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
+  const params = useLocalSearchParams();
+  const { isConnected } = useNetworkStatus(); // Use the custom hook
 
-  useEffect(() => {
-    // This function handles fetching the enrolled courses
-    const fetchEnrolledCourses = async () => {
-      setIsLoading(true); // Always set loading to true when starting a fetch
-      setError(null);
-      try {
-        const response = await api.get('/my-courses');
-        setEnrolledCourses(response.data.courses);
-      } catch (err: any) {
-        console.error('Failed to fetch enrolled courses:', err.response?.data || err.message);
-        setError('Failed to load courses.');
-        Alert.alert('Error', 'Failed to load enrolled courses.');
-      } finally {
-        setIsLoading(false); // Always set loading to false when the fetch operation completes (success or error)
-      }
-    };
+  // Placeholder for user email - to be fetched from a reliable source
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
 
-    // --- Deep Link Navigation Logic ---
-    // This block runs if a 'courseId' parameter is present (e.g., from Dashboard click)
-    if (params.courseId) {
-      const courseIdToNavigate = params.courseId;
-      router.setParams({ courseId: undefined });
+  useEffect(() => {
+    const initialize = async () => {
+      try {
+        await initDb();
+        const userData = await getUserData();
+        if (userData && userData.email) {
+          setCurrentUserEmail(userData.email);
+        } else {
+          // Handle case where user data is missing
+          console.error('User email not found. Redirecting to login.');
+          router.replace('/login');
+        }
+      } catch (e) {
+        console.error('Failed to initialize database or get user data:', e);
+        setError('Failed to initialize app. Please restart.');
+      }
+    };
+    initialize();
+  }, []);
 
-      // Immediately push to the specific course details page
-      router.push(`/courses/${courseIdToNavigate}`);
-      
-      setIsLoading(false);
-      
-      return; // Exit the effect early if we are deep-linking
-    }
 
-    // --- Normal List Fetch Logic ---
-    // This block runs if there's no 'courseId' param (e.g., direct tab press, or navigating back)
-    fetchEnrolledCourses();
+  useEffect(() => {
+    // Deep Link Navigation Logic
+    if (params.courseId && !isLoading) {
+      const courseIdToNavigate = params.courseId;
+      router.setParams({ courseId: undefined });
+      router.push(`/courses/${courseIdToNavigate}`);
+    }
+  }, [params.courseId, isLoading]);
 
-  }, [params.courseId]);
 
+  useEffect(() => {
+    const fetchCourses = async () => {
+      if (!currentUserEmail) {
+        // Wait for user email to be set
+        return;
+      }
+      setIsLoading(true);
+      setError(null);
+      if (isConnected) {
+        // Online: Fetch from API and update local DB
+        console.log('You are online. Fetching from API...');
+        try {
+          const response = await api.get('/my-courses');
+          const courses = response.data.courses;
+          setEnrolledCourses(courses);
+
+          if (currentUserEmail) {
+            for (const course of courses) {
+              await saveCourseToDb(course, currentUserEmail);
+            }
+            console.log('Courses saved to local DB successfully.');
+          }
+        } catch (err: any) {
+          console.error('Failed to fetch enrolled courses from API:', err.response?.data || err.message);
+          setError('Failed to load courses from the network. Displaying offline data.');
+          // On API error, fall back to offline data
+          await fetchEnrolledCoursesFromDb();
+        } finally {
+          setIsLoading(false);
+        }
+      } else {
+        // Offline: Fetch from local DB
+        console.log('You are offline. Fetching from local DB...');
+        await fetchEnrolledCoursesFromDb();
+        setIsLoading(false);
+      }
+    };
+    
+    // Only run fetchCourses if currentUserEmail is available and the component is focused
+    // The useFocusEffect will handle the fetch when the component comes into focus
+    if (currentUserEmail) {
+      fetchCourses();
+    }
+  }, [isConnected, currentUserEmail]); // Add currentUserEmail to the dependency array
+
+  // Helper function to fetch courses from the local database
+  const fetchEnrolledCoursesFromDb = async () => {
+    if (!currentUserEmail) {
+      setError('Cannot load courses. No user email found.');
+      setIsLoading(false);
+      return;
+    }
+    try {
+      const courses = await getEnrolledCoursesFromDb(currentUserEmail);
+      setEnrolledCourses(courses);
+      if (courses.length === 0) {
+        setError('No courses found in local database.');
+      }
+    } catch (e) {
+      console.error('Failed to get enrolled courses from local DB:', e);
+      setError('Failed to load courses from local storage.');
+    }
+  };
 
   const renderCourseCard = ({ item }: { item: EnrolledCourse }) => (
     <TouchableOpacity
       style={styles.courseCard}
-      onPress={() => router.push(`/courses/${item.id}`)} // Direct push within this stack
+      onPress={() => router.push(`/courses/${item.id}`)}
     >
       <View style={styles.cardHeader}>
         <Ionicons name="book-outline" size={24} color="#007bff" style={styles.cardIcon} />
@@ -104,7 +167,7 @@ export default function CoursesScreen() {
       <View style={styles.centeredContainer}>
         <Ionicons name="alert-circle-outline" size={50} color="#dc3545" />
         <Text style={styles.errorText}>{error}</Text>
-        <TouchableOpacity style={styles.retryButton} onPress={() => { /* Consider re-fetching here */ }}>
+        <TouchableOpacity style={styles.retryButton} onPress={() => { /* re-fetch logic could go here */ }}>
           <Text style={styles.retryButtonText}>Retry</Text>
         </TouchableOpacity>
       </View>

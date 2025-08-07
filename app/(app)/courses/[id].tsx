@@ -1,42 +1,45 @@
+// file: [id].tsx - Fixed version with proper timezone handling
+
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Modal, ScrollView, SectionList, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'; // Import Modal and TextInput
-import api from '../../../lib/api'; // Adjust path if needed
+import { ActivityIndicator, Alert, Modal, ScrollView, SectionList, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useNetworkStatus } from '../../../context/NetworkContext';
+import api, { getUserData } from '../../../lib/api';
+import { getCourseDetailsFromDb, saveCourseDetailsToDb } from '../../../lib/localDb';
 
 // Define interfaces for detailed course data
 interface Material {
   id: number;
   title: string;
-  file_path?: string; // Optional if not all materials have files
-  content?: string; // Optional if materials can be text content
-  type: 'material'; // Explicitly type for easier rendering
-  created_at: string; // Changed from createdAt to created_at to match Laravel's default
-  available_at?: string; // This property is key for your current issue
-  isNested?: boolean; // Added for styling differentiation
+  file_path?: string;
+  content?: string;
+  type: 'material';
+  created_at: string;
+  available_at?: string;
+  isNested?: boolean;
 }
 
 interface Assessment {
   id: number;
   title: string;
-  type: 'assessment'; // Explicitly type for easier rendering
-  created_at: string; // Changed from createdAt to created_at to match Laravel's default
+  type: 'assessment';
+  created_at: string;
   available_at?: string;
   access_code?: string;
-  isNested?: boolean; // Added for styling differentiation
+  isNested?: boolean;
 }
 
 interface Topic {
   id: number;
-  title: string; // Changed from 'name' to 'title' to align with combined items from backend
+  title: string;
   description?: string;
-  materials: Material[]; // Materials belong to topics
-  assessments: Assessment[]; // Assessments can belong to topics
-  type: 'topic'; // Explicitly type for easier rendering
-  created_at: string; // Changed from createdAt to created_at to match Laravel's default
-  isNested?: boolean; // Topics are not nested at the top level, but included for type consistency
+  materials: Material[];
+  assessments: Assessment[];
+  type: 'topic';
+  created_at: string;
+  isNested?: boolean;
 }
 
-// Combined type for all displayable items in the SectionList
 type CourseItem = Topic | Material | Assessment;
 
 interface CourseDetail {
@@ -63,53 +66,111 @@ export default function CourseDetailsScreen() {
   const [courseDetail, setCourseDetail] = useState<CourseDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
-
-  // State for Access Code Modal
+  const { isConnected } = useNetworkStatus();
   const [isAccessCodeModalVisible, setAccessCodeModalVisible] = useState(false);
   const [currentAssessment, setCurrentAssessment] = useState<Assessment | null>(null);
   const [enteredAccessCode, setEnteredAccessCode] = useState('');
   const [accessCodeError, setAccessCodeError] = useState<string | null>(null);
 
+ const formatDate = (dateString?: string) => {
+    if (!dateString) return 'N/A';
+    // Create a Date object, which by default handles timezone conversions.
+    const date = new Date(dateString);
+    const options: Intl.DateTimeFormatOptions = {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    };
+    return date.toLocaleDateString(undefined, options);
+  };
+
   useEffect(() => {
     if (courseId) {
       fetchCourseDetails();
     }
-  }, [courseId]);
+  }, [courseId, isConnected]);
 
   const fetchCourseDetails = async () => {
     setLoading(true);
+    let userEmail = '';
     try {
-      const response = await api.get(`/courses/${courseId}`);
-      if (response.status === 200) {
-        console.log("API Response for Course Details:", JSON.stringify(response.data, null, 2));
-        setCourseDetail(response.data.course);
+      const userData = await getUserData();
+      if (userData && userData.email) {
+        userEmail = userData.email;
       } else {
-        Alert.alert('Error', 'Failed to fetch course details.');
+        Alert.alert('Error', 'User data not found. Please log in again.');
+        router.replace('/login');
+        return;
+      }
+    } catch (error) {
+      console.error('❌ Error getting user data:', error);
+      Alert.alert('Error', 'User data not found. Please log in again.');
+      router.replace('/login');
+      return;
+    }
+    
+    try {
+      if (isConnected) {
+        console.log('✅ Online: Fetching course details from API.');
+        const response = await api.get(`/courses/${courseId}`);
+        if (response.status === 200) {
+          console.log("API Response for Course Details:", JSON.stringify(response.data, null, 2));
+          const courseData = response.data.course;
+          setCourseDetail(courseData);
+          await saveCourseDetailsToDb(courseData, userEmail);
+          console.log('🔄 Course details synced to local DB.');
+        } else {
+          Alert.alert('Error', 'Failed to fetch course details.');
+          const offlineData = await getCourseDetailsFromDb(Number(courseId), userEmail);
+          if (offlineData) {
+            setCourseDetail(offlineData);
+            Alert.alert('Network Error', 'Failed to load live data, showing offline content.');
+          } else {
+            Alert.alert('Error', 'Failed to load course details from API and no offline data is available.');
+          }
+        }
+      } else {
+        console.log('⚠️ Offline: Fetching course details from local DB.');
+        const offlineData = await getCourseDetailsFromDb(Number(courseId), userEmail);
+        if (offlineData) {
+          setCourseDetail(offlineData);
+          Alert.alert('Offline Mode', 'You are currently offline. Showing saved course content.');
+        } else {
+          Alert.alert('Offline Error', 'You are offline and no course content has been saved for this course.');
+        }
       }
     } catch (error) {
       console.error('Failed to fetch course details:', error);
       Alert.alert('Error', 'Network error or unable to load course details.');
+      const offlineData = await getCourseDetailsFromDb(Number(courseId), userEmail);
+      if (offlineData) {
+        setCourseDetail(offlineData);
+        Alert.alert('Network Error', 'Failed to load live data, showing offline content.');
+      } else {
+        Alert.alert('Error', 'Failed to load course details.');
+      }
     } finally {
       setLoading(false);
     }
   };
 
   const handleAccessCodeSubmit = () => {
-  setAccessCodeError(null); // Clear previous errors
+    setAccessCodeError(null);
 
-  if (!currentAssessment || !currentAssessment.access_code) {
-    setAccessCodeError("No access code defined for this assessment.");
-    return;
-  }
-  if (enteredAccessCode === currentAssessment.access_code) { // Simulating correct code
-    setAccessCodeModalVisible(false);
-    setEnteredAccessCode(''); // Clear input
-    router.push(`/courses/assessments/${currentAssessment.id}`); // Corrected line
-  } else {
-    setAccessCodeError('Incorrect access code. Please try again.');
-  }
-};
-
+    if (!currentAssessment || !currentAssessment.access_code) {
+      setAccessCodeError("No access code defined for this assessment.");
+      return;
+    }
+    if (enteredAccessCode === currentAssessment.access_code) {
+      setAccessCodeModalVisible(false);
+      setEnteredAccessCode('');
+      router.push(`/courses/assessments/${currentAssessment.id}`);
+    } else {
+      setAccessCodeError('Incorrect access code. Please try again.');
+    }
+  };
 
   if (loading) {
     return (
@@ -128,28 +189,23 @@ export default function CourseDetailsScreen() {
     );
   }
 
-  // --- Rendering Logic using sorted_content ---
-  // If you want a single section for all content:
   const sectionsData = [{
     title: 'Course Content',
     data: courseDetail.sorted_content,
   }];
 
   const renderItem = ({ item }: { item: CourseItem }) => {
-    // Helper to format date
-    const formatDate = (dateString: string) => {
-      const options: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' };
-      return new Date(dateString).toLocaleDateString(undefined, options);
-    };
-
     // Helper to check if an item is available
     const isAvailable = (item: Material | Assessment) => {
       if ('available_at' in item && item.available_at) {
         const availableDate = new Date(item.available_at);
+        // The new Date() constructor with the UTC timestamp string will
+        // correctly create a date object that can be compared
+        // to the current device's time.
         const now = new Date();
         return now >= availableDate;
       }
-      return true; // If no available_at date, consider it always available
+      return true;
     };
 
     if (item.type === 'topic') {
@@ -162,8 +218,8 @@ export default function CourseDetailsScreen() {
             <View style={styles.nestedItemsContainer}>
               {topic.materials.map(material => {
                 const available = isAvailable(material);
-                const opacityStyle = available ? {} : { opacity: 0.5 }; // Reduce opacity if not available
-                const disabled = !available; // Disable touch if not available
+                const opacityStyle = available ? {} : { opacity: 0.5 };
+                const disabled = !available;
 
                 return (
                   <TouchableOpacity
@@ -239,8 +295,6 @@ export default function CourseDetailsScreen() {
           style={[styles.itemCard, opacityStyle]}
           onPress={() => {
             if (!disabled) {
-              // Navigate to the new material details screen
-              // Make sure 'id' (course ID) is available from useLocalSearchParams
               router.push(`/courses/materials/${material.id}`);
             } else {
               Alert.alert('Not Available Yet', `This material will be available on ${formatDate(material.available_at!)}.`);
@@ -251,7 +305,7 @@ export default function CourseDetailsScreen() {
           <Text style={styles.itemTitle}>{material.title}</Text>
           <Text style={styles.itemType}>Material (Independent) {available ? '' : '(Not Available Yet)'}</Text>
           {material.content && <Text style={styles.itemDetail}>{material.content.substring(0, 150)}...</Text>}
-          {material.file_path && <Text style={styles.itemDetail}>File: {material.file_path.split('/').pop()}</Text>}
+          {material.file_path && <Text style={styles.itemDetailNested}>File: {material.file_path.split('/').pop()}</Text>}
           {material.available_at && !available && (
             <Text style={styles.itemDate}>Available: {formatDate(material.available_at)}</Text>
           )}
@@ -317,20 +371,18 @@ export default function CourseDetailsScreen() {
             </View>
           )}
           contentContainerStyle={styles.sectionListContent}
-          // Optional: Remove scrollEnabled on SectionList if ScrollView handles it
           scrollEnabled={false}
         />
       </ScrollView>
 
-      {/* Access Code Modal */}
       <Modal
         animationType="slide"
         transparent={true}
         visible={isAccessCodeModalVisible}
         onRequestClose={() => {
           setAccessCodeModalVisible(!isAccessCodeModalVisible);
-          setEnteredAccessCode(''); // Clear input on close
-          setAccessCodeError(null); // Clear error on close
+          setEnteredAccessCode('');
+          setAccessCodeError(null);
         }}
       >
         <View style={styles.modalOverlay}>
@@ -344,7 +396,7 @@ export default function CourseDetailsScreen() {
               placeholder="Access Code"
               value={enteredAccessCode}
               onChangeText={setEnteredAccessCode}
-              secureTextEntry // Hide the input for sensitive codes
+              secureTextEntry
               autoCapitalize="none"
             />
             {accessCodeError && <Text style={styles.errorTextModal}>{accessCodeError}</Text>}
@@ -353,8 +405,8 @@ export default function CourseDetailsScreen() {
                 style={[styles.button, styles.cancelButton]}
                 onPress={() => {
                   setAccessCodeModalVisible(false);
-                  setEnteredAccessCode(''); // Clear input
-                  setAccessCodeError(null); // Clear error
+                  setEnteredAccessCode('');
+                  setAccessCodeError(null);
                 }}
               >
                 <Text style={styles.buttonText}>Cancel</Text>
@@ -373,6 +425,7 @@ export default function CourseDetailsScreen() {
   );
 }
 
+// Keep all your existing styles
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -462,7 +515,6 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#34495e',
   },
-  // Styles for Topic Card
   topicCard: {
     backgroundColor: '#ffffff',
     borderRadius: 10,
@@ -478,7 +530,7 @@ const styles = StyleSheet.create({
   topicTitle: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#007bff', // Highlight topic titles
+    color: '#007bff',
     marginBottom: 5,
   },
   topicDescription: {
@@ -486,7 +538,6 @@ const styles = StyleSheet.create({
     color: '#555',
     marginBottom: 10,
   },
-  // Styles for Independent Material/Assessment Cards
   itemCard: {
     backgroundColor: '#ffffff',
     borderRadius: 10,
@@ -523,23 +574,21 @@ const styles = StyleSheet.create({
     marginTop: 5,
     textAlign: 'right',
   },
-
-  // Styles for Nested Items (Material/Assessment within Topic)
   nestedItemsContainer: {
     marginTop: 15,
     paddingLeft: 10,
     borderLeftWidth: 3,
-    borderLeftColor: '#d1e0f0', // Lighter blue for nesting
+    borderLeftColor: '#d1e0f0',
   },
   itemCardNested: {
-    backgroundColor: '#f8f8f8', // Slightly different background for nested items
+    backgroundColor: '#f8f8f8',
     borderRadius: 8,
     paddingVertical: 12,
     paddingHorizontal: 15,
     marginBottom: 8,
     marginTop: 4,
     borderColor: '#696868ff',
-    borderWidth: 1, // Add a subtle border
+    borderWidth: 1,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.05,
@@ -571,12 +620,11 @@ const styles = StyleSheet.create({
   sectionListContent: {
     paddingBottom: 20,
   },
-  // Modal Styles
   modalOverlay: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.5)', // Dim background
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
   },
   modalContent: {
     backgroundColor: '#fff',

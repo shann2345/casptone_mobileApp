@@ -1,3 +1,5 @@
+// file: localDb.ts
+
 // lib/localDb.ts - Fixed multi-account offline system with proper DB management
 
 import * as Crypto from 'expo-crypto';
@@ -101,10 +103,10 @@ export const initDb = async (): Promise<void> => {
       );
 
       // MIGRATION: Add user_email column if missing
-      const columns = await db.getAllAsync(
+      let columns = await db.getAllAsync(
         `PRAGMA table_info(offline_courses);`
       );
-      const hasUserEmail = columns.some((col: any) => col.name === 'user_email');
+      let hasUserEmail = columns.some((col: any) => col.name === 'user_email');
       if (!hasUserEmail) {
         console.log('⚠️ Migrating offline_courses table: adding user_email column...');
         await db.execAsync(`ALTER TABLE offline_courses ADD COLUMN user_email TEXT;`);
@@ -125,6 +127,32 @@ export const initDb = async (): Promise<void> => {
           instructor_name TEXT,
           status TEXT,
           enrollment_date TEXT NOT NULL
+        );`
+      );
+      
+      // MIGRATION: Add user_email and course_data columns to course_details table
+      columns = await db.getAllAsync(
+        `PRAGMA table_info(offline_course_details);`
+      );
+      hasUserEmail = columns.some((col: any) => col.name === 'user_email');
+      const hasCourseData = columns.some((col: any) => col.name === 'course_data');
+      if (!hasUserEmail) {
+        await db.execAsync(`ALTER TABLE offline_course_details ADD COLUMN user_email TEXT;`);
+        console.log('⚠️ Migrated offline_course_details table: added user_email column.');
+      }
+      if (!hasCourseData) {
+        await db.execAsync(`ALTER TABLE offline_course_details ADD COLUMN course_data TEXT;`);
+        console.log('⚠️ Migrated offline_course_details table: added course_data column.');
+      }
+      
+      // Create offline_course_details table for storing course content
+      console.log('📋 Creating offline_course_details table...');
+      await db.execAsync(
+        `CREATE TABLE IF NOT EXISTS offline_course_details (
+          course_id INTEGER NOT NULL,
+          user_email TEXT NOT NULL,
+          course_data TEXT NOT NULL,
+          PRIMARY KEY (course_id, user_email)
         );`
       );
 
@@ -310,6 +338,58 @@ export const saveCourseToDb = async (course: any, userEmail: string): Promise<vo
   }
 };
 
+// New function: Save full course details to local database
+export const saveCourseDetailsToDb = async (courseDetails: any, userEmail: string): Promise<void> => {
+  try {
+    await initDb();
+    const db = await getDb();
+    console.log('💾 Saving full course details to local DB for user:', userEmail);
+
+    await db.runAsync(
+      `INSERT OR REPLACE INTO offline_course_details
+       (course_id, user_email, course_data)
+       VALUES (?, ?, ?);`,
+      [
+        courseDetails.id,
+        userEmail,
+        JSON.stringify(courseDetails)
+      ]
+    );
+
+    console.log('✅ Saved full course details to local DB for course ID:', courseDetails.id);
+  } catch (error) {
+    console.error('❌ Failed to save course details to local DB:', error);
+    throw error;
+  }
+};
+
+// New function: Get full course details from local database
+export const getCourseDetailsFromDb = async (courseId: number, userEmail: string): Promise<any | null> => {
+  try {
+    await initDb();
+    const db = await getDb();
+
+    console.log('🔍 Retrieving course details from local DB for course ID:', courseId);
+
+    const result = await db.getAllAsync(
+      `SELECT course_data FROM offline_course_details WHERE course_id = ? AND user_email = ?;`,
+      [courseId, userEmail]
+    );
+    
+    if (result && result.length > 0) {
+      console.log('✅ Course details found in local DB.');
+      return JSON.parse(result[0].course_data);
+    }
+    
+    console.log('❌ Course details not found in local DB.');
+    return null;
+  } catch (error) {
+    console.error('❌ Failed to get course details from local DB:', error);
+    return null;
+  }
+};
+
+
 // Get enrolled courses from the local database
 export const getEnrolledCoursesFromDb = async (userEmail: string) => {
   try {
@@ -361,6 +441,7 @@ export const clearAllData = async (): Promise<void> => {
     
     await db.execAsync(`DELETE FROM offline_users;`);
     await db.execAsync(`DELETE FROM offline_courses;`);
+    await db.execAsync(`DELETE FROM offline_course_details;`);
     
     console.log('✅ All local data cleared.');
   } catch (error) {
