@@ -1,7 +1,3 @@
-// file: localDb.ts
-
-// lib/localDb.ts - Fixed multi-account offline system with proper DB management
-
 import * as Crypto from 'expo-crypto';
 import * as FileSystem from 'expo-file-system';
 import * as SQLite from 'expo-sqlite';
@@ -14,6 +10,12 @@ const dbDirectory = `${FileSystem.documentDirectory}SQLite`;
 let dbInstance: SQLite.SQLiteDatabase | null = null;
 let dbInitialized = false;
 let initializationPromise: Promise<void> | null = null;
+
+// Time manipulation detection constants
+const TIME_CHECK_INTERVAL_KEY = 'last_time_check';
+const MIN_EXPECTED_TIME_DIFF = 30000; // 30 seconds minimum between checks
+const MAX_EXPECTED_TIME_DIFF = 7200000; // 2 hours maximum between checks
+const TIME_DRIFT_TOLERANCE = 5000; // 5 seconds tolerance for normal drift
 
 const openDatabase = async (): Promise<SQLite.SQLiteDatabase> => {
   try {
@@ -52,7 +54,6 @@ const getDb = async (): Promise<SQLite.SQLiteDatabase> => {
   return dbInstance;
 };
 
-// Hash password for secure storage (simple hash - in production use bcrypt or similar)
 const hashPassword = async (password: string): Promise<string> => {
   try {
     return await Crypto.digestStringAsync(
@@ -66,27 +67,19 @@ const hashPassword = async (password: string): Promise<string> => {
 };
 
 export const initDb = async (): Promise<void> => {
-  // If already initialized, return immediately
   if (dbInitialized && dbInstance) {
     console.log('✅ Database already initialized');
     return;
   }
-
-  // If initialization is already in progress, wait for it
   if (initializationPromise) {
     console.log('⏳ Database initialization in progress, waiting...');
     await initializationPromise;
     return;
   }
-
-  // Start initialization
   initializationPromise = (async () => {
     try {
       console.log('🔧 Initializing database...');
       const db = await getDb();
-
-      // Create offline_users table
-      console.log('📋 Creating offline_users table...');
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_users (
           id TEXT PRIMARY KEY NOT NULL,
@@ -98,22 +91,43 @@ export const initDb = async (): Promise<void> => {
           updated_at TEXT NOT NULL,
           last_login TEXT,
           login_count INTEGER DEFAULT 1,
-          is_verified INTEGER DEFAULT 0
+          is_verified INTEGER DEFAULT 0,
+          server_time TEXT,
+          server_time_offset INTEGER,
+          last_time_check INTEGER,
+          time_check_sequence INTEGER DEFAULT 0
         );`
       );
-
-      // MIGRATION: Add user_email column if missing
-      let columns = await db.getAllAsync(
+      
+      // Add new columns for time manipulation detection if they don't exist
+      let userColumns = await db.getAllAsync(`PRAGMA table_info(offline_users);`);
+      let hasServerTime = userColumns.some((col: any) => col.name === 'server_time');
+      let hasServerTimeOffset = userColumns.some((col: any) => col.name === 'server_time_offset');
+      let hasLastTimeCheck = userColumns.some((col: any) => col.name === 'last_time_check');
+      let hasTimeCheckSequence = userColumns.some((col: any) => col.name === 'time_check_sequence');
+      
+      if (!hasServerTime) {
+        await db.execAsync(`ALTER TABLE offline_users ADD COLUMN server_time TEXT;`);
+      }
+      if (!hasServerTimeOffset) {
+        await db.execAsync(`ALTER TABLE offline_users ADD COLUMN server_time_offset INTEGER;`);
+      }
+      if (!hasLastTimeCheck) {
+        await db.execAsync(`ALTER TABLE offline_users ADD COLUMN last_time_check INTEGER;`);
+      }
+      if (!hasTimeCheckSequence) {
+        await db.execAsync(`ALTER TABLE offline_users ADD COLUMN time_check_sequence INTEGER DEFAULT 0;`);
+      }
+      
+      let courseColumns = await db.getAllAsync(
         `PRAGMA table_info(offline_courses);`
       );
-      let hasUserEmail = columns.some((col: any) => col.name === 'user_email');
+      let hasUserEmail = courseColumns.some((col: any) => col.name === 'user_email');
       if (!hasUserEmail) {
         console.log('⚠️ Migrating offline_courses table: adding user_email column...');
         await db.execAsync(`ALTER TABLE offline_courses ADD COLUMN user_email TEXT;`);
+        console.log('✅ Added user_email column to offline_courses table');
       }
-
-      // Create offline_courses table (if not exists)
-      console.log('📋 Creating offline_courses table...');
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_courses (
           id INTEGER PRIMARY KEY NOT NULL,
@@ -129,14 +143,12 @@ export const initDb = async (): Promise<void> => {
           enrollment_date TEXT NOT NULL
         );`
       );
-      
-      // MIGRATION: Add user_email and course_data columns to course_details table
-      columns = await db.getAllAsync(
+      let detailColumns = await db.getAllAsync(
         `PRAGMA table_info(offline_course_details);`
       );
-      hasUserEmail = columns.some((col: any) => col.name === 'user_email');
-      const hasCourseData = columns.some((col: any) => col.name === 'course_data');
-      if (!hasUserEmail) {
+      let hasDetailUserEmail = detailColumns.some((col: any) => col.name === 'user_email');
+      let hasCourseData = detailColumns.some((col: any) => col.name === 'course_data');
+      if (!hasDetailUserEmail) {
         await db.execAsync(`ALTER TABLE offline_course_details ADD COLUMN user_email TEXT;`);
         console.log('⚠️ Migrated offline_course_details table: added user_email column.');
       }
@@ -144,9 +156,6 @@ export const initDb = async (): Promise<void> => {
         await db.execAsync(`ALTER TABLE offline_course_details ADD COLUMN course_data TEXT;`);
         console.log('⚠️ Migrated offline_course_details table: added course_data column.');
       }
-      
-      // Create offline_course_details table for storing course content
-      console.log('📋 Creating offline_course_details table...');
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_course_details (
           course_id INTEGER NOT NULL,
@@ -155,7 +164,20 @@ export const initDb = async (): Promise<void> => {
           PRIMARY KEY (course_id, user_email)
         );`
       );
-
+      
+      // Create time check logs table for additional security
+      await db.execAsync(
+        `CREATE TABLE IF NOT EXISTS time_check_logs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_email TEXT NOT NULL,
+          device_time INTEGER NOT NULL,
+          expected_time INTEGER NOT NULL,
+          time_diff INTEGER NOT NULL,
+          is_valid INTEGER NOT NULL,
+          created_at INTEGER NOT NULL
+        );`
+      );
+      
       dbInitialized = true;
       console.log('✅ Multi-user offline tables created successfully');
     } catch (error) {
@@ -165,12 +187,100 @@ export const initDb = async (): Promise<void> => {
       throw error;
     }
   })();
-
   await initializationPromise;
   initializationPromise = null;
 };
 
-// Save user account for offline access (called after successful online login)
+// Time manipulation detection function
+// Enhanced time manipulation detection with more reasonable parameters
+export const detectTimeManipulation = async (userEmail: string): Promise<{ isValid: boolean; reason?: string }> => {
+  try {
+    await initDb();
+    const db = await getDb();
+    
+    const currentDeviceTime = Date.now();
+    
+    // Get the last time check for this user
+    const result = await db.getFirstAsync(
+      `SELECT last_time_check, time_check_sequence FROM offline_users WHERE email = ?;`,
+      [userEmail]
+    ) as any;
+    
+    if (!result || !result.last_time_check) {
+      // First time check, record it
+      await db.runAsync(
+        `UPDATE offline_users SET last_time_check = ?, time_check_sequence = 1 WHERE email = ?;`,
+        [currentDeviceTime, userEmail]
+      );
+      console.log('🕐 First time check recorded for user:', userEmail);
+      return { isValid: true };
+    }
+    
+    const lastTimeCheck = result.last_time_check;
+    const sequence = result.time_check_sequence || 0;
+    const timeDiff = currentDeviceTime - lastTimeCheck;
+    
+    // FIXED: More reasonable time parameters
+    const MIN_TIME_DIFF = 1000; // 1 second minimum (was 30 seconds)
+    const MAX_TIME_DIFF = 24 * 60 * 60 * 1000; // 24 hours maximum (was 2 hours)
+    const TIME_TOLERANCE = 10000; // 10 seconds tolerance (was 5 seconds)
+    
+    // Log this check
+    await db.runAsync(
+      `INSERT INTO time_check_logs (user_email, device_time, expected_time, time_diff, is_valid, created_at)
+       VALUES (?, ?, ?, ?, ?, ?);`,
+      [userEmail, currentDeviceTime, lastTimeCheck + MIN_TIME_DIFF, timeDiff, 0, currentDeviceTime]
+    );
+    
+    // Check for time manipulation with more reasonable thresholds
+    let isValid = true;
+    let reason = '';
+    
+    if (timeDiff < -TIME_TOLERANCE) {
+      // Time went backwards significantly
+      isValid = false;
+      reason = 'Device time moved backwards significantly';
+    } else if (timeDiff < 0) {
+      // Small backwards time movement - might be normal clock drift, allow it
+      console.log('⚠️ Minor time drift detected (backwards), but allowing:', timeDiff);
+      isValid = true;
+    } else if (timeDiff > MAX_TIME_DIFF) {
+      // Time moved forward too much (possible manipulation or long absence)
+      isValid = false;
+      reason = 'Time progression too fast or long absence detected';
+    }
+    // REMOVED: The too-restrictive minimum time check that was causing issues
+    
+    // Update the time check record
+    if (isValid) {
+      await db.runAsync(
+        `UPDATE offline_users SET last_time_check = ?, time_check_sequence = ? WHERE email = ?;`,
+        [currentDeviceTime, sequence + 1, userEmail]
+      );
+      
+      // Update the log as valid
+      await db.runAsync(
+        `UPDATE time_check_logs SET is_valid = 1 WHERE user_email = ? AND created_at = ?;`,
+        [userEmail, currentDeviceTime]
+      );
+    }
+    
+    console.log(`🕐 Time check for ${userEmail}:`, {
+      timeDiff,
+      isValid,
+      reason: reason || 'Valid'
+    });
+    
+    return { isValid, reason: isValid ? undefined : reason };
+    
+  } catch (error) {
+    console.error('❌ Error detecting time manipulation:', error);
+    // FIXED: Don't fail the check if there's an error - allow the user to continue
+    console.log('⚠️ Time check failed, but allowing user to continue');
+    return { isValid: true };
+  }
+};
+
 export const saveUserForOfflineAccess = async (
   user: any,
   password: string // We need the plain password to hash and store
@@ -183,6 +293,7 @@ export const saveUserForOfflineAccess = async (
     
     const passwordHash = await hashPassword(password);
     const currentTime = new Date().toISOString();
+    const currentTimestamp = Date.now();
     const isVerified = user.email_verified_at ? 1 : 0;
 
     // Check if user already exists with proper error handling
@@ -196,7 +307,8 @@ export const saveUserForOfflineAccess = async (
       await db.runAsync(
         `UPDATE offline_users SET
          name = ?, password_hash = ?, user_data = ?, updated_at = ?,
-         last_login = ?, login_count = login_count + 1, is_verified = ?
+         last_login = ?, login_count = login_count + 1, is_verified = ?,
+         last_time_check = ?, time_check_sequence = 1
          WHERE email = ?;`,
         [
           user.name,
@@ -205,6 +317,7 @@ export const saveUserForOfflineAccess = async (
           currentTime,
           currentTime,
           isVerified,
+          currentTimestamp,
           user.email
         ]
       );
@@ -213,8 +326,8 @@ export const saveUserForOfflineAccess = async (
       // Insert new user
       await db.runAsync(
         `INSERT INTO offline_users
-         (id, name, email, password_hash, user_data, created_at, updated_at, last_login, is_verified)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+         (id, name, email, password_hash, user_data, created_at, updated_at, last_login, is_verified, last_time_check, time_check_sequence)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
         [
           user.id.toString(),
           user.name,
@@ -224,7 +337,9 @@ export const saveUserForOfflineAccess = async (
           user.created_at || currentTime,
           currentTime,
           currentTime,
-          isVerified
+          isVerified,
+          currentTimestamp,
+          1
         ]
       );
       console.log('✅ Saved new offline user:', user.email);
@@ -235,13 +350,23 @@ export const saveUserForOfflineAccess = async (
   }
 };
 
-// Validate offline login credentials
 export const validateOfflineLogin = async (email: string, password: string) => {
   try {
     await initDb(); // Ensure DB is initialized
     const db = await getDb();
     
     console.log('🔍 Validating offline login for:', email);
+    
+    // First check for time manipulation
+    const timeCheck = await detectTimeManipulation(email);
+    if (!timeCheck.isValid) {
+      console.log('❌ Time manipulation detected:', timeCheck.reason);
+      return { 
+        success: false, 
+        user: null, 
+        error: 'Time manipulation detected. Please connect to the internet to re-sync.' 
+      };
+    }
     
     const passwordHash = await hashPassword(password);
     const resultSet = await db.getAllAsync(
@@ -285,7 +410,6 @@ export const validateOfflineLogin = async (email: string, password: string) => {
   }
 };
 
-// Get all offline users (for account switching UI)
 export const getAllOfflineUsers = async () => {
   try {
     await initDb(); // Ensure DB is initialized
@@ -302,7 +426,6 @@ export const getAllOfflineUsers = async () => {
   }
 };
 
-// Save an enrolled course to the local database
 export const saveCourseToDb = async (course: any, userEmail: string): Promise<void> => {
   try {
     await initDb(); // Ensure DB is initialized
@@ -338,7 +461,6 @@ export const saveCourseToDb = async (course: any, userEmail: string): Promise<vo
   }
 };
 
-// New function: Save full course details to local database
 export const saveCourseDetailsToDb = async (courseDetails: any, userEmail: string): Promise<void> => {
   try {
     await initDb();
@@ -363,7 +485,6 @@ export const saveCourseDetailsToDb = async (courseDetails: any, userEmail: strin
   }
 };
 
-// New function: Get full course details from local database
 export const getCourseDetailsFromDb = async (courseId: number, userEmail: string): Promise<any | null> => {
   try {
     await initDb();
@@ -389,8 +510,6 @@ export const getCourseDetailsFromDb = async (courseId: number, userEmail: string
   }
 };
 
-
-// Get enrolled courses from the local database
 export const getEnrolledCoursesFromDb = async (userEmail: string) => {
   try {
     await initDb(); // Ensure DB is initialized
@@ -431,7 +550,6 @@ export const getEnrolledCoursesFromDb = async (userEmail: string) => {
   }
 };
 
-// Clear all data from tables (e.g., on logout)
 export const clearAllData = async (): Promise<void> => {
   try {
     await initDb(); // Ensure DB is initialized
@@ -442,6 +560,7 @@ export const clearAllData = async (): Promise<void> => {
     await db.execAsync(`DELETE FROM offline_users;`);
     await db.execAsync(`DELETE FROM offline_courses;`);
     await db.execAsync(`DELETE FROM offline_course_details;`);
+    await db.execAsync(`DELETE FROM time_check_logs;`);
     
     console.log('✅ All local data cleared.');
   } catch (error) {
@@ -484,7 +603,6 @@ export const getOfflineAccountInfo = async (email: string): Promise<any | null> 
   }
 };
 
-// Helper function to close database (call this when app is closing)
 export const closeDatabase = async (): Promise<void> => {
   try {
     if (dbInstance) {
@@ -498,10 +616,131 @@ export const closeDatabase = async (): Promise<void> => {
   }
 };
 
-// Helper function to reset database state (useful for debugging)
 export const resetDatabaseState = (): void => {
   dbInstance = null;
   dbInitialized = false;
   initializationPromise = null;
   console.log('🔄 Database state reset');
+};
+
+export const saveServerTime = async (userEmail: string, apiServerTime: string, lastSyncTime: string): Promise<void> => {
+  try {
+    await initDb();
+    const db = await getDb();
+    
+    // Convert server and device times to timestamps for calculation
+    const serverTimeMs = new Date(apiServerTime).getTime();
+    const deviceTimeMs = new Date(lastSyncTime).getTime();
+    
+    // Calculate the time offset
+    const serverTimeOffset = serverTimeMs - deviceTimeMs;
+
+    console.log('💾 Saving server time and offset to local DB.');
+    await db.runAsync(
+      `UPDATE offline_users SET server_time = ?, server_time_offset = ?, last_time_check = ?, time_check_sequence = 1 WHERE email = ?;`,
+      [apiServerTime, serverTimeOffset, Date.now(), userEmail]
+    );
+    console.log('✅ Server time and offset saved successfully.');
+  } catch (error) {
+    console.error('❌ Failed to save server time and offset:', error);
+    throw error;
+  }
+};
+
+// UPDATED: Enhanced getSavedServerTime with time manipulation detection
+export const getSavedServerTime = async (userEmail: string): Promise<string | null> => {
+  try {
+    await initDb();
+    const db = await getDb();
+    
+    console.log('🔍 Retrieving server time and offset from local DB...');
+    
+    // First, check for time manipulation
+    const timeCheck = await detectTimeManipulation(userEmail);
+    if (!timeCheck.isValid) {
+      console.log('❌ Time manipulation detected:', timeCheck.reason);
+      return null; // Return null to disable offline access
+    }
+    
+    const result = await db.getFirstAsync(
+      `SELECT server_time, server_time_offset FROM offline_users WHERE email = ?;`,
+      [userEmail]
+    ) as any;
+    
+    if (result && result.server_time && result.server_time_offset !== null) {
+      // Get the current device time
+      const currentDeviceTime = new Date().getTime();
+      // Calculate the trusted offline server time using the offset
+      const trustedServerTimeMs = currentDeviceTime + result.server_time_offset;
+      const trustedServerDate = new Date(trustedServerTimeMs);
+      
+      console.log('✅ Calculated trusted offline server time:', trustedServerDate.toISOString());
+      return trustedServerDate.toISOString();
+    } else {
+      console.log('❌ No saved server time or offset found.');
+      return null;
+    }
+  } catch (error) {
+    console.error('❌ Failed to get saved server time:', error);
+    return null;
+  }
+};
+
+// Add this function to your localDb.ts file
+export const resetTimeDetectionForUser = async (userEmail: string): Promise<void> => {
+  try {
+    await initDb();
+    const db = await getDb();
+    
+    console.log('🔄 Resetting time detection for user:', userEmail);
+    
+    // Reset time check data for the user
+    await db.runAsync(
+      `UPDATE offline_users SET 
+       last_time_check = ?, 
+       time_check_sequence = 0,
+       server_time = NULL,
+       server_time_offset = NULL 
+       WHERE email = ?;`,
+      [Date.now(), userEmail]
+    );
+    
+    // Clear time check logs for this user
+    await db.runAsync(
+      `DELETE FROM time_check_logs WHERE user_email = ?;`,
+      [userEmail]
+    );
+    
+    console.log('✅ Time detection reset complete for:', userEmail);
+  } catch (error) {
+    console.error('❌ Failed to reset time detection:', error);
+    throw error;
+  }
+};
+
+// Call this in your login screen if time manipulation keeps occurring
+export const emergencyResetTimeDetection = async (): Promise<void> => {
+  try {
+    await initDb();
+    const db = await getDb();
+    
+    console.log('🚨 Emergency reset of ALL time detection data');
+    
+    // Reset all time data
+    await db.execAsync(
+      `UPDATE offline_users SET 
+       last_time_check = NULL, 
+       time_check_sequence = 0,
+       server_time = NULL,
+       server_time_offset = NULL;`
+    );
+    
+    // Clear all time check logs
+    await db.execAsync(`DELETE FROM time_check_logs;`);
+    
+    console.log('✅ Emergency time detection reset complete');
+  } catch (error) {
+    console.error('❌ Emergency reset failed:', error);
+    throw error;
+  }
 };

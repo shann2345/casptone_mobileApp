@@ -1,4 +1,4 @@
-// app/(auth)/login.tsx - Fixed multi-account offline system
+// app/(auth)/login.tsx - Fixed with corrected emergency reset
 
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
@@ -18,6 +18,8 @@ import api, {
   storeUserData
 } from '../../lib/api';
 import {
+  emergencyResetTimeDetection // Import the exported function
+  ,
   getAllOfflineUsers,
   initDb,
   saveUserForOfflineAccess,
@@ -55,7 +57,11 @@ export default function LoginScreen() {
         setIsInitializing(true);
         console.log('🔧 Initializing login screen...');
         
-        // Initialize database first
+        // FIRST: Reset time detection to prevent cascading errors
+        await emergencyResetTimeDetection(); // Use the imported function
+        console.log('🔄 Time detection reset completed');
+        
+        // Initialize database
         await initDb();
         console.log('✅ Database initialized');
 
@@ -184,6 +190,19 @@ export default function LoginScreen() {
     } catch (error: any) {
       console.error('❌ Login error:', error);
       
+      // Handle time manipulation errors specifically
+      if (error.message && error.message.includes('Time manipulation detected')) {
+        console.log('🔄 Time manipulation error detected, attempting reset...');
+        await emergencyResetTimeDetection(); // Use the imported function
+        
+        Alert.alert(
+          'Time Sync Issue Resolved', 
+          'A time synchronization issue was detected and fixed. Please try logging in again.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+      
       if (error.response?.data?.errors) {
         setErrors(error.response.data.errors);
       } else {
@@ -201,12 +220,23 @@ export default function LoginScreen() {
     setEmail(userEmail);
   };
 
+  // Add manual reset button for debugging (remove in production)
+  const handleManualTimeReset = async () => {
+    try {
+      await emergencyResetTimeDetection(); // Use the imported function
+      Alert.alert('Success', 'Time detection system has been reset.');
+    } catch (error) {
+      Alert.alert('Error', 'Failed to reset time detection system.');
+    }
+  };
+
   // Show loading screen while initializing
   if (isInitializing) {
     return (
       <View style={[styles.container, styles.loadingContainer]}>
         <ActivityIndicator size="large" color="#007bff" />
         <Text style={styles.loadingText}>Initializing...</Text>
+        <Text style={styles.subLoadingText}>Resetting time detection...</Text>
       </View>
     );
   }
@@ -288,6 +318,16 @@ export default function LoginScreen() {
           )}
         </TouchableOpacity>
         
+        {/* Debug button - remove in production */}
+        {__DEV__ && (
+          <TouchableOpacity
+            style={[styles.button, styles.debugButton]}
+            onPress={handleManualTimeReset}
+          >
+            <Text style={styles.buttonText}>Reset Time Detection (Debug)</Text>
+          </TouchableOpacity>
+        )}
+        
         <TouchableOpacity
           style={styles.signupLink}
           onPress={() => router.replace('/signup')}
@@ -306,6 +346,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f0f2f5' },
   loadingContainer: { justifyContent: 'center', alignItems: 'center' },
   loadingText: { marginTop: 10, fontSize: 16, color: '#007bff' },
+  subLoadingText: { marginTop: 5, fontSize: 12, color: '#6c757d' },
   scrollContent: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
   title: { fontSize: 32, fontWeight: 'bold', color: '#2c3e50', marginBottom: 30 },
   networkStatus: { marginBottom: 20, padding: 12, borderRadius: 8, width: '100%', alignItems: 'center' },
@@ -369,6 +410,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3, shadowRadius: 5, elevation: 5,
   },
   offlineButton: { backgroundColor: '#6c757d', shadowColor: '#6c757d' },
+  debugButton: { backgroundColor: '#ffc107', shadowColor: '#ffc107', marginTop: 10 },
   buttonText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
   signupLink: { marginTop: 20 },
   signupLinkText: { color: '#007bff', fontSize: 16, textAlign: 'center' },

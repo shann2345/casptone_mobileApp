@@ -1,11 +1,11 @@
-// file: [id].tsx - Fixed version with proper timezone handling
+// file: [id].tsx
 
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Modal, ScrollView, SectionList, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useNetworkStatus } from '../../../context/NetworkContext';
-import api, { getUserData } from '../../../lib/api';
-import { getCourseDetailsFromDb, saveCourseDetailsToDb } from '../../../lib/localDb';
+import api, { getServerTime, getUserData } from '../../../lib/api';
+import { detectTimeManipulation, getCourseDetailsFromDb, getSavedServerTime, saveCourseDetailsToDb, saveServerTime } from '../../../lib/localDb';
 
 // Define interfaces for detailed course data
 interface Material {
@@ -71,8 +71,10 @@ export default function CourseDetailsScreen() {
   const [currentAssessment, setCurrentAssessment] = useState<Assessment | null>(null);
   const [enteredAccessCode, setEnteredAccessCode] = useState('');
   const [accessCodeError, setAccessCodeError] = useState<string | null>(null);
+  const [serverTime, setServerTime] = useState<Date | null>(null);
+  const [timeManipulationDetected, setTimeManipulationDetected] = useState<boolean>(false);
 
- const formatDate = (dateString?: string) => {
+  const formatDate = (dateString?: string) => {
     if (!dateString) return 'N/A';
     // Create a Date object, which by default handles timezone conversions.
     const date = new Date(dateString);
@@ -84,6 +86,33 @@ export default function CourseDetailsScreen() {
       minute: '2-digit',
     };
     return date.toLocaleDateString(undefined, options);
+  };
+
+  // Centralized availability check function that uses server time and detects manipulation
+  const isAvailable = (item: Material | Assessment) => {
+    // If time manipulation detected, disable all content
+    if (timeManipulationDetected) {
+      console.log('⚠️ Time manipulation detected, treating item as unavailable');
+      return false;
+    }
+
+    // If server time isn't available, disable everything
+    if (!serverTime) {
+      console.log('⚠️ Server time not available, treating item as unavailable');
+      return false;
+    }
+
+    if ('available_at' in item && item.available_at) {
+      const availableDate = new Date(item.available_at);
+      const isItemAvailable = serverTime >= availableDate;
+      console.log(`📅 Checking availability for "${item.title}":`, {
+        serverTime: serverTime.toISOString(),
+        availableAt: availableDate.toISOString(),
+        isAvailable: isItemAvailable
+      });
+      return isItemAvailable; // Compare against server time
+    }
+    return true; // If no available_at is set, item is always available
   };
 
   useEffect(() => {
@@ -110,13 +139,60 @@ export default function CourseDetailsScreen() {
       router.replace('/login');
       return;
     }
-    
+
+    // Check for time manipulation first
     try {
-      if (isConnected) {
+      const timeCheck = await detectTimeManipulation(userEmail);
+      if (!timeCheck.isValid) {
+        console.log('❌ Time manipulation detected in course details:', timeCheck.reason);
+        setTimeManipulationDetected(true);
+        Alert.alert(
+          'Time Manipulation Detected',
+          `${timeCheck.reason}. Course content is locked until you reconnect to the internet.`,
+          [{ text: 'OK' }]
+        );
+      } else {
+        setTimeManipulationDetected(false);
+      }
+    } catch (timeError) {
+      console.error('❌ Error checking time manipulation:', timeError);
+      // Continue with normal flow if time check fails
+    }
+
+    try {
+      if (isConnected && !timeManipulationDetected) {
+        // Fetch server time first
+        console.log('🕐 Fetching server time...');
+        try {
+          const apiServerTime = await getServerTime();
+          if (apiServerTime) {
+            const serverTimeDate = new Date(apiServerTime);
+            setServerTime(serverTimeDate);
+            // Save the server time and the current device time
+            await saveServerTime(userEmail, apiServerTime, new Date().toISOString());
+            console.log('✅ Server time set and synced:', serverTimeDate.toISOString());
+          } else {
+            // If online but cannot get server time, this is a network error.
+            setServerTime(null);
+            Alert.alert('Network Error', 'Could not sync server time. Some content may be unavailable.');
+          }
+        } catch (timeError) {
+          console.error('❌ Error fetching server time:', timeError);
+          if (timeError.message === 'Time manipulation detected') {
+            setTimeManipulationDetected(true);
+            Alert.alert(
+              'Time Manipulation Detected',
+              'Course content is locked. Please restart the app.',
+              [{ text: 'OK', onPress: () => router.replace('/login') }]
+            );
+            return;
+          }
+          setServerTime(null);
+        }
+
         console.log('✅ Online: Fetching course details from API.');
         const response = await api.get(`/courses/${courseId}`);
         if (response.status === 200) {
-          console.log("API Response for Course Details:", JSON.stringify(response.data, null, 2));
           const courseData = response.data.course;
           setCourseDetail(courseData);
           await saveCourseDetailsToDb(courseData, userEmail);
@@ -132,17 +208,51 @@ export default function CourseDetailsScreen() {
           }
         }
       } else {
+        // OFFLINE MODE: Fetch from local DB for the specific user
         console.log('⚠️ Offline: Fetching course details from local DB.');
+
+        if (!timeManipulationDetected) {
+          // Get the calculated, offline-adjusted server time from the updated function
+          const calculatedServerTime = await getSavedServerTime(userEmail);
+          if (calculatedServerTime) {
+            const serverTimeDate = new Date(calculatedServerTime);
+            setServerTime(serverTimeDate);
+            console.log('✅ Using trusted offline server time:', serverTimeDate.toISOString());
+          } else {
+            // If getSavedServerTime returns null, it detected time manipulation
+            setTimeManipulationDetected(true);
+            setServerTime(null);
+            Alert.alert(
+              'Time Manipulation Detected', 
+              'Course content is locked. Please connect to the internet to re-sync your time settings.',
+              [{ text: 'OK' }]
+            );
+          }
+        } else {
+          setServerTime(null);
+        }
+
         const offlineData = await getCourseDetailsFromDb(Number(courseId), userEmail);
         if (offlineData) {
           setCourseDetail(offlineData);
-          Alert.alert('Offline Mode', 'You are currently offline. Showing saved course content.');
         } else {
           Alert.alert('Offline Error', 'You are offline and no course content has been saved for this course.');
         }
       }
     } catch (error) {
       console.error('Failed to fetch course details:', error);
+      
+      // Handle time manipulation errors specifically
+      if (error.message === 'Time manipulation detected. Please log in again.') {
+        setTimeManipulationDetected(true);
+        Alert.alert(
+          'Time Manipulation Detected',
+          'Please log in again to continue.',
+          [{ text: 'OK', onPress: () => router.replace('/login') }]
+        );
+        return;
+      }
+      
       Alert.alert('Error', 'Network error or unable to load course details.');
       const offlineData = await getCourseDetailsFromDb(Number(courseId), userEmail);
       if (offlineData) {
@@ -157,6 +267,15 @@ export default function CourseDetailsScreen() {
   };
 
   const handleAccessCodeSubmit = () => {
+    if (timeManipulationDetected) {
+      Alert.alert(
+        'Time Manipulation Detected',
+        'Please connect to the internet to re-sync your time settings.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
     setAccessCodeError(null);
 
     if (!currentAssessment || !currentAssessment.access_code) {
@@ -195,23 +314,10 @@ export default function CourseDetailsScreen() {
   }];
 
   const renderItem = ({ item }: { item: CourseItem }) => {
-    // Helper to check if an item is available
-    const isAvailable = (item: Material | Assessment) => {
-      if ('available_at' in item && item.available_at) {
-        const availableDate = new Date(item.available_at);
-        // The new Date() constructor with the UTC timestamp string will
-        // correctly create a date object that can be compared
-        // to the current device's time.
-        const now = new Date();
-        return now >= availableDate;
-      }
-      return true;
-    };
-
     if (item.type === 'topic') {
       const topic = item as Topic;
       return (
-        <View style={styles.topicCard}>
+        <View style={[styles.topicCard, timeManipulationDetected && styles.disabledCard]}>
           <Text style={styles.topicTitle}>{topic.title}</Text>
 
           {(topic.materials.length > 0 || topic.assessments.length > 0) && (
@@ -219,13 +325,21 @@ export default function CourseDetailsScreen() {
               {topic.materials.map(material => {
                 const available = isAvailable(material);
                 const opacityStyle = available ? {} : { opacity: 0.5 };
-                const disabled = !available;
+                const disabled = !available || timeManipulationDetected;
 
                 return (
                   <TouchableOpacity
                     key={material.id}
-                    style={[styles.itemCardNested, opacityStyle]}
+                    style={[styles.itemCardNested, opacityStyle, timeManipulationDetected && styles.disabledCard]}
                     onPress={() => {
+                      if (timeManipulationDetected) {
+                        Alert.alert(
+                          'Time Manipulation Detected',
+                          'Course content is locked. Please connect to the internet to re-sync your time settings.',
+                          [{ text: 'OK' }]
+                        );
+                        return;
+                      }
                       if (!disabled) {
                         router.push(`/courses/materials/${material.id}`);
                       } else {
@@ -235,10 +349,13 @@ export default function CourseDetailsScreen() {
                     disabled={disabled}
                   >
                     <Text style={styles.itemTitleNested}>{material.title}</Text>
-                    <Text style={styles.itemTypeNested}>Material {available ? '' : '(Not Available Yet)'}</Text>
+                    <Text style={styles.itemTypeNested}>
+                      Material {available ? '' : '(Not Available Yet)'}
+                      {timeManipulationDetected ? ' (Time Sync Required)' : ''}
+                    </Text>
                     {material.content && <Text style={styles.itemDetailNested}>{material.content.substring(0, 100)}...</Text>}
                     {material.file_path && <Text style={styles.itemDetailNested}>File: {material.file_path.split('/').pop()}</Text>}
-                    {material.available_at && !available && (
+                    {material.available_at && !available && !timeManipulationDetected && (
                       <Text style={styles.itemDateNested}>Available: {formatDate(material.available_at)}</Text>
                     )}
                     <Text style={styles.itemDateNested}>Created: {formatDate(material.created_at)}</Text>
@@ -248,13 +365,21 @@ export default function CourseDetailsScreen() {
               {topic.assessments.map(assessment => {
                 const available = isAvailable(assessment);
                 const opacityStyle = available ? {} : { opacity: 0.5 };
-                const disabled = !available;
+                const disabled = !available || timeManipulationDetected;
 
                 return (
                   <TouchableOpacity
                     key={assessment.id}
-                    style={[styles.itemCardNested, opacityStyle]}
+                    style={[styles.itemCardNested, opacityStyle, timeManipulationDetected && styles.disabledCard]}
                     onPress={() => {
+                      if (timeManipulationDetected) {
+                        Alert.alert(
+                          'Time Manipulation Detected',
+                          'Course content is locked. Please connect to the internet to re-sync your time settings.',
+                          [{ text: 'OK' }]
+                        );
+                        return;
+                      }
                       if (!disabled) {
                         if (assessment.access_code) {
                           setCurrentAssessment(assessment);
@@ -272,8 +397,9 @@ export default function CourseDetailsScreen() {
                     <Text style={styles.itemTypeNested}>
                       Assessment {available ? '' : '(Not Available Yet)'}
                       {assessment.access_code ? ' (Code Required)' : ''}
+                      {timeManipulationDetected ? ' (Time Sync Required)' : ''}
                     </Text>
-                    {assessment.available_at && !available && (
+                    {assessment.available_at && !available && !timeManipulationDetected && (
                       <Text style={styles.itemDateNested}>Available: {formatDate(assessment.available_at)}</Text>
                     )}
                     <Text style={styles.itemDateNested}>Created: {formatDate(assessment.created_at)}</Text>
@@ -288,12 +414,20 @@ export default function CourseDetailsScreen() {
       const material = item as Material;
       const available = isAvailable(material);
       const opacityStyle = available ? {} : { opacity: 0.5 };
-      const disabled = !available;
+      const disabled = !available || timeManipulationDetected;
 
       return (
         <TouchableOpacity
-          style={[styles.itemCard, opacityStyle]}
+          style={[styles.itemCard, opacityStyle, timeManipulationDetected && styles.disabledCard]}
           onPress={() => {
+            if (timeManipulationDetected) {
+              Alert.alert(
+                'Time Manipulation Detected',
+                'Course content is locked. Please connect to the internet to re-sync your time settings.',
+                [{ text: 'OK' }]
+              );
+              return;
+            }
             if (!disabled) {
               router.push(`/courses/materials/${material.id}`);
             } else {
@@ -303,10 +437,13 @@ export default function CourseDetailsScreen() {
           disabled={disabled}
         >
           <Text style={styles.itemTitle}>{material.title}</Text>
-          <Text style={styles.itemType}>Material (Independent) {available ? '' : '(Not Available Yet)'}</Text>
+          <Text style={styles.itemType}>
+            Material (Independent) {available ? '' : '(Not Available Yet)'}
+            {timeManipulationDetected ? ' (Time Sync Required)' : ''}
+          </Text>
           {material.content && <Text style={styles.itemDetail}>{material.content.substring(0, 150)}...</Text>}
           {material.file_path && <Text style={styles.itemDetailNested}>File: {material.file_path.split('/').pop()}</Text>}
-          {material.available_at && !available && (
+          {material.available_at && !available && !timeManipulationDetected && (
             <Text style={styles.itemDate}>Available: {formatDate(material.available_at)}</Text>
           )}
           <Text style={styles.itemDate}>Created: {formatDate(material.created_at)}</Text>
@@ -316,12 +453,20 @@ export default function CourseDetailsScreen() {
       const assessment = item as Assessment;
       const available = isAvailable(assessment);
       const opacityStyle = available ? {} : { opacity: 0.5 };
-      const disabled = !available;
+      const disabled = !available || timeManipulationDetected;
 
       return (
         <TouchableOpacity
-          style={[styles.itemCard, opacityStyle]}
+          style={[styles.itemCard, opacityStyle, timeManipulationDetected && styles.disabledCard]}
           onPress={() => {
+            if (timeManipulationDetected) {
+              Alert.alert(
+                'Time Manipulation Detected',
+                'Course content is locked. Please connect to the internet to re-sync your time settings.',
+                [{ text: 'OK' }]
+              );
+              return;
+            }
             if (!disabled) {
               if (assessment.access_code) {
                 setCurrentAssessment(assessment);
@@ -339,8 +484,9 @@ export default function CourseDetailsScreen() {
           <Text style={styles.itemType}>
             Assessment (Independent) {available ? '' : '(Not Available Yet)'}
             {assessment.access_code ? ' (Code Required)' : ''}
+            {timeManipulationDetected ? ' (Time Sync Required)' : ''}
           </Text>
-          {assessment.available_at && !available && (
+          {assessment.available_at && !available && !timeManipulationDetected && (
             <Text style={styles.itemDate}>Available: {formatDate(assessment.available_at)}</Text>
           )}
           <Text style={styles.itemDate}>Created: {formatDate(assessment.created_at)}</Text>
@@ -354,11 +500,28 @@ export default function CourseDetailsScreen() {
     <View style={styles.container}>
       <Stack.Screen options={{ title: courseDetail.title }} />
       <ScrollView contentContainerStyle={styles.scrollViewContent}>
-        <View style={styles.headerContainer}>
+        <View style={[styles.headerContainer, timeManipulationDetected && styles.disabledHeader]}>
           <Text style={styles.courseTitle}>{courseDetail.title}</Text>
           <View style={styles.detailRow}>
             <Text style={styles.label}>{courseDetail.instructor.name} ({courseDetail.instructor.email})</Text>
           </View>
+          
+          {timeManipulationDetected && (
+            <View style={styles.timeManipulationWarning}>
+              <Text style={styles.warningText}>
+                ⚠️ Time manipulation detected. Course content is locked until you reconnect to the internet.
+              </Text>
+            </View>
+          )}
+          
+          {/* Debug info - remove in production */}
+          {__DEV__ && serverTime && !timeManipulationDetected && (
+            <View style={styles.debugContainer}>
+              <Text style={styles.debugText}>
+                Server Time: {serverTime.toLocaleString()}
+              </Text>
+            </View>
+          )}
         </View>
 
         <SectionList
@@ -366,12 +529,14 @@ export default function CourseDetailsScreen() {
           keyExtractor={(item, index) => `${item.type}-${item.id}-${index}`}
           renderItem={renderItem}
           renderSectionHeader={({ section: { title } }) => (
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>{title}</Text>
+            <View style={[styles.sectionHeader, timeManipulationDetected && styles.disabledHeader]}>
+              <Text style={styles.sectionTitle}>
+                {title} {timeManipulationDetected ? '(Time Sync Required)' : ''}
+              </Text>
             </View>
           )}
           contentContainerStyle={styles.sectionListContent}
-          scrollEnabled={false}
+          scrollEnabled={true}
         />
       </ScrollView>
 
@@ -386,18 +551,24 @@ export default function CourseDetailsScreen() {
         }}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
+          <View style={[styles.modalContent, timeManipulationDetected && styles.disabledCard]}>
             <Text style={styles.modalTitle}>Enter Access Code</Text>
             {currentAssessment && (
               <Text style={styles.modalAssessmentTitle}>for "{currentAssessment.title}"</Text>
             )}
+            {timeManipulationDetected && (
+              <Text style={styles.timeManipulationModalText}>
+                Time synchronization required to access assessments.
+              </Text>
+            )}
             <TextInput
-              style={styles.input}
+              style={[styles.input, timeManipulationDetected && styles.disabledInput]}
               placeholder="Access Code"
               value={enteredAccessCode}
               onChangeText={setEnteredAccessCode}
               secureTextEntry
               autoCapitalize="none"
+              editable={!timeManipulationDetected}
             />
             {accessCodeError && <Text style={styles.errorTextModal}>{accessCodeError}</Text>}
             <View style={styles.modalButtons}>
@@ -412,8 +583,13 @@ export default function CourseDetailsScreen() {
                 <Text style={styles.buttonText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.button, styles.submitButton]}
+                style={[
+                  styles.button, 
+                  styles.submitButton,
+                  timeManipulationDetected && styles.disabledButton
+                ]}
                 onPress={handleAccessCodeSubmit}
+                disabled={timeManipulationDetected}
               >
                 <Text style={styles.buttonText}>Submit</Text>
               </TouchableOpacity>
@@ -425,14 +601,14 @@ export default function CourseDetailsScreen() {
   );
 }
 
-// Keep all your existing styles
+// Enhanced styles with time manipulation states
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f5f5f5',
   },
   scrollViewContent: {
-    padding: 20,
+    padding: 5,
   },
   loadingContainer: {
     flex: 1,
@@ -452,7 +628,7 @@ const styles = StyleSheet.create({
   },
   headerContainer: {
     backgroundColor: '#ffffff',
-    borderRadius: 12,
+    borderRadius: 2,
     padding: 20,
     marginBottom: 20,
     shadowColor: '#000',
@@ -460,6 +636,11 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 6,
     elevation: 6,
+  },
+  disabledHeader: {
+    backgroundColor: '#f8f8f8',
+    borderColor: '#e74c3c',
+    borderWidth: 2,
   },
   courseTitle: {
     fontSize: 28,
@@ -501,6 +682,34 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#333',
   },
+  timeManipulationWarning: {
+    backgroundColor: '#ffe6e6',
+    borderColor: '#e74c3c',
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 15,
+    marginTop: 15,
+  },
+  warningText: {
+    color: '#e74c3c',
+    fontSize: 14,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  // Debug styles - remove in production
+  debugContainer: {
+    backgroundColor: '#f0f0f0',
+    padding: 10,
+    borderRadius: 2,
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: '#ddd',
+  },
+  debugText: {
+    fontSize: 12,
+    color: '#666',
+    fontFamily: 'monospace',
+  },
   sectionHeader: {
     backgroundColor: '#e0e6eb',
     paddingVertical: 10,
@@ -517,7 +726,7 @@ const styles = StyleSheet.create({
   },
   topicCard: {
     backgroundColor: '#ffffff',
-    borderRadius: 10,
+    borderRadius: 2,
     padding: 15,
     marginBottom: 15,
     marginTop: 5,
@@ -526,6 +735,12 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.08,
     shadowRadius: 3,
     elevation: 2,
+  },
+  disabledCard: {
+    backgroundColor: '#f5f5f5',
+    borderColor: '#e74c3c',
+    borderWidth: 1,
+    opacity: 0.7,
   },
   topicTitle: {
     fontSize: 20,
@@ -540,7 +755,7 @@ const styles = StyleSheet.create({
   },
   itemCard: {
     backgroundColor: '#ffffff',
-    borderRadius: 10,
+    borderRadius: 2,
     padding: 15,
     marginBottom: 10,
     marginTop: 5,
@@ -582,7 +797,7 @@ const styles = StyleSheet.create({
   },
   itemCardNested: {
     backgroundColor: '#f8f8f8',
-    borderRadius: 8,
+    borderRadius: 2,
     paddingVertical: 12,
     paddingHorizontal: 15,
     marginBottom: 8,
@@ -628,7 +843,7 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     backgroundColor: '#fff',
-    borderRadius: 10,
+    borderRadius: 2,
     padding: 25,
     width: '80%',
     alignItems: 'center',
@@ -650,6 +865,13 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     textAlign: 'center',
   },
+  timeManipulationModalText: {
+    fontSize: 14,
+    color: '#e74c3c',
+    marginBottom: 15,
+    textAlign: 'center',
+    fontWeight: 'bold',
+  },
   input: {
     width: '100%',
     borderWidth: 1,
@@ -659,6 +881,11 @@ const styles = StyleSheet.create({
     marginBottom: 15,
     fontSize: 16,
     color: '#333',
+  },
+  disabledInput: {
+    backgroundColor: '#f5f5f5',
+    color: '#999',
+    borderColor: '#e74c3c',
   },
   modalButtons: {
     flexDirection: 'row',
@@ -675,6 +902,9 @@ const styles = StyleSheet.create({
   },
   submitButton: {
     backgroundColor: '#007bff',
+  },
+  disabledButton: {
+    backgroundColor: '#ccc',
   },
   cancelButton: {
     backgroundColor: '#6c757d',

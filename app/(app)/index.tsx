@@ -1,14 +1,10 @@
-// file: index.tsx
-
-// app/(app)/index.tsx - Updated with better error handling and DB initialization
-
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useNetworkStatus } from '../../context/NetworkContext';
-import api, { clearAuthToken, getAuthToken, getUserData } from '../../lib/api';
-import { getEnrolledCoursesFromDb, initDb, saveCourseDetailsToDb, saveCourseToDb } from '../../lib/localDb';
+import api, { clearAuthToken, getAuthToken, getServerTime, getUserData } from '../../lib/api';
+import { detectTimeManipulation, getEnrolledCoursesFromDb, initDb, saveCourseDetailsToDb, saveCourseToDb, saveServerTime } from '../../lib/localDb';
 
 interface Course {
   id: number;
@@ -45,6 +41,7 @@ export default function HomeScreen() {
   const [enrolledCourses, setEnrolledCourses] = useState<EnrolledCourse[]>([]);
   const [isLoadingEnrolledCourses, setIsLoadingEnrolledCourses] = useState<boolean>(true);
   const [isInitialized, setIsInitialized] = useState<boolean>(false);
+  const [timeManipulationDetected, setTimeManipulationDetected] = useState<boolean>(false);
 
   // Use the custom hook to get network status
   const { isConnected, netInfo } = useNetworkStatus();
@@ -96,6 +93,38 @@ export default function HomeScreen() {
         return;
       }
 
+      // Check for time manipulation before proceeding
+      try {
+        const timeCheck = await detectTimeManipulation(userEmail);
+        if (!timeCheck.isValid) {
+          console.log('❌ Time manipulation detected on home screen:', timeCheck.reason);
+          setTimeManipulationDetected(true);
+          Alert.alert(
+            'Time Manipulation Detected',
+            `${timeCheck.reason}. Please connect to the internet to re-sync your time settings.`,
+            [
+              {
+                text: 'OK',
+                onPress: () => {
+                  if (isConnected) {
+                    // If online, force logout and re-login to re-sync time
+                    clearAuthToken();
+                    router.replace('/login');
+                  }
+                }
+              }
+            ]
+          );
+          setIsLoadingEnrolledCourses(false);
+          return;
+        } else {
+          setTimeManipulationDetected(false);
+        }
+      } catch (timeError) {
+        console.error('❌ Error checking time manipulation:', timeError);
+        // Continue with normal flow if time check fails
+      }
+
       setIsLoadingEnrolledCourses(true);
       
       try {
@@ -111,6 +140,25 @@ export default function HomeScreen() {
              );
              setIsLoadingEnrolledCourses(false);
              return;
+          }
+          try {
+            const apiServerTime = await getServerTime();
+            if (apiServerTime) {
+              const currentDeviceTime = new Date().toISOString();
+              await saveServerTime(userEmail, apiServerTime, currentDeviceTime);
+              console.log('✅ Server time synced and saved locally.');
+            }
+          } catch (timeError) {
+            console.error('❌ Failed to fetch or save server time:', timeError);
+            // If time manipulation was detected, don't proceed with API calls
+            if (timeError.message === 'Time manipulation detected') {
+              Alert.alert(
+                'Time Manipulation Detected',
+                'Please restart the app and ensure your device time is correct.',
+                [{ text: 'OK', onPress: () => router.replace('/login') }]
+              );
+              return;
+            }
           }
 
           // ONLINE MODE: Fetch from API and sync to local DB
@@ -143,6 +191,16 @@ export default function HomeScreen() {
       } catch (error: any) {
         console.error('Error fetching enrolled courses:', error.response?.data || error.message);
         
+        // If the error is due to time manipulation, handle it specifically
+        if (error.message === 'Time manipulation detected. Please log in again.') {
+          Alert.alert(
+            'Time Manipulation Detected',
+            'Please log in again to continue.',
+            [{ text: 'OK', onPress: () => router.replace('/login') }]
+          );
+          return;
+        }
+        
         // If online request fails, try to load from local DB as fallback
         if (isConnected) {
           console.log('🔄 API failed, falling back to local DB...');
@@ -162,9 +220,18 @@ export default function HomeScreen() {
     };
 
     fetchData();
-  }, [isConnected, netInfo, isInitialized]); // Re-run effect when network status or initialization changes
-
+  }, [isConnected, netInfo, isInitialized]);
+  
   const handleSearchPress = () => {
+    if (timeManipulationDetected) {
+      Alert.alert(
+        'Time Manipulation Detected',
+        'Please connect to the internet to re-sync your time settings before searching.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
     setSearchModalVisible(true);
     setSearchResults([]);
     setSearchQuery('');
@@ -183,6 +250,15 @@ export default function HomeScreen() {
       return;
     }
 
+    if (timeManipulationDetected) {
+      Alert.alert(
+        'Time Manipulation Detected',
+        'Please restart the app to re-sync your time settings before searching.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
     setIsLoadingSearch(true);
     setHasSearched(true);
     try {
@@ -191,7 +267,15 @@ export default function HomeScreen() {
       console.log('Search Results:', response.data.courses);
     } catch (error: any) {
       console.error('Error searching courses:', error);
-      Alert.alert('Search Error', 'Failed to fetch search results. Please try again.');
+      if (error.message === 'Time manipulation detected. Please log in again.') {
+        Alert.alert(
+          'Time Manipulation Detected',
+          'Please log in again to continue.',
+          [{ text: 'OK', onPress: () => router.replace('/login') }]
+        );
+      } else {
+        Alert.alert('Search Error', 'Failed to fetch search results. Please try again.');
+      }
       setSearchResults([]);
     } finally {
       setIsLoadingSearch(false);
@@ -201,6 +285,15 @@ export default function HomeScreen() {
   const handleEnrollCourse = async (course: Course) => {
     if (!isConnected) {
       Alert.alert('Offline', 'You must be connected to the internet to enroll in a course.');
+      return;
+    }
+
+    if (timeManipulationDetected) {
+      Alert.alert(
+        'Time Manipulation Detected',
+        'Please restart the app to re-sync your time settings before enrolling.',
+        [{ text: 'OK' }]
+      );
       return;
     }
     
@@ -220,7 +313,6 @@ export default function HomeScreen() {
       router.replace('/login');
       return;
     }
-
 
     try {
       const response = await api.post('/enroll', { course_id: course.id });
@@ -263,7 +355,15 @@ export default function HomeScreen() {
       }
     } catch (error: any) {
       console.error('Enrollment error:', error.response?.data || error.message);
-      Alert.alert('Enrollment Failed', error.response?.data?.message || 'Could not enroll in the course. Please try again.');
+      if (error.message === 'Time manipulation detected. Please log in again.') {
+        Alert.alert(
+          'Time Manipulation Detected',
+          'Please log in again to continue.',
+          [{ text: 'OK', onPress: () => router.replace('/login') }]
+        );
+      } else {
+        Alert.alert('Enrollment Failed', error.response?.data?.message || 'Could not enroll in the course. Please try again.');
+      }
     }
   };
 
@@ -275,9 +375,12 @@ export default function HomeScreen() {
       <Text style={styles.courseResultDetails}>Instructor: {item.instructor?.name || 'N/A'}</Text>
 
       <TouchableOpacity
-        style={[styles.enrollButton, !isConnected && styles.disabledButton]}
+        style={[
+          styles.enrollButton, 
+          (!isConnected || timeManipulationDetected) && styles.disabledButton
+        ]}
         onPress={() => handleEnrollCourse(item)}
-        disabled={!isConnected}
+        disabled={!isConnected || timeManipulationDetected}
       >
         <Text style={styles.enrollButtonText}>Enroll Course</Text>
       </TouchableOpacity>
@@ -286,21 +389,35 @@ export default function HomeScreen() {
 
   const renderEnrolledCourseCard = ({ item }: { item: EnrolledCourse }) => (
     <TouchableOpacity
-      style={styles.enrolledCourseCard}
+      style={[
+        styles.enrolledCourseCard,
+        timeManipulationDetected && styles.disabledCard
+      ]}
       onPress={() => {
-        // You can add logic here to only allow navigation if the course is locally available
+        if (timeManipulationDetected) {
+          Alert.alert(
+            'Time Manipulation Detected',
+            'Please connect to the internet to re-sync your time settings before accessing courses.',
+            [{ text: 'OK' }]
+          );
+          return;
+        }
         console.log('Viewing enrolled course:', item.title);
         router.navigate({
           pathname: '/courses',
           params: { courseId: item.id.toString() },
         });
       }}
+      disabled={timeManipulationDetected}
     >
       <Ionicons name="book-outline" size={30} color="#007bff" />
       <Text style={styles.enrolledCourseCardTitle} numberOfLines={2}>{item.title}</Text>
       <Text style={styles.enrolledCourseCardCode}>{item.description}</Text>
       {item.pivot && (
         <Text style={styles.enrolledCourseCardStatus}>Status: {item.pivot.status}</Text>
+      )}
+      {timeManipulationDetected && (
+        <Text style={styles.disabledText}>Time Sync Required</Text>
       )}
     </TouchableOpacity>
   );
@@ -338,12 +455,21 @@ export default function HomeScreen() {
             <Text style={styles.offlineText}>Offline Mode</Text>
           </View>
         )}
+        {timeManipulationDetected && (
+          <View style={styles.timeManipulationNotice}>
+            <Ionicons name="warning-outline" size={18} color="#fff" />
+            <Text style={styles.timeManipulationText}>Time Sync Required</Text>
+          </View>
+        )}
       </View>
 
       <TouchableOpacity
-        style={[styles.searchButton, !isConnected && styles.disabledButton]}
+        style={[
+          styles.searchButton, 
+          (!isConnected || timeManipulationDetected) && styles.disabledButton
+        ]}
         onPress={handleSearchPress}
-        disabled={!isConnected}
+        disabled={!isConnected || timeManipulationDetected}
       >
         <Ionicons name="search" size={20} color="#fff" style={styles.searchIcon} />
         <Text style={styles.searchButtonText}>Search for Courses, Topics, etc.</Text>
@@ -354,17 +480,22 @@ export default function HomeScreen() {
         <Text style={styles.newSectionText}>
           Explore popular courses and trending topics designed for you.
         </Text>
+        {timeManipulationDetected && (
+          <Text style={styles.timeSyncWarning}>
+            ⚠️ Connect to internet to sync time settings and access all features.
+          </Text>
+        )}
       </View>
 
       <View style={styles.otherContent}>
         <View style={styles.sectionHeader}>
           <Text style={styles.quickAccessTitle}>My Courses</Text>
           <View style={styles.scrollButtons}>
-            <TouchableOpacity onPress={scrollEnrolledCoursesLeft}>
-              <Ionicons name="arrow-back-circle-outline" size={30} color="#007bff" />
+            <TouchableOpacity onPress={scrollEnrolledCoursesLeft} disabled={timeManipulationDetected}>
+              <Ionicons name="arrow-back-circle-outline" size={30} color={timeManipulationDetected ? "#ccc" : "#007bff"} />
             </TouchableOpacity>
-            <TouchableOpacity onPress={scrollEnrolledCoursesRight}>
-              <Ionicons name="arrow-forward-circle-outline" size={30} color="#007bff" />
+            <TouchableOpacity onPress={scrollEnrolledCoursesRight} disabled={timeManipulationDetected}>
+              <Ionicons name="arrow-forward-circle-outline" size={30} color={timeManipulationDetected ? "#ccc" : "#007bff"} />
             </TouchableOpacity>
           </View>
         </View>
@@ -384,7 +515,12 @@ export default function HomeScreen() {
           <View style={styles.noCoursesEnrolledContainer}>
             <Text style={styles.noCoursesEnrolledText}>You haven't enrolled in any courses yet.</Text>
             <Text style={styles.noCoursesEnrolledSubText}>
-              {isConnected ? 'Search for courses above to get started!' : 'Connect to the internet to enroll in new courses.'}
+              {isConnected && !timeManipulationDetected 
+                ? 'Search for courses above to get started!' 
+                : timeManipulationDetected 
+                  ? 'Connect to internet to sync time and enroll in courses.'
+                  : 'Connect to the internet to enroll in new courses.'
+              }
             </Text>
           </View>
         )}
@@ -419,12 +555,15 @@ export default function HomeScreen() {
               onChangeText={setSearchQuery}
               onSubmitEditing={handleSearchSubmit}
               returnKeyType="search"
-              editable={isConnected} // Disable input if offline
+              editable={isConnected && !timeManipulationDetected}
             />
             <TouchableOpacity
-              style={[styles.modalSearchButton, !isConnected && styles.disabledButton]}
+              style={[
+                styles.modalSearchButton, 
+                (!isConnected || timeManipulationDetected) && styles.disabledButton
+              ]}
               onPress={handleSearchSubmit}
-              disabled={isLoadingSearch || !isConnected}
+              disabled={isLoadingSearch || !isConnected || timeManipulationDetected}
             >
               {isLoadingSearch ? (
                 <ActivityIndicator color="#fff" />
@@ -435,6 +574,11 @@ export default function HomeScreen() {
             {!isConnected && (
               <Text style={styles.offlineModalHint}>
                 You must be online to search for new courses.
+              </Text>
+            )}
+            {timeManipulationDetected && (
+              <Text style={styles.timeManipulationModalHint}>
+                Time synchronization required to search for courses.
               </Text>
             )}
             {!isLoadingSearch && hasSearched && searchResults.length > 0 && (
@@ -542,6 +686,12 @@ const styles = StyleSheet.create({
   newSectionText: {
     fontSize: 14,
     color: '#7f8c8d',
+  },
+  timeSyncWarning: {
+    fontSize: 12,
+    color: '#e74c3c',
+    marginTop: 10,
+    fontStyle: 'italic',
   },
   otherContent: {
     marginHorizontal: 20,
@@ -749,6 +899,22 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginLeft: 5,
   },
+  timeManipulationNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ff6b35',
+    borderRadius: 20,
+    paddingVertical: 5,
+    paddingHorizontal: 15,
+    marginTop: 5,
+  },
+  timeManipulationText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: 'bold',
+    marginLeft: 5,
+  },
   flatListContent: {
     paddingBottom: 10,
   },
@@ -762,8 +928,25 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 10,
   },
+  timeManipulationModalHint: {
+    fontSize: 12,
+    color: '#ff6b35',
+    textAlign: 'center',
+    marginTop: 10,
+  },
   disabledButton: {
     backgroundColor: '#ccc',
     shadowColor: 'transparent',
-  }
+  },
+  disabledCard: {
+    opacity: 0.6,
+    backgroundColor: '#f5f5f5',
+  },
+  disabledText: {
+    fontSize: 11,
+    color: '#dc3545',
+    marginTop: 5,
+    textAlign: 'center',
+    fontWeight: 'bold',
+  },
 });

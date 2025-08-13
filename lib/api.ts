@@ -1,11 +1,15 @@
-// lib/api.ts - Updated version to handle unauthenticated errors
+// lib/api.ts - Updated version to handle unauthenticated errors and time manipulation
 
 import axios from 'axios';
 import { router } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
+import { detectTimeManipulation } from './localDb';
 
 // IMPORTANT: Replace with your actual Laravel API URL.
-export const API_BASE_URL = 'http://192.168.1.4:8000/api'; // Or your actual IP/domain
+export const API_BASE_URL = 'http://192.168.1.10:8000/api'; // Or your actual IP/domain
+
+let lastTimeCheckTimestamp = 0;
+const TIME_CHECK_THROTTLE = 60000; // Only check time manipulation every 60 seconds
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -15,7 +19,7 @@ const api = axios.create({
   },
 });
 
-// Request interceptor to attach the token
+// Request interceptor with throttled time checks
 api.interceptors.request.use(
   async (config) => {
     try {
@@ -26,8 +30,37 @@ api.interceptors.request.use(
       } else {
         console.log('⚠️  API Request: No token found');
       }
+      
+      // FIXED: Throttle time manipulation checks
+      const currentTime = Date.now();
+      const shouldCheckTime = (currentTime - lastTimeCheckTimestamp) > TIME_CHECK_THROTTLE;
+      
+      if (shouldCheckTime) {
+        console.log('🕐 Performing throttled time check...');
+        const userData = await getUserData();
+        if (userData && userData.email) {
+          const timeCheck = await detectTimeManipulation(userData.email);
+          if (!timeCheck.isValid) {
+            console.log('❌ Time manipulation detected:', timeCheck.reason);
+            // Clear auth data and redirect to login
+            await clearAuthData();
+            router.replace('/login');
+            throw new Error('Time manipulation detected. Please log in again.');
+          } else {
+            lastTimeCheckTimestamp = currentTime;
+            console.log('✅ Time check passed, updating throttle timestamp');
+          }
+        }
+      } else {
+        console.log('⏭️ Skipping time check (throttled)');
+      }
     } catch (error) {
-      console.error('❌ Error getting token from SecureStore:', error);
+      console.error('❌ Error in request interceptor:', error);
+      if (error.message === 'Time manipulation detected. Please log in again.') {
+        return Promise.reject(error);
+      }
+      // FIXED: Don't reject other errors, just log them
+      console.log('⚠️ Non-critical error in request interceptor, continuing...');
     }
     return config;
   },
@@ -173,6 +206,34 @@ export const clearOfflineToken = async () => {
     await SecureStore.deleteItemAsync('offline_token');
   } catch (error) {
     console.error('Failed to clear offline token:', error);
+  }
+};
+
+// Enhanced getServerTime function with time manipulation check
+export const getServerTime = async (): Promise<string | null> => {
+  try {
+    console.log('📞 Calling API to get server time...');
+    
+    // Check for time manipulation before making the server time call
+    const userData = await getUserData();
+    if (userData && userData.email) {
+      const timeCheck = await detectTimeManipulation(userData.email);
+      if (!timeCheck.isValid) {
+        console.log('❌ Time manipulation detected before server time fetch:', timeCheck.reason);
+        throw new Error('Time manipulation detected');
+      }
+    }
+    
+    const response = await api.get('/time');
+    if (response.status === 200 && response.data.server_time) {
+      console.log('✅ Server time fetched:', response.data.server_time);
+      return response.data.server_time;
+    }
+    console.warn('⚠️ Server time endpoint did not return a valid time.');
+    return null;
+  } catch (error) {
+    console.error('❌ Error fetching server time:', error);
+    return null;
   }
 };
 
