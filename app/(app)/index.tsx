@@ -68,6 +68,30 @@ export default function HomeScreen() {
     return () => { isMounted = false; };
   }, []);
 
+  const fetchAndSaveCompleteCoursesData = async (courses: EnrolledCourse[], userEmail: string) => {
+    console.log('📦 Starting to fetch complete course data for offline access...');
+
+    for (const course of courses) {
+      try {
+        console.log(`🔄 Fetching complete details for course: ${course.title}`);
+        
+        // Fetch complete course details including materials and assessments
+        const courseDetailResponse = await api.get(`/courses/${course.id}`);
+        
+        if (courseDetailResponse.status === 200) {
+          const fullCourseData = courseDetailResponse.data.course;
+          
+          // This is the call to the function we just implemented
+          await saveCourseDetailsToDb(fullCourseData, userEmail);
+          console.log(`✅ Complete course data saved for: ${course.title}`);
+        }
+      } catch (saveError) {
+        console.error(`⚠️ Failed to fetch/save complete data for course ${course.title}:`, saveError);
+      }
+    }
+    console.log('✅ Completed fetching and saving all course data for offline access');
+  };
+
   useEffect(() => {
     const fetchData = async () => {
       // Only proceed if DB is initialized
@@ -167,21 +191,20 @@ export default function HomeScreen() {
           const courses = response.data.courses || [];
           setEnrolledCourses(courses);
 
-          // Sync courses to local DB for offline access
+          // First, save basic course info to local DB
           for (const course of courses) {
             try {
               await saveCourseToDb(course, userEmail);
-              // Also fetch and save course details for offline viewing
-              const courseDetailResponse = await api.get(`/courses/${course.id}`);
-              if (courseDetailResponse.status === 200) {
-                await saveCourseDetailsToDb(courseDetailResponse.data.course, userEmail);
-              }
             } catch (saveError) {
-              console.error('⚠️ Failed to save course or its details to DB:', saveError);
+              console.error('⚠️ Failed to save basic course to DB:', saveError);
               // Continue with other courses even if one fails
             }
           }
-          console.log('🔄 Synced courses and their details to local DB.');
+          console.log('📄 Basic course info synced to local DB.');
+
+          // Then, fetch and save complete course details including materials and assessments
+          await fetchAndSaveCompleteCoursesData(courses, userEmail);
+          
         } else {
           // OFFLINE MODE: Fetch from local DB for the specific user
           console.log('⚠️ Offline: Fetching courses from local DB.');
@@ -321,7 +344,7 @@ export default function HomeScreen() {
       // Save the course to the local SQLite database for the specific user
       try {
         await saveCourseToDb(course, userEmail);
-        // Also fetch and save course details for the newly enrolled course
+        // Also fetch and save complete course details for the newly enrolled course
         const courseDetailResponse = await api.get(`/courses/${course.id}`);
         if (courseDetailResponse.status === 200) {
           await saveCourseDetailsToDb(courseDetailResponse.data.course, userEmail);
@@ -340,7 +363,12 @@ export default function HomeScreen() {
       try {
         setIsLoadingEnrolledCourses(true);
         const updatedEnrolledCoursesResponse = await api.get('/my-courses');
-        setEnrolledCourses(updatedEnrolledCoursesResponse.data.courses || []);
+        const updatedCourses = updatedEnrolledCoursesResponse.data.courses || [];
+        setEnrolledCourses(updatedCourses);
+        
+        // Also fetch complete details for all courses after enrollment
+        await fetchAndSaveCompleteCoursesData(updatedCourses, userEmail);
+        
       } catch (refreshError) {
         console.error('Error refreshing enrolled courses after enrollment:', refreshError);
         // Fallback to local DB if API refresh fails

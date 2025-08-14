@@ -66,6 +66,8 @@ const hashPassword = async (password: string): Promise<string> => {
   }
 };
 
+// ... (rest of your localDb.ts file)
+
 export const initDb = async (): Promise<void> => {
   if (dbInitialized && dbInstance) {
     console.log('✅ Database already initialized');
@@ -164,6 +166,80 @@ export const initDb = async (): Promise<void> => {
           PRIMARY KEY (course_id, user_email)
         );`
       );
+
+      // Check if `material_data` column exists in `offline_materials`
+      let materialColumns = await db.getAllAsync(
+        `PRAGMA table_info(offline_materials);`
+      );
+      let hasMaterialData = materialColumns.some((col: any) => col.name === 'material_data');
+
+      // If `material_data` does not exist, add it.
+      if (!hasMaterialData) {
+        // You can either rename the `content` column or add a new `material_data` column.
+        // Assuming `material_data` replaces `content` for simplicity and to match the error.
+        // To be safe, let's add a new one. The NOT NULL constraint will be handled by the insertion logic.
+        await db.execAsync(
+          `ALTER TABLE offline_materials ADD COLUMN material_data TEXT;`
+        );
+        console.log('⚠️ Migrated offline_materials table: added material_data column.');
+      }
+
+      await db.execAsync(
+        `CREATE TABLE IF NOT EXISTS offline_materials (
+          id INTEGER PRIMARY KEY NOT NULL,
+          user_email TEXT NOT NULL,
+          course_id INTEGER NOT NULL,
+          title TEXT NOT NULL,
+          file_path TEXT,
+          content TEXT,
+          material_type TEXT,
+          created_at TEXT,
+          available_at TEXT,
+          unavailable_at TEXT,
+          material_data TEXT NOT NULL,
+          FOREIGN KEY (course_id, user_email) REFERENCES offline_course_details(course_id, user_email) ON DELETE CASCADE
+        );`
+      );
+
+      // FIXED: Check and add missing columns for the offline_assessments table
+      let assessmentColumns = await db.getAllAsync(
+        `PRAGMA table_info(offline_assessments);`
+      );
+      let hasAssessmentFilePath = assessmentColumns.some((col: any) => col.name === 'assessment_file_path');
+      let hasAssessmentFileUrl = assessmentColumns.some((col: any) => col.name === 'assessment_file_url');
+      let hasPoints = assessmentColumns.some((col: any) => col.name === 'points');
+
+      if (!hasAssessmentFilePath) {
+        await db.execAsync(`ALTER TABLE offline_assessments ADD COLUMN assessment_file_path TEXT;`);
+        console.log('⚠️ Migrated offline_assessments table: added assessment_file_path column.');
+      }
+      if (!hasAssessmentFileUrl) {
+        await db.execAsync(`ALTER TABLE offline_assessments ADD COLUMN assessment_file_url TEXT;`);
+        console.log('⚠️ Migrated offline_assessments table: added assessment_file_url column.');
+      }
+      if (!hasPoints) {
+        await db.execAsync(`ALTER TABLE offline_assessments ADD COLUMN points INTEGER;`);
+        console.log('⚠️ Migrated offline_assessments table: added points column.');
+      }
+      
+      await db.execAsync(
+        `CREATE TABLE IF NOT EXISTS offline_assessments (
+          id INTEGER PRIMARY KEY NOT NULL,
+          user_email TEXT NOT NULL,
+          course_id INTEGER NOT NULL,
+          title TEXT NOT NULL,
+          description TEXT,
+          type TEXT NOT NULL,
+          available_at TEXT,
+          unavailable_at TEXT,
+          max_attempts INTEGER,
+          duration_minutes INTEGER,
+          assessment_file_path TEXT,
+          assessment_file_url TEXT,
+          points INTEGER,
+          FOREIGN KEY (course_id, user_email) REFERENCES offline_course_details(course_id, user_email) ON DELETE CASCADE
+        );`
+      );
       
       // Create time check logs table for additional security
       await db.execAsync(
@@ -191,8 +267,6 @@ export const initDb = async (): Promise<void> => {
   initializationPromise = null;
 };
 
-// Time manipulation detection function
-// Enhanced time manipulation detection with more reasonable parameters
 export const detectTimeManipulation = async (userEmail: string): Promise<{ isValid: boolean; reason?: string }> => {
   try {
     await initDb();
@@ -461,29 +535,50 @@ export const saveCourseToDb = async (course: any, userEmail: string): Promise<vo
   }
 };
 
-export const saveCourseDetailsToDb = async (courseDetails: any, userEmail: string): Promise<void> => {
+export const saveCourseDetailsToDb = async (course: any, userEmail: string): Promise<void> => {
   try {
     await initDb();
     const db = await getDb();
-    console.log('💾 Saving full course details to local DB for user:', userEmail);
+    console.log('💾 Saving detailed course data for user:', userEmail, ' and course:', course.id);
 
+    // Save the main course data
     await db.runAsync(
-      `INSERT OR REPLACE INTO offline_course_details
-       (course_id, user_email, course_data)
-       VALUES (?, ?, ?);`,
-      [
-        courseDetails.id,
-        userEmail,
-        JSON.stringify(courseDetails)
-      ]
+      `INSERT OR REPLACE INTO offline_course_details (course_id, user_email, course_data) VALUES (?, ?, ?);`,
+      [course.id, userEmail, JSON.stringify(course)]
     );
 
-    console.log('✅ Saved full course details to local DB for course ID:', courseDetails.id);
+    // Separate and save materials and assessments from topics
+    const materialsToSave = [];
+    const assessmentsToSave = [];
+
+    // Extract materials and assessments from nested topics
+    if (course.topics) {
+      for (const topic of course.topics) {
+        if (topic.materials) {
+          materialsToSave.push(...topic.materials);
+        }
+        if (topic.assessments) {
+          assessmentsToSave.push(...topic.assessments);
+        }
+      }
+    }
+    
+    // Handle independent assessments (not in a topic)
+    if (course.assessments) {
+      assessmentsToSave.push(...course.assessments);
+    }
+    
+    // Save the materials and assessments
+    await saveMaterialsToDb(materialsToSave, course.id, userEmail);
+    await saveAssessmentsToDb(assessmentsToSave, course.id, userEmail);
+
+    console.log('✅ Detailed course data saved successfully.');
   } catch (error) {
-    console.error('❌ Failed to save course details to local DB:', error);
+    console.error('❌ Failed to save detailed course data:', error);
     throw error;
   }
 };
+
 
 export const getCourseDetailsFromDb = async (courseId: number, userEmail: string): Promise<any | null> => {
   try {
@@ -547,6 +642,95 @@ export const getEnrolledCoursesFromDb = async (userEmail: string) => {
   } catch (error) {
     console.error('❌ Failed to get enrolled courses from local DB:', error);
     return [];
+  }
+};
+
+export const saveMaterialsToDb = async (materials: any[], courseId: number, userEmail: string): Promise<void> => {
+  if (!materials || materials.length === 0) {
+    return;
+  }
+  await initDb();
+  const db = await getDb();
+  console.log('💾 Saving materials for course:', courseId);
+
+  await db.withTransactionAsync(async () => {
+    for (const material of materials) {
+      await db.runAsync(
+        `INSERT OR REPLACE INTO offline_materials (id, user_email, course_id, title, file_path, content, material_type, created_at, available_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+        [
+          material.id,
+          userEmail,
+          courseId,
+          material.title,
+          material.file_path,
+          material.content,
+          material.type,
+          material.created_at,
+          material.available_at
+        ]
+      );
+    }
+  });
+  console.log(`✅ Saved ${materials.length} materials for course ${courseId}`);
+};
+
+export const getMaterialDetailsFromDb = async (materialId: number, userEmail: string): Promise<any | null> => {
+  try {
+    const db = await getDb();
+    const result = await db.getFirstAsync(
+      `SELECT * FROM offline_materials WHERE id = ? AND user_email = ?;`,
+      [materialId, userEmail]
+    );
+    return result || null;
+  } catch (error) {
+    console.error(`❌ Failed to get material ${materialId} from DB:`, error);
+    return null;
+  }
+};
+
+export const saveAssessmentsToDb = async (assessments: any[], courseId: number, userEmail: string): Promise<void> => {
+  if (!assessments || assessments.length === 0) {
+    return;
+  }
+  await initDb();
+  const db = await getDb();
+  console.log('💾 Saving assessments for course:', courseId);
+  await db.withTransactionAsync(async () => {
+    for (const assessment of assessments) {
+      await db.runAsync(
+        `INSERT OR REPLACE INTO offline_assessments (id, user_email, course_id, title, description, type, available_at, unavailable_at, max_attempts, duration_minutes, assessment_file_path, assessment_file_url, points) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+        [
+          assessment.id,
+          userEmail,
+          courseId,
+          assessment.title,
+          assessment.description,
+          assessment.type,
+          assessment.available_at,
+          assessment.unavailable_at,
+          assessment.max_attempts,
+          assessment.duration_minutes,
+          assessment.assessment_file_path,
+          assessment.assessment_file_url,
+          assessment.points
+        ]
+      );
+    }
+  });
+  console.log(`✅ Saved ${assessments.length} assessments for course ${courseId}`);
+};
+
+export const getAssessmentDetailsFromDb = async (assessmentId: number, userEmail: string): Promise<any | null> => {
+  try {
+    const db = await getDb();
+    const result = await db.getFirstAsync(
+      `SELECT * FROM offline_assessments WHERE id = ? AND user_email = ?;`,
+      [assessmentId, userEmail]
+    );
+    return result || null;
+  } catch (error) {
+    console.error(`❌ Failed to get assessment ${assessmentId} from DB:`, error);
+    return null;
   }
 };
 

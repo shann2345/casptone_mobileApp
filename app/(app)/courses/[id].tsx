@@ -1,8 +1,6 @@
-// file: [id].tsx
-
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Modal, ScrollView, SectionList, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Modal, SectionList, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useNetworkStatus } from '../../../context/NetworkContext';
 import api, { getServerTime, getUserData } from '../../../lib/api';
 import { detectTimeManipulation, getCourseDetailsFromDb, getSavedServerTime, saveCourseDetailsToDb, saveServerTime } from '../../../lib/localDb';
@@ -308,6 +306,34 @@ export default function CourseDetailsScreen() {
     );
   }
 
+  const renderHeader = () => (
+    <View>
+      <View style={[styles.headerContainer, timeManipulationDetected && styles.disabledHeader]}>
+        <Text style={styles.courseTitle}>{courseDetail.title}</Text>
+        <View style={styles.detailRow}>
+          <Text style={styles.label}>{courseDetail.instructor.name} ({courseDetail.instructor.email})</Text>
+        </View>
+        
+        {timeManipulationDetected && (
+          <View style={styles.timeManipulationWarning}>
+            <Text style={styles.warningText}>
+              ⚠️ Time manipulation detected. Course content is locked until you reconnect to the internet.
+            </Text>
+          </View>
+        )}
+        
+        {/* Debug info - remove in production */}
+        {__DEV__ && serverTime && !timeManipulationDetected && (
+          <View style={styles.debugContainer}>
+            <Text style={styles.debugText}>
+              Server Time: {serverTime.toLocaleString()}
+            </Text>
+          </View>
+        )}
+      </View>
+    </View>
+  );
+
   const sectionsData = [{
     title: 'Course Content',
     data: courseDetail.sorted_content,
@@ -499,46 +525,21 @@ export default function CourseDetailsScreen() {
   return (
     <View style={styles.container}>
       <Stack.Screen options={{ title: courseDetail.title }} />
-      <ScrollView contentContainerStyle={styles.scrollViewContent}>
-        <View style={[styles.headerContainer, timeManipulationDetected && styles.disabledHeader]}>
-          <Text style={styles.courseTitle}>{courseDetail.title}</Text>
-          <View style={styles.detailRow}>
-            <Text style={styles.label}>{courseDetail.instructor.name} ({courseDetail.instructor.email})</Text>
+      {/* Replaced ScrollView with a header prop for SectionList */}
+      <SectionList
+        sections={sectionsData}
+        keyExtractor={(item, index) => `${item.type}-${item.id}-${index}`}
+        renderItem={renderItem}
+        renderSectionHeader={({ section: { title } }) => (
+          <View style={[styles.sectionHeader, timeManipulationDetected && styles.disabledHeader]}>
+            <Text style={styles.sectionTitle}>
+              {title} {timeManipulationDetected ? '(Time Sync Required)' : ''}
+            </Text>
           </View>
-          
-          {timeManipulationDetected && (
-            <View style={styles.timeManipulationWarning}>
-              <Text style={styles.warningText}>
-                ⚠️ Time manipulation detected. Course content is locked until you reconnect to the internet.
-              </Text>
-            </View>
-          )}
-          
-          {/* Debug info - remove in production */}
-          {__DEV__ && serverTime && !timeManipulationDetected && (
-            <View style={styles.debugContainer}>
-              <Text style={styles.debugText}>
-                Server Time: {serverTime.toLocaleString()}
-              </Text>
-            </View>
-          )}
-        </View>
-
-        <SectionList
-          sections={sectionsData}
-          keyExtractor={(item, index) => `${item.type}-${item.id}-${index}`}
-          renderItem={renderItem}
-          renderSectionHeader={({ section: { title } }) => (
-            <View style={[styles.sectionHeader, timeManipulationDetected && styles.disabledHeader]}>
-              <Text style={styles.sectionTitle}>
-                {title} {timeManipulationDetected ? '(Time Sync Required)' : ''}
-              </Text>
-            </View>
-          )}
-          contentContainerStyle={styles.sectionListContent}
-          scrollEnabled={true}
-        />
-      </ScrollView>
+        )}
+        ListHeaderComponent={renderHeader()}
+        contentContainerStyle={styles.sectionListContent}
+      />
 
       <Modal
         animationType="slide"
@@ -607,9 +608,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f5f5f5',
   },
-  scrollViewContent: {
-    padding: 5,
-  },
+  // Removed scrollViewContent style
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',

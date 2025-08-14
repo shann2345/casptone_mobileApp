@@ -5,8 +5,7 @@ import { router } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
 import { detectTimeManipulation } from './localDb';
 
-// IMPORTANT: Replace with your actual Laravel API URL.
-export const API_BASE_URL = 'http://192.168.1.10:8000/api'; // Or your actual IP/domain
+export const API_BASE_URL = 'http://192.168.1.9:8000/api'; // Or your actual IP/domain
 
 let lastTimeCheckTimestamp = 0;
 const TIME_CHECK_THROTTLE = 60000; // Only check time manipulation every 60 seconds

@@ -1,13 +1,15 @@
 // app/(app)/courses/materials/[materialId].tsx
 import { Ionicons } from '@expo/vector-icons';
-import * as FileSystem from 'expo-file-system'; // Import FileSystem
-import * as MediaLibrary from 'expo-media-library'; // Import MediaLibrary (for saving to gallery/downloads)
+import * as FileSystem from 'expo-file-system';
+import * as MediaLibrary from 'expo-media-library';
 import { Stack, useLocalSearchParams } from 'expo-router';
-import * as Sharing from 'expo-sharing'; // Import Sharing
+import * as Sharing from 'expo-sharing';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
-import api from '../../../../lib/api'; // Adjust path as necessary
+import { useNetworkStatus } from '../../../../context/NetworkContext';
+import api, { getUserData } from '../../../../lib/api';
+import { getMaterialDetailsFromDb } from '../../../../lib/localDb';
 
 interface MaterialDetail {
   id: number;
@@ -23,29 +25,53 @@ interface MaterialDetail {
 
 export default function MaterialDetailsScreen() {
   const { id: courseId, materialId } = useLocalSearchParams();
+  const { isConnected } = useNetworkStatus();
   const [materialDetail, setMaterialDetail] = useState<MaterialDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [isDownloading, setIsDownloading] = useState(false); // New state for download status
+  const [isDownloading, setIsDownloading] = useState(false);
 
   useEffect(() => {
     if (materialId) {
       fetchMaterialDetails();
     }
-  }, [materialId]);
+  }, [materialId, isConnected]);
 
   const fetchMaterialDetails = async () => {
     setLoading(true);
     setError(null);
+    const user = await getUserData();
+    const userEmail = user?.email;
+
+    if (!userEmail) {
+      setError('User not logged in.');
+      setLoading(false);
+      return;
+    }
+
     try {
-      const response = await api.get(`/materials/${materialId}`);
-      if (response.status === 200) {
-        console.log("API Response for Material Details:", JSON.stringify(response.data, null, 2));
-        setMaterialDetail(response.data.material);
+      if (isConnected) {
+        // ONLINE MODE
+        console.log('✅ Online: Fetching material details from API.');
+        const response = await api.get(`/materials/${materialId}`);
+        if (response.status === 200) {
+          console.log("API Response for Material Details:", JSON.stringify(response.data, null, 2));
+          setMaterialDetail(response.data.material);
+        } else {
+          const errorMessage = response.data?.message || 'Failed to fetch material details.';
+          setError(errorMessage);
+          Alert.alert('Error', errorMessage);
+        }
       } else {
-        const errorMessage = response.data?.message || 'Failed to fetch material details.';
-        setError(errorMessage);
-        Alert.alert('Error', errorMessage);
+        // OFFLINE MODE
+        console.log('⚠️ Offline: Fetching material details from local DB.');
+        const offlineMaterial = await getMaterialDetailsFromDb(materialId as string, userEmail);
+        if (offlineMaterial) {
+          setMaterialDetail(offlineMaterial as MaterialDetail);
+        } else {
+          setError('Offline: Material details not available locally.');
+          Alert.alert('Offline Mode', 'Material details not found in local storage. Please connect to the internet to load.');
+        }
       }
     } catch (err: any) {
       console.error('Failed to fetch material details:', err.response?.data || err.message);
@@ -66,9 +92,6 @@ export default function MaterialDetailsScreen() {
     setIsDownloading(true); // Start downloading indicator
 
     try {
-      // 1. Request permissions if you intend to save to Media Library (e.g., Downloads folder)
-      //    This is crucial for Android specifically for saving outside app's sandbox.
-      //    For iOS, `Sharing.shareAsync` typically handles temporary permissions.
       const { status } = await MediaLibrary.requestPermissionsAsync();
       if (status !== 'granted') {
         Alert.alert(

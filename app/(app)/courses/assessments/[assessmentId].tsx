@@ -4,7 +4,10 @@ import * as DocumentPicker from 'expo-document-picker';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import api from '../../../../lib/api';
+
+import { useNetworkStatus } from '../../../../context/NetworkContext';
+import api, { getUserData } from '../../../../lib/api';
+import { getAssessmentDetailsFromDb } from '../../../../lib/localDb';
 
 interface AssessmentDetail {
   id: number;
@@ -16,8 +19,7 @@ interface AssessmentDetail {
   unavailable_at?: string;
   max_attempts?: number;
   duration_minutes?: number;
-  assessment_file_path?: string | null; // This is the internal path
-  assessment_file_url?: string | null;   // <--- Add this for the public URL
+  assessment_file_path?: string | null;
   points: number;
 }
 
@@ -43,6 +45,7 @@ interface LatestAssignmentSubmission {
 export default function AssessmentDetailsScreen() {
   const { id: courseId, assessmentId } = useLocalSearchParams();
   const router = useRouter();
+  const { isConnected } = useNetworkStatus();
 
   const [assessmentDetail, setAssessmentDetail] = useState<AssessmentDetail | null>(null);
   const [attemptStatus, setAttemptStatus] = useState<AttemptStatus | null>(null);
@@ -57,68 +60,79 @@ export default function AssessmentDetailsScreen() {
 
     setLoading(true);
     setError(null);
-    try {
-      // Fetch assessment details
-      const assessmentResponse = await api.get(`/assessments/${assessmentId}`);
-      if (assessmentResponse.status === 200) {
-        const fetchedAssessment = assessmentResponse.data.assessment;
-        setAssessmentDetail(fetchedAssessment);
-        console.log("API Response for Assessment Details:", JSON.stringify(assessmentResponse.data, null, 2));
-      
-        if (fetchedAssessment.type === 'quiz' || fetchedAssessment.type === 'exam') {
-          const attemptStatusResponse = await api.get(`/assessments/${assessmentId}/attempt-status`);
-          if (attemptStatusResponse.status === 200) {
-            setAttemptStatus(attemptStatusResponse.data);
-          } else {
-            setError('Failed to fetch attempt status.');
-            Alert.alert('Error', 'Failed to fetch attempt status.');
-          }
-        } else {
-          setAttemptStatus(null);
-        }
 
-        if (['assignment', 'activity', 'project'].includes(fetchedAssessment.type)) {
-          const assignmentSubmissionResponse = await api.get(`/assessments/${assessmentId}/latest-assignment-submission`);
-          if (assignmentSubmissionResponse.status === 200) {
-            setLatestAssignmentSubmission(assignmentSubmissionResponse.data);
-            console.log("API Response for Assignment Submission:", JSON.stringify(assignmentSubmissionResponse.data, null, 2));
-            
-            if (assignmentSubmissionResponse.data.has_submitted_file) {
-              const displayName = assignmentSubmissionResponse.data.original_filename || 
-                                 assignmentSubmissionResponse.data.submitted_file_name || 
-                                 'Unknown File';
-              
-              setSelectedFile({
-                name: displayName,
-                uri: assignmentSubmissionResponse.data.submitted_file_url,
-                mimeType: 'application/octet-stream',
-                size: 0,
-                lastModified: 0,
-              } as DocumentPicker.DocumentPickerAsset);
+    const user = await getUserData();
+    const userEmail = user?.email;
+    if (!userEmail) {
+      setError('User not logged in.');
+      setLoading(false);
+      return;
+    }
+
+    try {
+      if (isConnected) {
+        // ONLINE MODE
+        console.log('✅ Online: Fetching assessment details from API.');
+        const assessmentResponse = await api.get(`/assessments/${assessmentId}`);
+        if (assessmentResponse.status === 200) {
+          console.log("API Response for Assessment Details:", JSON.stringify(assessmentResponse.data, null, 2));
+          const fetchedAssessment = assessmentResponse.data.assessment;
+          setAssessmentDetail(fetchedAssessment);
+
+          // Fetch attempt status and latest submission only if online
+          if (fetchedAssessment.type === 'quiz' || fetchedAssessment.type === 'exam') {
+            const attemptStatusResponse = await api.get(`/assessments/${assessmentId}/attempt-status`);
+            if (attemptStatusResponse.status === 200) {
+              setAttemptStatus(attemptStatusResponse.data);
             } else {
-                setSelectedFile(null); // Clear selected file if no previous submission
+              setError('Failed to fetch attempt status.');
             }
           } else {
-            setError('Failed to fetch latest assignment submission.');
-            Alert.alert('Error', 'Failed to fetch latest assignment submission.');
+            setAttemptStatus(null);
+          }
+
+          if (['assignment', 'activity', 'project'].includes(fetchedAssessment.type)) {
+            const assignmentSubmissionResponse = await api.get(`/assessments/${assessmentId}/latest-assignment-submission`);
+            if (assignmentSubmissionResponse.status === 200) {
+              setLatestAssignmentSubmission(assignmentSubmissionResponse.data);
+              // ... (file handling logic remains the same)
+            } else {
+              setError('Failed to fetch latest assignment submission.');
+            }
+          } else {
+            setLatestAssignmentSubmission(null);
+            setSelectedFile(null);
           }
         } else {
-          setLatestAssignmentSubmission(null);
-          setSelectedFile(null); // Clear selected file for non-assignment types
+          setError('Failed to fetch assessment details.');
         }
-
       } else {
-        setError('Failed to fetch assessment details.');
-        Alert.alert('Error', 'Failed to fetch assessment details.');
+        // OFFLINE MODE
+        console.log('⚠️ Offline: Fetching assessment details from local DB.');
+        const offlineAssessment = await getAssessmentDetailsFromDb(assessmentId as string, userEmail);
+        if (offlineAssessment) {
+          setAssessmentDetail(offlineAssessment as AssessmentDetail);
+          // In offline mode, we can't get live attempt status or submissions, so we clear them
+          setAttemptStatus(null);
+          setLatestAssignmentSubmission(null);
+          setSelectedFile(null);
+        } else {
+          setError('Offline: Assessment details not available locally.');
+          Alert.alert('Offline Mode', 'Assessment details not found in local storage. Please connect to the internet to load.');
+        }
       }
     } catch (err: any) {
       console.error('Failed to fetch assessment details/status/submission:', err.response?.data || err.message);
       setError('Network error or unable to load assessment details/status/submission.');
-      Alert.alert('Error', 'Failed to fetch assessment details/status/submission.');
+      if (!isConnected) {
+         Alert.alert('Error', 'Failed to load assessment details from local storage.');
+      } else {
+         Alert.alert('Error', 'Failed to fetch assessment details/status/submission.');
+      }
     } finally {
       setLoading(false);
     }
-  }, [assessmentId]);
+  }, [assessmentId, isConnected]);
 
   useFocusEffect(
     useCallback(() => {
@@ -429,11 +443,11 @@ export default function AssessmentDetailsScreen() {
         </View>
 
         {/* Instructor's Assessment File Section (for Assignment types) */}
-        {isAssignmentType && assessmentDetail.assessment_file_url && (
+        {isAssignmentType && assessmentDetail.assessment_file_path && (
             <View style={styles.sectionContainer}>
                 <Text style={styles.sectionHeader}>Assessment File</Text>
                 <TouchableOpacity 
-                    onPress={() => assessmentDetail.assessment_file_url && handleDownloadAssessmentFile(assessmentDetail.assessment_file_url)}
+                    onPress={() => assessmentDetail.assessment_file_path && handleDownloadAssessmentFile(assessmentDetail.assessment_file_path)}
                     style={styles.downloadFileButton}
                 >
                     <Ionicons name="download-outline" size={20} color="#007bff" />
