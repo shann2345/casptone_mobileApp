@@ -20,6 +20,7 @@ import api, {
 import {
   emergencyResetTimeDetection // Import the exported function
   ,
+
   getAllOfflineUsers,
   initDb,
   saveUserForOfflineAccess,
@@ -111,7 +112,7 @@ export default function LoginScreen() {
     }
   };
 
-  const handleLogin = async () => {
+ const handleLogin = async () => {
     setLoading(true);
     setErrors({});
 
@@ -190,19 +191,7 @@ export default function LoginScreen() {
     } catch (error: any) {
       console.error('❌ Login error:', error);
       
-      // Handle time manipulation errors specifically
-      if (error.message && error.message.includes('Time manipulation detected')) {
-        console.log('🔄 Time manipulation error detected, attempting reset...');
-        await emergencyResetTimeDetection(); // Use the imported function
-        
-        Alert.alert(
-          'Time Sync Issue Resolved', 
-          'A time synchronization issue was detected and fixed. Please try logging in again.',
-          [{ text: 'OK' }]
-        );
-        return;
-      }
-      
+      // Removed the emergency reset call here, as it's now handled by the initial setup
       if (error.response?.data?.errors) {
         setErrors(error.response.data.errors);
       } else {

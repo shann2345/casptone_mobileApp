@@ -1,3 +1,4 @@
+// [assessmentId].tsx
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
@@ -7,7 +8,7 @@ import { ActivityIndicator, Alert, Linking, ScrollView, StyleSheet, Text, Toucha
 
 import { useNetworkStatus } from '../../../../context/NetworkContext';
 import api, { getUserData } from '../../../../lib/api';
-import { getAssessmentDetailsFromDb } from '../../../../lib/localDb';
+import { getAssessmentDetailsFromDb, saveAssessmentDetailsToDb, saveAssessmentsToDb } from '../../../../lib/localDb'; // Updated import
 
 interface AssessmentDetail {
   id: number;
@@ -20,6 +21,7 @@ interface AssessmentDetail {
   max_attempts?: number;
   duration_minutes?: number;
   assessment_file_path?: string | null;
+  assessment_file_url?: string | null; // Added this property
   points: number;
 }
 
@@ -79,11 +81,15 @@ export default function AssessmentDetailsScreen() {
           const fetchedAssessment = assessmentResponse.data.assessment;
           setAssessmentDetail(fetchedAssessment);
 
+          let newAttemptStatus: AttemptStatus | null = null;
+          let newLatestSubmission: LatestAssignmentSubmission | null = null;
+          
           // Fetch attempt status and latest submission only if online
           if (fetchedAssessment.type === 'quiz' || fetchedAssessment.type === 'exam') {
             const attemptStatusResponse = await api.get(`/assessments/${assessmentId}/attempt-status`);
             if (attemptStatusResponse.status === 200) {
-              setAttemptStatus(attemptStatusResponse.data);
+              newAttemptStatus = attemptStatusResponse.data;
+              setAttemptStatus(newAttemptStatus);
             } else {
               setError('Failed to fetch attempt status.');
             }
@@ -94,7 +100,8 @@ export default function AssessmentDetailsScreen() {
           if (['assignment', 'activity', 'project'].includes(fetchedAssessment.type)) {
             const assignmentSubmissionResponse = await api.get(`/assessments/${assessmentId}/latest-assignment-submission`);
             if (assignmentSubmissionResponse.status === 200) {
-              setLatestAssignmentSubmission(assignmentSubmissionResponse.data);
+              newLatestSubmission = assignmentSubmissionResponse.data;
+              setLatestAssignmentSubmission(newLatestSubmission);
               // ... (file handling logic remains the same)
             } else {
               setError('Failed to fetch latest assignment submission.');
@@ -103,6 +110,16 @@ export default function AssessmentDetailsScreen() {
             setLatestAssignmentSubmission(null);
             setSelectedFile(null);
           }
+          
+          // Save the fetched data to local DB
+          await saveAssessmentsToDb([fetchedAssessment], parseInt(courseId as string), userEmail);
+          await saveAssessmentDetailsToDb(
+            fetchedAssessment.id,
+            userEmail,
+            newAttemptStatus,
+            newLatestSubmission
+          );
+          
         } else {
           setError('Failed to fetch assessment details.');
         }
@@ -111,10 +128,10 @@ export default function AssessmentDetailsScreen() {
         console.log('⚠️ Offline: Fetching assessment details from local DB.');
         const offlineAssessment = await getAssessmentDetailsFromDb(assessmentId as string, userEmail);
         if (offlineAssessment) {
+          // The returned object now includes the additional data
           setAssessmentDetail(offlineAssessment as AssessmentDetail);
-          // In offline mode, we can't get live attempt status or submissions, so we clear them
-          setAttemptStatus(null);
-          setLatestAssignmentSubmission(null);
+          setAttemptStatus(offlineAssessment.attemptStatus);
+          setLatestAssignmentSubmission(offlineAssessment.latestSubmission);
           setSelectedFile(null);
         } else {
           setError('Offline: Assessment details not available locally.');
@@ -195,6 +212,11 @@ export default function AssessmentDetailsScreen() {
 
   const handleStartQuizAttempt = async () => {
     if (!assessmentDetail) return;
+    
+    if (!isConnected) {
+       Alert.alert('Offline Mode', 'You must be online to start a quiz or exam attempt.');
+       return;
+    }
 
     if (!isAssessmentAvailable(assessmentDetail)) {
       Alert.alert(
@@ -248,6 +270,11 @@ export default function AssessmentDetailsScreen() {
 
   const handleSubmitAssignment = async () => {
     if (!assessmentDetail) return;
+
+    if (!isConnected) {
+      Alert.alert('Offline Mode', 'You must be online to submit an assignment.');
+      return;
+    }
 
     if (!isAssessmentAvailable(assessmentDetail)) {
       Alert.alert(
@@ -320,7 +347,7 @@ export default function AssessmentDetailsScreen() {
 
   const isAvailable = assessmentDetail ? isAssessmentAvailable(assessmentDetail) : false;
 
-  let isQuizAttemptButtonDisabled = !isAvailable || submissionLoading;
+  let isQuizAttemptButtonDisabled = !isAvailable || submissionLoading || !isConnected;
   let quizButtonText = 'Start Quiz';
 
   if (assessmentDetail && (assessmentDetail.type === 'quiz' || assessmentDetail.type === 'exam') && attemptStatus) {
@@ -337,6 +364,13 @@ export default function AssessmentDetailsScreen() {
   } else if (!isAvailable) {
     quizButtonText = 'Quiz Not Yet Available';
     isQuizAttemptButtonDisabled = true;
+  }
+  
+  if (!isConnected) {
+    isQuizAttemptButtonDisabled = true;
+    if (assessmentDetail?.type === 'quiz' || assessmentDetail?.type === 'exam') {
+      quizButtonText = 'Online Required to Start Quiz';
+    }
   }
 
 
@@ -443,18 +477,20 @@ export default function AssessmentDetailsScreen() {
         </View>
 
         {/* Instructor's Assessment File Section (for Assignment types) */}
-        {isAssignmentType && assessmentDetail.assessment_file_path && (
+        {isAssignmentType && assessmentDetail.assessment_file_url && (
             <View style={styles.sectionContainer}>
                 <Text style={styles.sectionHeader}>Assessment File</Text>
                 <TouchableOpacity 
-                    onPress={() => assessmentDetail.assessment_file_path && handleDownloadAssessmentFile(assessmentDetail.assessment_file_path)}
+                    onPress={() => assessmentDetail.assessment_file_url && handleDownloadAssessmentFile(assessmentDetail.assessment_file_url)}
                     style={styles.downloadFileButton}
+                    disabled={!isConnected}
                 >
-                    <Ionicons name="download-outline" size={20} color="#007bff" />
-                    <Text style={styles.downloadFileButtonText}>
+                    <Ionicons name="download-outline" size={20} color={isConnected ? "#007bff" : "#666"} />
+                    <Text style={[styles.downloadFileButtonText, !isConnected && { color: '#666' }]}>
                         Download Assignment Instructions
                     </Text>
                 </TouchableOpacity>
+                {!isConnected && <Text style={styles.offlineWarning}>Must be online to download file.</Text>}
             </View>
         )}
 
@@ -464,6 +500,12 @@ export default function AssessmentDetailsScreen() {
             // Assignment, Activity, Project Types
             <View>
               <Text style={styles.sectionHeader}>Submit Assessment</Text>
+              
+              {!isConnected && (
+                  <Text style={[styles.offlineWarning, { textAlign: 'center', marginBottom: 10 }]}>
+                    Submission is disabled in offline mode.
+                  </Text>
+              )}
 
               {latestAssignmentSubmission?.has_submitted_file && (
                 <View style={styles.submittedFileContainer}>
@@ -471,9 +513,10 @@ export default function AssessmentDetailsScreen() {
                   <TouchableOpacity 
                     onPress={() => latestAssignmentSubmission.submitted_file_url && handleDownloadSubmittedFile(latestAssignmentSubmission.submitted_file_url)}
                     style={styles.downloadFileButton}
+                    disabled={!isConnected}
                   >
-                    <Ionicons name="document-text-outline" size={20} color="#007bff" />
-                    <Text style={styles.downloadFileButtonText}>
+                    <Ionicons name="document-text-outline" size={20} color={isConnected ? "#007bff" : "#666"} />
+                    <Text style={[styles.downloadFileButtonText, !isConnected && { color: '#666' }]}>
                       {latestAssignmentSubmission.original_filename || 
                       latestAssignmentSubmission.submitted_file_name || 
                       'Unknown File'}
@@ -489,16 +532,17 @@ export default function AssessmentDetailsScreen() {
                       Status: {latestAssignmentSubmission.status.replace('_', ' ')}
                     </Text>
                   )}
+                  {!isConnected && <Text style={styles.offlineWarning}>Must be online to view/download submission.</Text>}
                 </View>
               )}
 
               <TouchableOpacity
                 style={styles.pickFileButton}
                 onPress={handlePickDocument}
-                disabled={!isAvailable || submissionLoading}
+                disabled={!isAvailable || submissionLoading || !isConnected}
               >
-                <Ionicons name="folder-open-outline" size={20} color="#007bff" />
-                <Text style={styles.pickFileButtonText}>
+                <Ionicons name="folder-open-outline" size={20} color={!isAvailable || !isConnected ? "#666" : "#007bff"} />
+                <Text style={[styles.pickFileButtonText, (!isAvailable || !isConnected) && { color: '#666' }]}>
                   {selectedFile ? selectedFile.name : `Select ${assessmentDetail.type || 'assessment'} File`}
                 </Text>
               </TouchableOpacity>
@@ -508,10 +552,10 @@ export default function AssessmentDetailsScreen() {
               <TouchableOpacity
                 style={[
                   styles.actionButton,
-                  (!isAvailable || !selectedFile || submissionLoading) && styles.actionButtonDisabled,
+                  (!isAvailable || !selectedFile || submissionLoading || !isConnected) && styles.actionButtonDisabled,
                 ]}
                 onPress={handleSubmitAssignment}
-                disabled={!isAvailable || !selectedFile || submissionLoading}
+                disabled={!isAvailable || !selectedFile || submissionLoading || !isConnected}
               >
                 {submissionLoading ? (
                   <ActivityIndicator color="#fff" />
@@ -736,6 +780,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: 'bold',
     color: '#6c757d',
+    marginTop: 5,
+  },
+  offlineWarning: {
+    color: '#ff6347',
+    fontSize: 12,
     marginTop: 5,
   },
 });

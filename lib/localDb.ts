@@ -66,8 +66,6 @@ const hashPassword = async (password: string): Promise<string> => {
   }
 };
 
-// ... (rest of your localDb.ts file)
-
 export const initDb = async (): Promise<void> => {
   if (dbInitialized && dbInstance) {
     console.log('✅ Database already initialized');
@@ -238,6 +236,17 @@ export const initDb = async (): Promise<void> => {
           assessment_file_url TEXT,
           points INTEGER,
           FOREIGN KEY (course_id, user_email) REFERENCES offline_course_details(course_id, user_email) ON DELETE CASCADE
+        );`
+      );
+      
+      // Create a new table to store additional, dynamic assessment data
+      await db.execAsync(
+        `CREATE TABLE IF NOT EXISTS offline_assessment_data (
+          assessment_id INTEGER NOT NULL,
+          user_email TEXT NOT NULL,
+          data TEXT NOT NULL, -- This will store the JSON object for attempt status and latest submission
+          PRIMARY KEY (assessment_id, user_email),
+          FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessments(id, user_email) ON DELETE CASCADE
         );`
       );
       
@@ -720,14 +729,69 @@ export const saveAssessmentsToDb = async (assessments: any[], courseId: number, 
   console.log(`✅ Saved ${assessments.length} assessments for course ${courseId}`);
 };
 
-export const getAssessmentDetailsFromDb = async (assessmentId: number, userEmail: string): Promise<any | null> => {
+export const saveAssessmentDetailsToDb = async (
+  assessmentId: number | string,
+  userEmail: string,
+  attemptStatus: any,
+  latestSubmission: any
+): Promise<void> => {
+  try {
+    await initDb();
+    const db = await getDb();
+    console.log('💾 Saving detailed assessment data for user:', userEmail, ' and assessment:', assessmentId);
+
+    const assessmentData = {
+      attemptStatus: attemptStatus || null,
+      latestSubmission: latestSubmission || null,
+    };
+
+    await db.runAsync(
+      `INSERT OR REPLACE INTO offline_assessment_data (assessment_id, user_email, data) VALUES (?, ?, ?);`,
+      [assessmentId, userEmail, JSON.stringify(assessmentData)]
+    );
+
+    console.log('✅ Detailed assessment data saved successfully.');
+  } catch (error) {
+    console.error('❌ Failed to save detailed assessment data:', error);
+    throw error;
+  }
+};
+
+export const getAssessmentDetailsFromDb = async (assessmentId: number | string, userEmail: string): Promise<any | null> => {
   try {
     const db = await getDb();
-    const result = await db.getFirstAsync(
+    
+    // First, get the base assessment details
+    const assessmentResult = await db.getFirstAsync(
       `SELECT * FROM offline_assessments WHERE id = ? AND user_email = ?;`,
       [assessmentId, userEmail]
     );
-    return result || null;
+
+    if (!assessmentResult) {
+      return null;
+    }
+
+    // Then, get the dynamic data (attempt status, submission)
+    const dataResult = await db.getFirstAsync(
+      `SELECT data FROM offline_assessment_data WHERE assessment_id = ? AND user_email = ?;`,
+      [assessmentId, userEmail]
+    );
+
+    let additionalData = {
+      attemptStatus: null,
+      latestSubmission: null,
+    };
+
+    if (dataResult && dataResult.data) {
+      additionalData = JSON.parse(dataResult.data);
+    }
+
+    // Combine the two results
+    return {
+      ...assessmentResult,
+      attemptStatus: additionalData.attemptStatus,
+      latestSubmission: additionalData.latestSubmission,
+    };
   } catch (error) {
     console.error(`❌ Failed to get assessment ${assessmentId} from DB:`, error);
     return null;
@@ -910,13 +974,12 @@ export const emergencyResetTimeDetection = async (): Promise<void> => {
     
     console.log('🚨 Emergency reset of ALL time detection data');
     
-    // Reset all time data
+    // Reset time check data for all users, but DO NOT clear the server time and offset
     await db.execAsync(
       `UPDATE offline_users SET 
-       last_time_check = NULL, 
-       time_check_sequence = 0,
-       server_time = NULL,
-       server_time_offset = NULL;`
+       last_time_check = ?, 
+       time_check_sequence = 0
+       WHERE last_time_check IS NOT NULL;`
     );
     
     // Clear all time check logs
