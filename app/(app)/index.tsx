@@ -1,10 +1,12 @@
+// This is the modified code for `index.tsx`.
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Animated, FlatList, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useNetworkStatus } from '../../context/NetworkContext';
 import api, { clearAuthToken, getAuthToken, getServerTime, getUserData } from '../../lib/api';
-import { detectTimeManipulation, getEnrolledCoursesFromDb, initDb, saveCourseDetailsToDb, saveCourseToDb, saveServerTime } from '../../lib/localDb';
+import { getDb, getEnrolledCoursesFromDb, initDb, saveCourseDetailsToDb, saveCourseToDb, saveServerTime, updateTimeSync } from '../../lib/localDb';
+
 
 interface Course {
   id: number;
@@ -41,7 +43,12 @@ export default function HomeScreen() {
   const [enrolledCourses, setEnrolledCourses] = useState<EnrolledCourse[]>([]);
   const [isLoadingEnrolledCourses, setIsLoadingEnrolledCourses] = useState<boolean>(true);
   const [isInitialized, setIsInitialized] = useState<boolean>(false);
-  const [timeManipulationDetected, setTimeManipulationDetected] = useState<boolean>(false);
+
+  // New state and animated value for the ad-style dropdown
+  const [isAdVisible, setIsAdVisible] = useState<boolean>(false);
+  const adContentHeight = 60; // Define the height of the ad content
+  // Corrected initial value to 0, so the ad starts collapsed
+  const adHeight = useRef(new Animated.Value(0)).current;
 
   // Use the custom hook to get network status
   const { isConnected, netInfo } = useNetworkStatus();
@@ -74,13 +81,13 @@ export default function HomeScreen() {
     for (const course of courses) {
       try {
         console.log(`🔄 Fetching complete details for course: ${course.title}`);
-        
+
         // Fetch complete course details including materials and assessments
         const courseDetailResponse = await api.get(`/courses/${course.id}`);
-        
+
         if (courseDetailResponse.status === 200) {
           const fullCourseData = courseDetailResponse.data.course;
-          
+
           // This is the call to the function we just implemented
           await saveCourseDetailsToDb(fullCourseData, userEmail);
           console.log(`✅ Complete course data saved for: ${course.title}`);
@@ -117,42 +124,11 @@ export default function HomeScreen() {
         return;
       }
 
-      // Check for time manipulation before proceeding
-      try {
-        const timeCheck = await detectTimeManipulation(userEmail);
-        if (!timeCheck.isValid) {
-          console.log('❌ Time manipulation detected on home screen:', timeCheck.reason);
-          setTimeManipulationDetected(true);
-          Alert.alert(
-            'Time Manipulation Detected',
-            `${timeCheck.reason}. Please connect to the internet to re-sync your time settings.`,
-            [
-              {
-                text: 'OK',
-                onPress: () => {
-                  if (isConnected) {
-                    // If online, force logout and re-login to re-sync time
-                    clearAuthToken();
-                    router.replace('/login');
-                  }
-                }
-              }
-            ]
-          );
-          setIsLoadingEnrolledCourses(false);
-          return;
-        } else {
-          setTimeManipulationDetected(false);
-        }
-      } catch (timeError) {
-        console.error('❌ Error checking time manipulation:', timeError);
-        // Continue with normal flow if time check fails
-      }
-
       setIsLoadingEnrolledCourses(true);
-      
+
       try {
         if (isConnected) {
+          // ONLINE MODE: Fetch from API and sync to local DB
           // Check for a token first before attempting API call
           const token = await getAuthToken();
           if (!token) {
@@ -165,6 +141,7 @@ export default function HomeScreen() {
              setIsLoadingEnrolledCourses(false);
              return;
           }
+
           try {
             const apiServerTime = await getServerTime();
             if (apiServerTime) {
@@ -174,18 +151,8 @@ export default function HomeScreen() {
             }
           } catch (timeError) {
             console.error('❌ Failed to fetch or save server time:', timeError);
-            // If time manipulation was detected, don't proceed with API calls
-            if (timeError.message === 'Time manipulation detected') {
-              Alert.alert(
-                'Time Manipulation Detected',
-                'Please restart the app and ensure your device time is correct.',
-                [{ text: 'OK', onPress: () => router.replace('/login') }]
-              );
-              return;
-            }
           }
 
-          // ONLINE MODE: Fetch from API and sync to local DB
           console.log('✅ Online: Fetching courses from API.');
           const response = await api.get('/my-courses');
           const courses = response.data.courses || [];
@@ -204,26 +171,16 @@ export default function HomeScreen() {
 
           // Then, fetch and save complete course details including materials and assessments
           await fetchAndSaveCompleteCoursesData(courses, userEmail);
-          
+
         } else {
-          // OFFLINE MODE: Fetch from local DB for the specific user
+          // OFFLINE MODE: Fetch from local DB
           console.log('⚠️ Offline: Fetching courses from local DB.');
           const offlineCourses = await getEnrolledCoursesFromDb(userEmail);
           setEnrolledCourses(offlineCourses as EnrolledCourse[]);
         }
       } catch (error: any) {
         console.error('Error fetching enrolled courses:', error.response?.data || error.message);
-        
-        // If the error is due to time manipulation, handle it specifically
-        if (error.message === 'Time manipulation detected. Please log in again.') {
-          Alert.alert(
-            'Time Manipulation Detected',
-            'Please log in again to continue.',
-            [{ text: 'OK', onPress: () => router.replace('/login') }]
-          );
-          return;
-        }
-        
+
         // If online request fails, try to load from local DB as fallback
         if (isConnected) {
           console.log('🔄 API failed, falling back to local DB...');
@@ -244,17 +201,49 @@ export default function HomeScreen() {
 
     fetchData();
   }, [isConnected, netInfo, isInitialized]);
-  
-  const handleSearchPress = () => {
-    if (timeManipulationDetected) {
-      Alert.alert(
-        'Time Manipulation Detected',
-        'Please connect to the internet to re-sync your time settings before searching.',
-        [{ text: 'OK' }]
-      );
-      return;
-    }
 
+  useEffect(() => {
+  if (!isConnected || !isInitialized) return;
+
+  // Set up periodic time sync while online and on home screen
+  const timeSyncInterval = setInterval(async () => {
+    try {
+      const userData = await getUserData();
+      if (userData && userData.email) {
+        // Update the time sync periodically to prevent stale time issues
+        await updateTimeSync(userData.email);
+        
+        // Optionally, fetch fresh server time every 10 minutes
+        const now = Date.now();
+        
+        // Get the last sync time from the database
+        const db = await getDb();
+        const result = await db.getFirstAsync(
+          `SELECT last_time_check FROM offline_users WHERE email = ?;`,
+          [userData.email]
+        ) as any;
+        
+        const lastSync = result?.last_time_check;
+        if (!lastSync || (now - lastSync) > 600000) { // 10 minutes
+          try {
+            const apiServerTime = await getServerTime();
+            if (apiServerTime) {
+              await saveServerTime(userData.email, apiServerTime, new Date().toISOString());
+            }
+          } catch (timeError) {
+            console.error('⚠️ Periodic server time sync failed:', timeError);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('❌ Periodic time sync error:', error);
+    }
+    }, 60000); // Run every minute
+
+    return () => clearInterval(timeSyncInterval);
+  }, [isConnected, isInitialized]);
+
+  const handleSearchPress = () => {
     setSearchModalVisible(true);
     setSearchResults([]);
     setSearchQuery('');
@@ -273,15 +262,6 @@ export default function HomeScreen() {
       return;
     }
 
-    if (timeManipulationDetected) {
-      Alert.alert(
-        'Time Manipulation Detected',
-        'Please restart the app to re-sync your time settings before searching.',
-        [{ text: 'OK' }]
-      );
-      return;
-    }
-
     setIsLoadingSearch(true);
     setHasSearched(true);
     try {
@@ -290,15 +270,7 @@ export default function HomeScreen() {
       console.log('Search Results:', response.data.courses);
     } catch (error: any) {
       console.error('Error searching courses:', error);
-      if (error.message === 'Time manipulation detected. Please log in again.') {
-        Alert.alert(
-          'Time Manipulation Detected',
-          'Please log in again to continue.',
-          [{ text: 'OK', onPress: () => router.replace('/login') }]
-        );
-      } else {
-        Alert.alert('Search Error', 'Failed to fetch search results. Please try again.');
-      }
+      Alert.alert('Search Error', 'Failed to fetch search results. Please try again.');
       setSearchResults([]);
     } finally {
       setIsLoadingSearch(false);
@@ -311,15 +283,6 @@ export default function HomeScreen() {
       return;
     }
 
-    if (timeManipulationDetected) {
-      Alert.alert(
-        'Time Manipulation Detected',
-        'Please restart the app to re-sync your time settings before enrolling.',
-        [{ text: 'OK' }]
-      );
-      return;
-    }
-    
     let userEmail = '';
     try {
       const userData = await getUserData();
@@ -365,10 +328,10 @@ export default function HomeScreen() {
         const updatedEnrolledCoursesResponse = await api.get('/my-courses');
         const updatedCourses = updatedEnrolledCoursesResponse.data.courses || [];
         setEnrolledCourses(updatedCourses);
-        
+
         // Also fetch complete details for all courses after enrollment
         await fetchAndSaveCompleteCoursesData(updatedCourses, userEmail);
-        
+
       } catch (refreshError) {
         console.error('Error refreshing enrolled courses after enrollment:', refreshError);
         // Fallback to local DB if API refresh fails
@@ -383,15 +346,7 @@ export default function HomeScreen() {
       }
     } catch (error: any) {
       console.error('Enrollment error:', error.response?.data || error.message);
-      if (error.message === 'Time manipulation detected. Please log in again.') {
-        Alert.alert(
-          'Time Manipulation Detected',
-          'Please log in again to continue.',
-          [{ text: 'OK', onPress: () => router.replace('/login') }]
-        );
-      } else {
-        Alert.alert('Enrollment Failed', error.response?.data?.message || 'Could not enroll in the course. Please try again.');
-      }
+      Alert.alert('Enrollment Failed', error.response?.data?.message || 'Could not enroll in the course. Please try again.');
     }
   };
 
@@ -404,11 +359,11 @@ export default function HomeScreen() {
 
       <TouchableOpacity
         style={[
-          styles.enrollButton, 
-          (!isConnected || timeManipulationDetected) && styles.disabledButton
+          styles.enrollButton,
+          !isConnected && styles.disabledButton
         ]}
         onPress={() => handleEnrollCourse(item)}
-        disabled={!isConnected || timeManipulationDetected}
+        disabled={!isConnected}
       >
         <Text style={styles.enrollButtonText}>Enroll Course</Text>
       </TouchableOpacity>
@@ -417,35 +372,20 @@ export default function HomeScreen() {
 
   const renderEnrolledCourseCard = ({ item }: { item: EnrolledCourse }) => (
     <TouchableOpacity
-      style={[
-        styles.enrolledCourseCard,
-        timeManipulationDetected && styles.disabledCard
-      ]}
+      style={styles.enrolledCourseCard}
       onPress={() => {
-        if (timeManipulationDetected) {
-          Alert.alert(
-            'Time Manipulation Detected',
-            'Please connect to the internet to re-sync your time settings before accessing courses.',
-            [{ text: 'OK' }]
-          );
-          return;
-        }
         console.log('Viewing enrolled course:', item.title);
         router.navigate({
           pathname: '/courses',
           params: { courseId: item.id.toString() },
         });
       }}
-      disabled={timeManipulationDetected}
     >
       <Ionicons name="book-outline" size={30} color="#007bff" />
       <Text style={styles.enrolledCourseCardTitle} numberOfLines={2}>{item.title}</Text>
       <Text style={styles.enrolledCourseCardCode}>{item.description}</Text>
       {item.pivot && (
         <Text style={styles.enrolledCourseCardStatus}>Status: {item.pivot.status}</Text>
-      )}
-      {timeManipulationDetected && (
-        <Text style={styles.disabledText}>Time Sync Required</Text>
       )}
     </TouchableOpacity>
   );
@@ -455,11 +395,25 @@ export default function HomeScreen() {
       enrolledCoursesFlatListRef.current.scrollToEnd({ animated: true });
     }
   };
-  
+
   const scrollEnrolledCoursesLeft = () => {
     if (enrolledCoursesFlatListRef.current) {
       enrolledCoursesFlatListRef.current.scrollToOffset({ offset: 0, animated: true });
     }
+  };
+
+  const toggleAd = () => {
+    setIsAdVisible(!isAdVisible);
+    Animated.timing(adHeight, {
+      toValue: isAdVisible ? 0 : adContentHeight, // Animate to 0 or content height
+      duration: 300,
+      useNativeDriver: false,
+    }).start();
+  };
+
+  const handleAdButtonPress = () => {
+    Alert.alert('Ad Button Clicked', 'This button can navigate to a new page or perform an action.');
+    toggleAd(); // Retracts the ad after the button is clicked
   };
 
   // Show loading while initializing
@@ -474,6 +428,22 @@ export default function HomeScreen() {
 
   return (
     <ScrollView style={styles.container}>
+      {/* Ad-style dropdown at the very top */}
+      <View style={styles.adContainer}>
+        <Animated.View style={[styles.adContent, { height: adHeight }]}>
+          <TouchableOpacity style={styles.adButton} onPress={handleAdButtonPress}>
+            <Text style={styles.adButtonText}>Download All Data for offline use</Text>
+          </TouchableOpacity>
+        </Animated.View>
+        <TouchableOpacity style={styles.adToggle} onPress={toggleAd}>
+          <Ionicons
+            name={isAdVisible ? 'chevron-up' : 'chevron-down'}
+            size={24}
+            color="#fff"
+          />
+        </TouchableOpacity>
+      </View>
+
       <View style={styles.header}>
         <Text style={styles.welcomeText}>Welcome, {userName}!</Text>
         <Text style={styles.subText}>Start learning something new today.</Text>
@@ -483,21 +453,15 @@ export default function HomeScreen() {
             <Text style={styles.offlineText}>Offline Mode</Text>
           </View>
         )}
-        {timeManipulationDetected && (
-          <View style={styles.timeManipulationNotice}>
-            <Ionicons name="warning-outline" size={18} color="#fff" />
-            <Text style={styles.timeManipulationText}>Time Sync Required</Text>
-          </View>
-        )}
       </View>
 
       <TouchableOpacity
         style={[
-          styles.searchButton, 
-          (!isConnected || timeManipulationDetected) && styles.disabledButton
+          styles.searchButton,
+          !isConnected && styles.disabledButton
         ]}
         onPress={handleSearchPress}
-        disabled={!isConnected || timeManipulationDetected}
+        disabled={!isConnected}
       >
         <Ionicons name="search" size={20} color="#fff" style={styles.searchIcon} />
         <Text style={styles.searchButtonText}>Search for Courses, Topics, etc.</Text>
@@ -508,22 +472,17 @@ export default function HomeScreen() {
         <Text style={styles.newSectionText}>
           Explore popular courses and trending topics designed for you.
         </Text>
-        {timeManipulationDetected && (
-          <Text style={styles.timeSyncWarning}>
-            ⚠️ Connect to internet to sync time settings and access all features.
-          </Text>
-        )}
       </View>
 
       <View style={styles.otherContent}>
         <View style={styles.sectionHeader}>
           <Text style={styles.quickAccessTitle}>My Courses</Text>
           <View style={styles.scrollButtons}>
-            <TouchableOpacity onPress={scrollEnrolledCoursesLeft} disabled={timeManipulationDetected}>
-              <Ionicons name="arrow-back-circle-outline" size={30} color={timeManipulationDetected ? "#ccc" : "#007bff"} />
+            <TouchableOpacity onPress={scrollEnrolledCoursesLeft}>
+              <Ionicons name="arrow-back-circle-outline" size={30} color={"#007bff"} />
             </TouchableOpacity>
-            <TouchableOpacity onPress={scrollEnrolledCoursesRight} disabled={timeManipulationDetected}>
-              <Ionicons name="arrow-forward-circle-outline" size={30} color={timeManipulationDetected ? "#ccc" : "#007bff"} />
+            <TouchableOpacity onPress={scrollEnrolledCoursesRight}>
+              <Ionicons name="arrow-forward-circle-outline" size={30} color={"#007bff"} />
             </TouchableOpacity>
           </View>
         </View>
@@ -543,11 +502,9 @@ export default function HomeScreen() {
           <View style={styles.noCoursesEnrolledContainer}>
             <Text style={styles.noCoursesEnrolledText}>You haven't enrolled in any courses yet.</Text>
             <Text style={styles.noCoursesEnrolledSubText}>
-              {isConnected && !timeManipulationDetected 
-                ? 'Search for courses above to get started!' 
-                : timeManipulationDetected 
-                  ? 'Connect to internet to sync time and enroll in courses.'
-                  : 'Connect to the internet to enroll in new courses.'
+              {isConnected
+                ? 'Search for courses above to get started!'
+                : 'Connect to the internet to enroll in new courses.'
               }
             </Text>
           </View>
@@ -583,15 +540,15 @@ export default function HomeScreen() {
               onChangeText={setSearchQuery}
               onSubmitEditing={handleSearchSubmit}
               returnKeyType="search"
-              editable={isConnected && !timeManipulationDetected}
+              editable={isConnected}
             />
             <TouchableOpacity
               style={[
-                styles.modalSearchButton, 
-                (!isConnected || timeManipulationDetected) && styles.disabledButton
+                styles.modalSearchButton,
+                !isConnected && styles.disabledButton
               ]}
               onPress={handleSearchSubmit}
-              disabled={isLoadingSearch || !isConnected || timeManipulationDetected}
+              disabled={isLoadingSearch || !isConnected}
             >
               {isLoadingSearch ? (
                 <ActivityIndicator color="#fff" />
@@ -602,11 +559,6 @@ export default function HomeScreen() {
             {!isConnected && (
               <Text style={styles.offlineModalHint}>
                 You must be online to search for new courses.
-              </Text>
-            )}
-            {timeManipulationDetected && (
-              <Text style={styles.timeManipulationModalHint}>
-                Time synchronization required to search for courses.
               </Text>
             )}
             {!isLoadingSearch && hasSearched && searchResults.length > 0 && (
@@ -643,8 +595,41 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f0f2f5',
   },
+  adContainer: {
+    backgroundColor: '#007bff',
+    overflow: 'hidden',
+    position: 'relative',
+    top: 0,
+    width: '100%',
+    zIndex: 10,
+  },
+  adContent: {
+    width: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  adButton: {
+    backgroundColor: '#28a745',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    marginBottom: 5, // Adds a little space between the button and the arrow
+  },
+  adButtonText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+  adToggle: {
+    height: 40,
+    width: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#007bff',
+  },
   header: {
     backgroundColor: '#007bff',
+    top: -20,
     padding: 20,
     borderBottomLeftRadius: 25,
     borderBottomRightRadius: 25,
@@ -675,7 +660,7 @@ const styles = StyleSheet.create({
   searchButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#0056b3',
+    backgroundColor: '#007bff',
     padding: 15,
     marginHorizontal: 20,
     marginTop: -25,
@@ -714,12 +699,6 @@ const styles = StyleSheet.create({
   newSectionText: {
     fontSize: 14,
     color: '#7f8c8d',
-  },
-  timeSyncWarning: {
-    fontSize: 12,
-    color: '#e74c3c',
-    marginTop: 10,
-    fontStyle: 'italic',
   },
   otherContent: {
     marginHorizontal: 20,
@@ -927,22 +906,6 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginLeft: 5,
   },
-  timeManipulationNotice: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#ff6b35',
-    borderRadius: 20,
-    paddingVertical: 5,
-    paddingHorizontal: 15,
-    marginTop: 5,
-  },
-  timeManipulationText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: 'bold',
-    marginLeft: 5,
-  },
   flatListContent: {
     paddingBottom: 10,
   },
@@ -956,25 +919,8 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 10,
   },
-  timeManipulationModalHint: {
-    fontSize: 12,
-    color: '#ff6b35',
-    textAlign: 'center',
-    marginTop: 10,
-  },
   disabledButton: {
     backgroundColor: '#ccc',
     shadowColor: 'transparent',
-  },
-  disabledCard: {
-    opacity: 0.6,
-    backgroundColor: '#f5f5f5',
-  },
-  disabledText: {
-    fontSize: 11,
-    color: '#dc3545',
-    marginTop: 5,
-    textAlign: 'center',
-    fontWeight: 'bold',
   },
 });

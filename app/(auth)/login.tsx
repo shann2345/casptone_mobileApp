@@ -1,4 +1,4 @@
-// app/(auth)/login.tsx - Fixed with corrected emergency reset
+// app/(auth)/login.tsx
 
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
@@ -18,10 +18,7 @@ import api, {
   storeUserData
 } from '../../lib/api';
 import {
-  emergencyResetTimeDetection // Import the exported function
-  ,
-
-  getAllOfflineUsers,
+  emergencyResetTimeDetection,
   initDb,
   saveUserForOfflineAccess,
   validateOfflineLogin
@@ -33,21 +30,12 @@ interface Errors {
   [key: string]: string | undefined;
 }
 
-interface OfflineUser {
-  id: string;
-  name: string;
-  email: string;
-  last_login: string;
-  login_count: number;
-}
-
 export default function LoginScreen() {
   const router = useRouter();
   const [email, setEmail] = useState<string>('');
   const [password, setPassword] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
   const [errors, setErrors] = useState<Errors>({});
-  const [offlineUsers, setOfflineUsers] = useState<OfflineUser[]>([]);
   const [isInitializing, setIsInitializing] = useState<boolean>(true);
 
   const { isConnected, netInfo } = useNetworkStatus();
@@ -59,17 +47,12 @@ export default function LoginScreen() {
         console.log('🔧 Initializing login screen...');
         
         // FIRST: Reset time detection to prevent cascading errors
-        await emergencyResetTimeDetection(); // Use the imported function
+        await emergencyResetTimeDetection();
         console.log('🔄 Time detection reset completed');
         
         // Initialize database
         await initDb();
         console.log('✅ Database initialized');
-
-        // Load offline users for UI
-        const users = await getAllOfflineUsers();
-        setOfflineUsers(users as OfflineUser[]);
-        console.log(`📋 Loaded ${users.length} offline users`);
 
         // Check existing auth only after network status is known
         if (netInfo !== null) {
@@ -88,7 +71,7 @@ export default function LoginScreen() {
     };
 
     initialize();
-  }, [netInfo]); // Only re-run when netInfo changes
+  }, [netInfo]);
 
   const checkExistingAuth = async () => {
     try {
@@ -191,7 +174,6 @@ export default function LoginScreen() {
     } catch (error: any) {
       console.error('❌ Login error:', error);
       
-      // Removed the emergency reset call here, as it's now handled by the initial setup
       if (error.response?.data?.errors) {
         setErrors(error.response.data.errors);
       } else {
@@ -205,21 +187,6 @@ export default function LoginScreen() {
     }
   };
 
-  const fillEmailFromOfflineUser = (userEmail: string) => {
-    setEmail(userEmail);
-  };
-
-  // Add manual reset button for debugging (remove in production)
-  const handleManualTimeReset = async () => {
-    try {
-      await emergencyResetTimeDetection(); // Use the imported function
-      Alert.alert('Success', 'Time detection system has been reset.');
-    } catch (error) {
-      Alert.alert('Error', 'Failed to reset time detection system.');
-    }
-  };
-
-  // Show loading screen while initializing
   if (isInitializing) {
     return (
       <View style={[styles.container, styles.loadingContainer]}>
@@ -243,27 +210,6 @@ export default function LoginScreen() {
                 Enter credentials for any previously used account
               </Text>
             )}
-          </View>
-        )}
-
-        {/* Offline Users Quick Select (only show when offline and have users) */}
-        {!isConnected && offlineUsers.length > 0 && (
-          <View style={styles.offlineUsersContainer}>
-            <Text style={styles.offlineUsersTitle}>Previously used accounts:</Text>
-            {offlineUsers.slice(0, 3).map((user, index) => (
-              <TouchableOpacity
-                key={`${user.email}-${index}`}
-                style={styles.offlineUserItem}
-                onPress={() => fillEmailFromOfflineUser(user.email)}
-              >
-                <Text style={styles.offlineUserName}>{user.name}</Text>
-                <Text style={styles.offlineUserEmail}>{user.email}</Text>
-                <Text style={styles.offlineUserInfo}>
-                  Last login: {new Date(user.last_login).toLocaleDateString()} 
-                  • {user.login_count} logins
-                </Text>
-              </TouchableOpacity>
-            ))}
           </View>
         )}
         
@@ -307,16 +253,6 @@ export default function LoginScreen() {
           )}
         </TouchableOpacity>
         
-        {/* Debug button - remove in production */}
-        {__DEV__ && (
-          <TouchableOpacity
-            style={[styles.button, styles.debugButton]}
-            onPress={handleManualTimeReset}
-          >
-            <Text style={styles.buttonText}>Reset Time Detection (Debug)</Text>
-          </TouchableOpacity>
-        )}
-        
         <TouchableOpacity
           style={styles.signupLink}
           onPress={() => router.replace('/signup')}
@@ -342,48 +278,8 @@ const styles = StyleSheet.create({
   networkText: { fontSize: 16, fontWeight: '600', textAlign: 'center' },
   offlineHint: { fontSize: 12, color: '#6c757d', textAlign: 'center', marginTop: 4 },
   
-  // Offline users styles
-  offlineUsersContainer: {
-    width: '100%',
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    padding: 15,
-    marginBottom: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  offlineUsersTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#495057',
-    marginBottom: 10,
-  },
-  offlineUserItem: {
-    backgroundColor: '#f8f9fa',
-    padding: 12,
-    borderRadius: 6,
-    marginBottom: 8,
-    borderLeftWidth: 3,
-    borderLeftColor: '#007bff',
-  },
-  offlineUserName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#212529',
-  },
-  offlineUserEmail: {
-    fontSize: 14,
-    color: '#6c757d',
-    marginTop: 2,
-  },
-  offlineUserInfo: {
-    fontSize: 12,
-    color: '#6c757d',
-    marginTop: 4,
-  },
+  // Removed styles for offline users:
+  // offlineUsersContainer, offlineUsersTitle, offlineUserItem, offlineUserName, offlineUserEmail, offlineUserInfo
   
   inputGroup: { width: '100%', marginBottom: 15 },
   label: { fontSize: 16, color: '#34495e', marginBottom: 5, fontWeight: '600' },

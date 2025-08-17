@@ -11,11 +11,6 @@ let dbInstance: SQLite.SQLiteDatabase | null = null;
 let dbInitialized = false;
 let initializationPromise: Promise<void> | null = null;
 
-// Time manipulation detection constants
-const TIME_CHECK_INTERVAL_KEY = 'last_time_check';
-const MIN_EXPECTED_TIME_DIFF = 30000; // 30 seconds minimum between checks
-const MAX_EXPECTED_TIME_DIFF = 7200000; // 2 hours maximum between checks
-const TIME_DRIFT_TOLERANCE = 5000; // 5 seconds tolerance for normal drift
 
 const openDatabase = async (): Promise<SQLite.SQLiteDatabase> => {
   try {
@@ -35,7 +30,7 @@ const openDatabase = async (): Promise<SQLite.SQLiteDatabase> => {
   }
 };
 
-const getDb = async (): Promise<SQLite.SQLiteDatabase> => {
+export const getDb = async (): Promise<SQLite.SQLiteDatabase> => {
   // If we already have an instance and it's initialized, return it
   if (dbInstance && dbInitialized) {
     return dbInstance;
@@ -274,94 +269,6 @@ export const initDb = async (): Promise<void> => {
   })();
   await initializationPromise;
   initializationPromise = null;
-};
-
-export const detectTimeManipulation = async (userEmail: string): Promise<{ isValid: boolean; reason?: string }> => {
-  try {
-    await initDb();
-    const db = await getDb();
-    
-    const currentDeviceTime = Date.now();
-    
-    // Get the last time check for this user
-    const result = await db.getFirstAsync(
-      `SELECT last_time_check, time_check_sequence FROM offline_users WHERE email = ?;`,
-      [userEmail]
-    ) as any;
-    
-    if (!result || !result.last_time_check) {
-      // First time check, record it
-      await db.runAsync(
-        `UPDATE offline_users SET last_time_check = ?, time_check_sequence = 1 WHERE email = ?;`,
-        [currentDeviceTime, userEmail]
-      );
-      console.log('🕐 First time check recorded for user:', userEmail);
-      return { isValid: true };
-    }
-    
-    const lastTimeCheck = result.last_time_check;
-    const sequence = result.time_check_sequence || 0;
-    const timeDiff = currentDeviceTime - lastTimeCheck;
-    
-    // FIXED: More reasonable time parameters
-    const MIN_TIME_DIFF = 1000; // 1 second minimum (was 30 seconds)
-    const MAX_TIME_DIFF = 24 * 60 * 60 * 1000; // 24 hours maximum (was 2 hours)
-    const TIME_TOLERANCE = 10000; // 10 seconds tolerance (was 5 seconds)
-    
-    // Log this check
-    await db.runAsync(
-      `INSERT INTO time_check_logs (user_email, device_time, expected_time, time_diff, is_valid, created_at)
-       VALUES (?, ?, ?, ?, ?, ?);`,
-      [userEmail, currentDeviceTime, lastTimeCheck + MIN_TIME_DIFF, timeDiff, 0, currentDeviceTime]
-    );
-    
-    // Check for time manipulation with more reasonable thresholds
-    let isValid = true;
-    let reason = '';
-    
-    if (timeDiff < -TIME_TOLERANCE) {
-      // Time went backwards significantly
-      isValid = false;
-      reason = 'Device time moved backwards significantly';
-    } else if (timeDiff < 0) {
-      // Small backwards time movement - might be normal clock drift, allow it
-      console.log('⚠️ Minor time drift detected (backwards), but allowing:', timeDiff);
-      isValid = true;
-    } else if (timeDiff > MAX_TIME_DIFF) {
-      // Time moved forward too much (possible manipulation or long absence)
-      isValid = false;
-      reason = 'Time progression too fast or long absence detected';
-    }
-    // REMOVED: The too-restrictive minimum time check that was causing issues
-    
-    // Update the time check record
-    if (isValid) {
-      await db.runAsync(
-        `UPDATE offline_users SET last_time_check = ?, time_check_sequence = ? WHERE email = ?;`,
-        [currentDeviceTime, sequence + 1, userEmail]
-      );
-      
-      // Update the log as valid
-      await db.runAsync(
-        `UPDATE time_check_logs SET is_valid = 1 WHERE user_email = ? AND created_at = ?;`,
-        [userEmail, currentDeviceTime]
-      );
-    }
-    
-    console.log(`🕐 Time check for ${userEmail}:`, {
-      timeDiff,
-      isValid,
-      reason: reason || 'Valid'
-    });
-    
-    return { isValid, reason: isValid ? undefined : reason };
-    
-  } catch (error) {
-    console.error('❌ Error detecting time manipulation:', error);
-    // FIXED: Don't fail the check if there's an error - allow the user to continue
-    console.log('⚠️ Time check failed, but allowing user to continue');
-    return { isValid: true };
-  }
 };
 
 export const saveUserForOfflineAccess = async (
@@ -871,22 +778,35 @@ export const resetDatabaseState = (): void => {
   console.log('🔄 Database state reset');
 };
 
-export const saveServerTime = async (userEmail: string, apiServerTime: string, lastSyncTime: string): Promise<void> => {
+
+
+{/* SERVER ONLY FOR OFFLINE USE */}
+
+export const saveServerTime = async (userEmail: string, apiServerTime: string, currentDeviceTime: string): Promise<void> => {
   try {
     await initDb();
     const db = await getDb();
     
-    // Convert server and device times to timestamps for calculation
-    const serverTimeMs = new Date(apiServerTime).getTime();
-    const deviceTimeMs = new Date(lastSyncTime).getTime();
-    
     // Calculate the time offset
+    const serverTimeMs = new Date(apiServerTime).getTime();
+    const deviceTimeMs = new Date(currentDeviceTime).getTime();
     const serverTimeOffset = serverTimeMs - deviceTimeMs;
 
-    console.log('💾 Saving server time and offset to local DB.');
+    console.log('💾 Saving server time, device time, and offset to local DB.');
     await db.runAsync(
-      `UPDATE offline_users SET server_time = ?, server_time_offset = ?, last_time_check = ?, time_check_sequence = 1 WHERE email = ?;`,
-      [apiServerTime, serverTimeOffset, Date.now(), userEmail]
+      `UPDATE offline_users SET 
+         server_time = ?, 
+         server_time_offset = ?, 
+         last_time_check = ?, 
+         time_check_sequence = ? 
+       WHERE email = ?;`,
+      [
+        apiServerTime, 
+        serverTimeOffset, 
+        deviceTimeMs, // Store the device time at the point of sync
+        1,
+        userEmail
+      ]
     );
     console.log('✅ Server time and offset saved successfully.');
   } catch (error) {
@@ -895,7 +815,6 @@ export const saveServerTime = async (userEmail: string, apiServerTime: string, l
   }
 };
 
-// UPDATED: Enhanced getSavedServerTime with time manipulation detection
 export const getSavedServerTime = async (userEmail: string): Promise<string | null> => {
   try {
     await initDb();
@@ -903,70 +822,112 @@ export const getSavedServerTime = async (userEmail: string): Promise<string | nu
     
     console.log('🔍 Retrieving server time and offset from local DB...');
     
-    // First, check for time manipulation
+    const result = await db.getAllAsync(
+      `SELECT last_time_check, server_time_offset FROM offline_users WHERE email = ?;`,
+      [userEmail]
+    );
+    
+    if (!result || result.length === 0 || result[0].last_time_check === null) {
+        console.log('⏳ No prior time check data found for offset calculation, assuming valid.');
+        return null;
+    }
+    
+    // Check for time manipulation before proceeding
     const timeCheck = await detectTimeManipulation(userEmail);
     if (!timeCheck.isValid) {
-      console.log('❌ Time manipulation detected:', timeCheck.reason);
-      return null; // Return null to disable offline access
+        console.warn('⚠️ Time manipulation detected. Returning null.');
+        return null;
     }
     
-    const result = await db.getFirstAsync(
-      `SELECT server_time, server_time_offset FROM offline_users WHERE email = ?;`,
-      [userEmail]
-    ) as any;
-    
-    if (result && result.server_time && result.server_time_offset !== null) {
-      // Get the current device time
-      const currentDeviceTime = new Date().getTime();
-      // Calculate the trusted offline server time using the offset
-      const trustedServerTimeMs = currentDeviceTime + result.server_time_offset;
-      const trustedServerDate = new Date(trustedServerTimeMs);
-      
-      console.log('✅ Calculated trusted offline server time:', trustedServerDate.toISOString());
-      return trustedServerDate.toISOString();
-    } else {
-      console.log('❌ No saved server time or offset found.');
-      return null;
-    }
+    // Calculate the simulated server time
+    const serverTimeOffset = result[0].server_time_offset;
+    const currentDeviceTimeMs = Date.now();
+    const simulatedServerTimeMs = currentDeviceTimeMs + serverTimeOffset;
+
+    // Return the calculated time in a readable format
+    return new Date(simulatedServerTimeMs).toISOString();
   } catch (error) {
-    console.error('❌ Failed to get saved server time:', error);
+    console.error('❌ Failed to retrieve and calculate server time:', error);
     return null;
   }
 };
 
-// Add this function to your localDb.ts file
-export const resetTimeDetectionForUser = async (userEmail: string): Promise<void> => {
+export const detectTimeManipulation = async (userEmail: string): Promise<{ isValid: boolean, reason?: string }> => {
   try {
     await initDb();
     const db = await getDb();
-    
-    console.log('🔄 Resetting time detection for user:', userEmail);
-    
-    // Reset time check data for the user
-    await db.runAsync(
-      `UPDATE offline_users SET 
-       last_time_check = ?, 
-       time_check_sequence = 0,
-       server_time = NULL,
-       server_time_offset = NULL 
-       WHERE email = ?;`,
-      [Date.now(), userEmail]
-    );
-    
-    // Clear time check logs for this user
-    await db.runAsync(
-      `DELETE FROM time_check_logs WHERE user_email = ?;`,
+    const result = await db.getAllAsync(
+      `SELECT last_time_check, server_time_offset FROM offline_users WHERE email = ?;`,
       [userEmail]
     );
     
-    console.log('✅ Time detection reset complete for:', userEmail);
+    if (!result || result.length === 0 || !result[0].last_time_check) {
+      console.log('⏳ No prior time check data found, assuming valid.');
+      return { isValid: true };
+    }
+    
+    const lastDeviceTimeMs = result[0].last_time_check;
+    const serverTimeOffset = result[0].server_time_offset;
+    const currentDeviceTimeMs = Date.now();
+    
+    // Calculate the expected device time based on the server time offset
+    // This is the core of the new, more robust logic
+    const expectedServerTimeMs = currentDeviceTimeMs + serverTimeOffset;
+    
+    // We compare the last saved device time to the current device time to detect backward travel
+    if (currentDeviceTimeMs < lastDeviceTimeMs) {
+      return { isValid: false, reason: 'Device time moved backward.' };
+    }
+    
+    // Calculate the elapsed time in milliseconds on the device
+    const timeElapsed = currentDeviceTimeMs - lastDeviceTimeMs;
+    
+    // Check if the device time has jumped forward excessively
+    // We check against a small threshold to catch subtle manipulation
+    if (timeElapsed > (5 * 60 * 1000) && lastDeviceTimeMs !== 0) { // 5 minutes tolerance
+      // This is a new check for a small forward jump
+      return { isValid: false, reason: 'Device time jumped forward excessively.' };
+    }
+    
+    console.log(`✅ Time check successful for ${userEmail}.`);
+    return { isValid: true };
+    
   } catch (error) {
-    console.error('❌ Failed to reset time detection:', error);
-    throw error;
+    console.error('❌ Error in time manipulation detection:', error);
+    // If the check itself fails, we must assume a malicious attempt or a critical error
+    return { isValid: false, reason: 'System error during time check. Please reconnect to the internet.' };
   }
 };
 
-// Call this in your login screen if time manipulation keeps occurring
+
+export const updateTimeSync = async (userEmail: string): Promise<void> => {
+    try {
+        await initDb();
+        const db = await getDb();
+
+        const timeCheck = await detectTimeManipulation(userEmail);
+        if (!timeCheck.isValid) {
+            console.warn('⚠️ Cannot update time sync due to detected manipulation.');
+            return;
+        }
+
+        const result = await db.getAllAsync(
+            `SELECT time_check_sequence FROM offline_users WHERE email = ?;`,
+            [userEmail]
+        );
+        const currentSequence = result[0]?.time_check_sequence || 0;
+        const newSequence = currentSequence + 1;
+        
+        await db.runAsync(
+            `UPDATE offline_users SET last_time_check = ?, time_check_sequence = ? WHERE email = ?;`,
+            [Date.now(), newSequence, userEmail]
+        );
+        console.log(`✅ Time sync updated for ${userEmail}. Sequence: ${newSequence}`);
+    } catch (error) {
+        console.error('❌ Error updating time sync:', error);
+    }
+};
+
 export const emergencyResetTimeDetection = async (): Promise<void> => {
   try {
     await initDb();
@@ -974,7 +935,6 @@ export const emergencyResetTimeDetection = async (): Promise<void> => {
     
     console.log('🚨 Emergency reset of ALL time detection data');
     
-    // Reset time check data for all users, but DO NOT clear the server time and offset
     await db.execAsync(
       `UPDATE offline_users SET 
        last_time_check = ?, 
@@ -982,12 +942,13 @@ export const emergencyResetTimeDetection = async (): Promise<void> => {
        WHERE last_time_check IS NOT NULL;`
     );
     
-    // Clear all time check logs
-    await db.execAsync(`DELETE FROM time_check_logs;`);
+    await db.execAsync(
+      `DELETE FROM time_check_logs;`
+    );
     
-    console.log('✅ Emergency time detection reset complete');
+    console.log('✅ All time check data and logs have been cleared.');
   } catch (error) {
-    console.error('❌ Emergency reset failed:', error);
+    console.error('❌ Error during emergency time reset:', error);
     throw error;
   }
 };
