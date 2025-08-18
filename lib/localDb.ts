@@ -899,7 +899,6 @@ export const detectTimeManipulation = async (userEmail: string): Promise<{ isVal
   }
 };
 
-
 export const updateTimeSync = async (userEmail: string): Promise<void> => {
     try {
         await initDb();
