@@ -130,6 +130,7 @@ export const initDb = async (): Promise<void> => {
           PRIMARY KEY (assessment_id, user_email)
         );`
       );
+      
 
       // We still need a table to store server time, but for the logged-in user.
       await db.execAsync(
@@ -628,7 +629,8 @@ export const clearOfflineData = async (): Promise<void> => {
         await db.execAsync(`DELETE FROM offline_course_details;`);
         await db.execAsync(`DELETE FROM offline_materials;`);
         await db.execAsync(`DELETE FROM offline_assessments;`);
-        await db.execAsync(`DELETE FROM app_state;`); // Clear the app state (server time) as well
+        await db.execAsync(`DELETE FROM app_state;`); 
+        await db.execAsync(`DELETE FROM offline_assessment_data;`);
         console.log('✅ All offline data cleared successfully.');
     } catch (error) {
         console.error('❌ Error clearing offline data:', error);

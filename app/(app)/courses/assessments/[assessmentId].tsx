@@ -8,7 +8,7 @@ import { ActivityIndicator, Alert, Linking, ScrollView, StyleSheet, Text, Toucha
 
 import { useNetworkStatus } from '../../../../context/NetworkContext';
 import api, { getUserData } from '../../../../lib/api';
-import { getAssessmentDetailsFromDb, saveAssessmentDetailsToDb, saveAssessmentsToDb } from '../../../../lib/localDb'; // Updated import
+import { checkIfAssessmentNeedsDetails, getAssessmentDetailsFromDb, saveAssessmentDetailsToDb, saveAssessmentsToDb } from '../../../../lib/localDb'; // Updated import
 
 interface AssessmentDetail {
   id: number;
@@ -56,6 +56,8 @@ export default function AssessmentDetailsScreen() {
   const [error, setError] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<DocumentPicker.DocumentPickerAsset | null>(null);
   const [submissionLoading, setSubmissionLoading] = useState(false);
+  const [hasDetailedData, setHasDetailedData] = useState<boolean>(false);
+
 
   const fetchAssessmentDetailsAndAttemptStatus = useCallback(async () => {
     if (!assessmentId) return;
@@ -73,7 +75,7 @@ export default function AssessmentDetailsScreen() {
 
     try {
       if (isConnected) {
-        // ONLINE MODE
+        // ONLINE MODE - existing logic remains the same
         console.log('✅ Online: Fetching assessment details from API.');
         const assessmentResponse = await api.get(`/assessments/${assessmentId}`);
         if (assessmentResponse.status === 200) {
@@ -102,7 +104,6 @@ export default function AssessmentDetailsScreen() {
             if (assignmentSubmissionResponse.status === 200) {
               newLatestSubmission = assignmentSubmissionResponse.data;
               setLatestAssignmentSubmission(newLatestSubmission);
-              // ... (file handling logic remains the same)
             } else {
               setError('Failed to fetch latest assignment submission.');
             }
@@ -120,6 +121,10 @@ export default function AssessmentDetailsScreen() {
             newLatestSubmission
           );
           
+          // Check if detailed data exists after saving
+          const needsDetails = await checkIfAssessmentNeedsDetails(fetchedAssessment.id, userEmail);
+          setHasDetailedData(!needsDetails);
+          
         } else {
           setError('Failed to fetch assessment details.');
         }
@@ -133,6 +138,10 @@ export default function AssessmentDetailsScreen() {
           setAttemptStatus(offlineAssessment.attemptStatus);
           setLatestAssignmentSubmission(offlineAssessment.latestSubmission);
           setSelectedFile(null);
+          
+          // Check if we have detailed data for this assessment
+          const needsDetails = await checkIfAssessmentNeedsDetails(parseInt(assessmentId as string), userEmail);
+          setHasDetailedData(!needsDetails);
         } else {
           setError('Offline: Assessment details not available locally. Please connect to the internet to load.');
           Alert.alert('Offline Mode', 'Assessment details not found in local storage. Please connect to the internet to load.');
@@ -142,9 +151,9 @@ export default function AssessmentDetailsScreen() {
       console.error('Failed to fetch assessment details/status/submission:', err.response?.data || err.message);
       setError('Network error or unable to load assessment details/status/submission.');
       if (!isConnected) {
-         Alert.alert('Error', 'Failed to load assessment details from local storage.');
+        Alert.alert('Error', 'Failed to load assessment details from local storage.');
       } else {
-         Alert.alert('Error', 'Failed to fetch assessment details/status/submission.');
+        Alert.alert('Error', 'Failed to fetch assessment details/status/submission.');
       }
     } finally {
       setLoading(false);
@@ -213,9 +222,15 @@ export default function AssessmentDetailsScreen() {
   const handleStartQuizAttempt = async () => {
     if (!assessmentDetail) return;
     
+    // OFFLINE BEHAVIOR MODIFICATION: Allow starting a quiz attempt offline if attempts are remaining.
+    // However, the actual attempt-quiz screen will need to handle offline submission, which isn't in scope here.
+    // For now, the prompt asks to make the button clickable, but the `attempt-quiz` screen itself needs to be implemented for full offline functionality.
     if (!isConnected) {
-       Alert.alert('Offline Mode', 'You must be online to start a quiz or exam attempt.');
-       return;
+        // Check if there are remaining attempts in the local DB.
+        if (attemptStatus && attemptStatus.attempts_remaining !== null && attemptStatus.attempts_remaining <= 0) {
+            Alert.alert('Attempt Limit Reached', 'You have used all attempts for this quiz.');
+            return;
+        }
     }
 
     if (!isAssessmentAvailable(assessmentDetail)) {
@@ -347,8 +362,9 @@ export default function AssessmentDetailsScreen() {
 
   const isAvailable = assessmentDetail ? isAssessmentAvailable(assessmentDetail) : false;
 
-  let isQuizAttemptButtonDisabled = !isAvailable || submissionLoading || !isConnected;
+  let isQuizAttemptButtonDisabled = false;
   let quizButtonText = 'Start Quiz';
+
 
   if (assessmentDetail && (assessmentDetail.type === 'quiz' || assessmentDetail.type === 'exam') && attemptStatus) {
     if (attemptStatus.has_in_progress_attempt) {
@@ -357,7 +373,7 @@ export default function AssessmentDetailsScreen() {
     } else if (!isAvailable) {
       quizButtonText = 'Quiz Not Yet Available';
       isQuizAttemptButtonDisabled = true;
-    } else if (!attemptStatus.can_start_new_attempt) {
+    } else if (!attemptStatus.can_start_new_attempt || (attemptStatus.attempts_remaining !== null && attemptStatus.attempts_remaining <= 0)) {
       quizButtonText = 'Attempt Limit Reached';
       isQuizAttemptButtonDisabled = true;
     }
@@ -367,9 +383,22 @@ export default function AssessmentDetailsScreen() {
   }
   
   if (!isConnected) {
-    isQuizAttemptButtonDisabled = true;
     if (assessmentDetail?.type === 'quiz' || assessmentDetail?.type === 'exam') {
-      quizButtonText = 'Online Required to Start Quiz';
+      if (!hasDetailedData) {
+        // No detailed data available - disable the button
+        isQuizAttemptButtonDisabled = true;
+        quizButtonText = 'Download Assessment Details First (Offline)';
+      } else if (attemptStatus && attemptStatus.attempts_remaining !== null && attemptStatus.attempts_remaining <= 0) {
+        // Has detailed data but no attempts left
+        isQuizAttemptButtonDisabled = true;
+        quizButtonText = 'Attempt Limit Reached (Offline)';
+      } else {
+        // Has detailed data and attempts available
+        isQuizAttemptButtonDisabled = false;
+        quizButtonText = 'Start Quiz (Offline)';
+      }
+    } else {
+      isQuizAttemptButtonDisabled = true;
     }
   }
 
