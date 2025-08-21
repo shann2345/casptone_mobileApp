@@ -35,110 +35,110 @@ interface EnrolledCourse extends Course {
 }
 
 export default function CoursesScreen() {
-  const [enrolledCourses, setEnrolledCourses] = useState<EnrolledCourse[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
-  const router = useRouter();
-  const params = useLocalSearchParams();
-  const { isConnected } = useNetworkStatus(); // Use the custom hook
+  const [enrolledCourses, setEnrolledCourses] = useState<EnrolledCourse[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
+  const params = useLocalSearchParams();
+  const { isConnected } = useNetworkStatus(); // Use the custom hook
 
-  // Placeholder for user email - to be fetched from a reliable source
-  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
+  // Placeholder for user email - to be fetched from a reliable source
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
 
-  useEffect(() => {
-    const initialize = async () => {
-      try {
-        await initDb();
-        const userData = await getUserData();
-        if (userData && userData.email) {
-          setCurrentUserEmail(userData.email);
-        } else {
-          // Handle case where user data is missing
-          console.error('User email not found. Redirecting to login.');
-          router.replace('/login');
-        }
-      } catch (e) {
-        console.error('Failed to initialize database or get user data:', e);
-        setError('Failed to initialize app. Please restart.');
-      }
-    };
-    initialize();
-  }, []);
-
-
-  useEffect(() => {
-    // Deep Link Navigation Logic
-    if (params.courseId && !isLoading) {
-      const courseIdToNavigate = params.courseId;
-      router.setParams({ courseId: undefined });
-      router.push(`/courses/${courseIdToNavigate}`);
-    }
-  }, [params.courseId, isLoading]);
+  useEffect(() => {
+    const initialize = async () => {
+      try {
+        await initDb();
+        const userData = await getUserData();
+        if (userData && userData.email) {
+          setCurrentUserEmail(userData.email);
+        } else {
+          // Handle case where user data is missing
+          console.error('User email not found. Redirecting to login.');
+          router.replace('/login');
+        }
+      } catch (e) {
+        console.error('Failed to initialize database or get user data:', e);
+        setError('Failed to initialize app. Please restart.');
+      }
+    };
+    initialize();
+  }, []);
 
 
-  useEffect(() => {
-    const fetchCourses = async () => {
-      if (!currentUserEmail) {
-        // Wait for user email to be set
-        return;
-      }
-      setIsLoading(true);
-      setError(null);
-      if (isConnected) {
-        // Online: Fetch from API and update local DB
-        console.log('You are online. Fetching from API...');
-        try {
-          const response = await api.get('/my-courses');
-          const courses = response.data.courses;
-          setEnrolledCourses(courses);
+  useEffect(() => {
+    // Deep Link Navigation Logic
+    if (params.courseId && !isLoading) {
+      const courseIdToNavigate = params.courseId;
+      router.setParams({ courseId: undefined });
+      router.push(`/courses/${courseIdToNavigate}`);
+    }
+  }, [params.courseId, isLoading]);
 
-          if (currentUserEmail) {
-            for (const course of courses) {
-              await saveCourseToDb(course, currentUserEmail);
-            }
-            console.log('Courses saved to local DB successfully.');
-          }
-        } catch (err: any) {
-          console.error('Failed to fetch enrolled courses from API:', err.response?.data || err.message);
-          setError('Failed to load courses from the network. Displaying offline data.');
-          // On API error, fall back to offline data
-          await fetchEnrolledCoursesFromDb();
-        } finally {
-          setIsLoading(false);
-        }
-      } else {
-        // Offline: Fetch from local DB
-        console.log('You are offline. Fetching from local DB...');
-        await fetchEnrolledCoursesFromDb();
-        setIsLoading(false);
-      }
-    };
-    
-    // Only run fetchCourses if currentUserEmail is available and the component is focused
+
+  useEffect(() => {
+    const fetchCourses = async () => {
+      if (!currentUserEmail) {
+        // Wait for user email to be set
+        return;
+      }
+      setIsLoading(true);
+      setError(null);
+      if (isConnected) {
+        // Online: Fetch from API and update local DB
+        console.log('You are online. Fetching from API...');
+        try {
+          const response = await api.get('/my-courses');
+          const courses = response.data.courses;
+          setEnrolledCourses(courses);
+
+          if (currentUserEmail) {
+            for (const course of courses) {
+              await saveCourseToDb(course, currentUserEmail);
+            }
+            console.log('Courses saved to local DB successfully.');
+          }
+        } catch (err: any) {
+          console.error('Failed to fetch enrolled courses from API:', err.response?.data || err.message);
+          setError('Failed to load courses from the network. Displaying offline data.');
+          // On API error, fall back to offline data
+          await fetchEnrolledCoursesFromDb();
+        } finally {
+          setIsLoading(false);
+        }
+      } else {
+        // Offline: Fetch from local DB
+        console.log('You are offline. Fetching from local DB...');
+        await fetchEnrolledCoursesFromDb();
+        setIsLoading(false);
+      }
+    };
+    
+    // Only run fetchCourses if currentUserEmail is available and the component is focused
     // The useFocusEffect will handle the fetch when the component comes into focus
-    if (currentUserEmail) {
-      fetchCourses();
-    }
-  }, [isConnected, currentUserEmail]); // Add currentUserEmail to the dependency array
+    if (currentUserEmail) {
+      fetchCourses();
+    }
+  }, [isConnected, currentUserEmail]); // Add currentUserEmail to the dependency array
 
-  // Helper function to fetch courses from the local database
-  const fetchEnrolledCoursesFromDb = async () => {
-    if (!currentUserEmail) {
-      setError('Cannot load courses. No user email found.');
-      setIsLoading(false);
-      return;
-    }
-    try {
-      const courses = await getEnrolledCoursesFromDb(currentUserEmail);
-      setEnrolledCourses(courses);
-      if (courses.length === 0) {
-        setError('No courses found in local database.');
-      }
-    } catch (e) {
-      console.error('Failed to get enrolled courses from local DB:', e);
-      setError('Failed to load courses from local storage.');
-    }
-  };
+  // Helper function to fetch courses from the local database
+  const fetchEnrolledCoursesFromDb = async () => {
+    if (!currentUserEmail) {
+      setError('Cannot load courses. No user email found.');
+      setIsLoading(false);
+      return;
+    }
+    try {
+      const courses = await getEnrolledCoursesFromDb(currentUserEmail);
+      setEnrolledCourses(courses);
+      if (courses.length === 0) {
+        setError('No courses found in local database.');
+      }
+    } catch (e) {
+      console.error('Failed to get enrolled courses from local DB:', e);
+      setError('Failed to load courses from local storage.');
+    }
+  };
 
   const renderCourseCard = ({ item }: { item: EnrolledCourse }) => (
     <TouchableOpacity

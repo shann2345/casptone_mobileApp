@@ -1,4 +1,3 @@
-import * as Crypto from 'expo-crypto';
 import * as FileSystem from 'expo-file-system';
 import * as SQLite from 'expo-sqlite';
 import { Platform } from 'react-native';
@@ -10,7 +9,6 @@ const dbDirectory = `${FileSystem.documentDirectory}SQLite`;
 let dbInstance: SQLite.SQLiteDatabase | null = null;
 let dbInitialized = false;
 let initializationPromise: Promise<void> | null = null;
-
 
 const openDatabase = async (): Promise<SQLite.SQLiteDatabase> => {
   try {
@@ -49,18 +47,6 @@ export const getDb = async (): Promise<SQLite.SQLiteDatabase> => {
   return dbInstance;
 };
 
-const hashPassword = async (password: string): Promise<string> => {
-  try {
-    return await Crypto.digestStringAsync(
-      Crypto.CryptoDigestAlgorithm.SHA256,
-      password + '_salt_key' // Add salt for security
-    );
-  } catch (error) {
-    console.error('❌ Failed to hash password:', error);
-    throw error;
-  }
-};
-
 export const initDb = async (): Promise<void> => {
   if (dbInitialized && dbInstance) {
     console.log('✅ Database already initialized');
@@ -75,54 +61,11 @@ export const initDb = async (): Promise<void> => {
     try {
       console.log('🔧 Initializing database...');
       const db = await getDb();
-      await db.execAsync(
-        `CREATE TABLE IF NOT EXISTS offline_users (
-          id TEXT PRIMARY KEY NOT NULL,
-          name TEXT NOT NULL,
-          email TEXT NOT NULL UNIQUE,
-          password_hash TEXT NOT NULL,
-          user_data TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL,
-          last_login TEXT,
-          login_count INTEGER DEFAULT 1,
-          is_verified INTEGER DEFAULT 0,
-          server_time TEXT,
-          server_time_offset INTEGER,
-          last_time_check INTEGER,
-          time_check_sequence INTEGER DEFAULT 0
-        );`
-      );
-      
-      // Add new columns for time manipulation detection if they don't exist
-      let userColumns = await db.getAllAsync(`PRAGMA table_info(offline_users);`);
-      let hasServerTime = userColumns.some((col: any) => col.name === 'server_time');
-      let hasServerTimeOffset = userColumns.some((col: any) => col.name === 'server_time_offset');
-      let hasLastTimeCheck = userColumns.some((col: any) => col.name === 'last_time_check');
-      let hasTimeCheckSequence = userColumns.some((col: any) => col.name === 'time_check_sequence');
-      
-      if (!hasServerTime) {
-        await db.execAsync(`ALTER TABLE offline_users ADD COLUMN server_time TEXT;`);
-      }
-      if (!hasServerTimeOffset) {
-        await db.execAsync(`ALTER TABLE offline_users ADD COLUMN server_time_offset INTEGER;`);
-      }
-      if (!hasLastTimeCheck) {
-        await db.execAsync(`ALTER TABLE offline_users ADD COLUMN last_time_check INTEGER;`);
-      }
-      if (!hasTimeCheckSequence) {
-        await db.execAsync(`ALTER TABLE offline_users ADD COLUMN time_check_sequence INTEGER DEFAULT 0;`);
-      }
-      
-      let courseColumns = await db.getAllAsync(
-        `PRAGMA table_info(offline_courses);`
-      );
-      let hasUserEmail = courseColumns.some((col: any) => col.name === 'user_email');
-      if (!hasUserEmail) {
-        console.log('⚠️ Migrating offline_courses table: adding user_email column...');
-        await db.execAsync(`ALTER TABLE offline_courses ADD COLUMN user_email TEXT;`);
-        console.log('✅ Added user_email column to offline_courses table');
-      }
+
+      // Removed the creation of the offline_users table.
+      // The app will no longer store user credentials locally for offline login.
+
+      // Keep the tables for course and material data.
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_courses (
           id INTEGER PRIMARY KEY NOT NULL,
@@ -138,19 +81,6 @@ export const initDb = async (): Promise<void> => {
           enrollment_date TEXT NOT NULL
         );`
       );
-      let detailColumns = await db.getAllAsync(
-        `PRAGMA table_info(offline_course_details);`
-      );
-      let hasDetailUserEmail = detailColumns.some((col: any) => col.name === 'user_email');
-      let hasCourseData = detailColumns.some((col: any) => col.name === 'course_data');
-      if (!hasDetailUserEmail) {
-        await db.execAsync(`ALTER TABLE offline_course_details ADD COLUMN user_email TEXT;`);
-        console.log('⚠️ Migrated offline_course_details table: added user_email column.');
-      }
-      if (!hasCourseData) {
-        await db.execAsync(`ALTER TABLE offline_course_details ADD COLUMN course_data TEXT;`);
-        console.log('⚠️ Migrated offline_course_details table: added course_data column.');
-      }
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_course_details (
           course_id INTEGER NOT NULL,
@@ -159,24 +89,6 @@ export const initDb = async (): Promise<void> => {
           PRIMARY KEY (course_id, user_email)
         );`
       );
-
-      // Check if `material_data` column exists in `offline_materials`
-      let materialColumns = await db.getAllAsync(
-        `PRAGMA table_info(offline_materials);`
-      );
-      let hasMaterialData = materialColumns.some((col: any) => col.name === 'material_data');
-
-      // If `material_data` does not exist, add it.
-      if (!hasMaterialData) {
-        // You can either rename the `content` column or add a new `material_data` column.
-        // Assuming `material_data` replaces `content` for simplicity and to match the error.
-        // To be safe, let's add a new one. The NOT NULL constraint will be handled by the insertion logic.
-        await db.execAsync(
-          `ALTER TABLE offline_materials ADD COLUMN material_data TEXT;`
-        );
-        console.log('⚠️ Migrated offline_materials table: added material_data column.');
-      }
-
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_materials (
           id INTEGER PRIMARY KEY NOT NULL,
@@ -193,227 +105,53 @@ export const initDb = async (): Promise<void> => {
           FOREIGN KEY (course_id, user_email) REFERENCES offline_course_details(course_id, user_email) ON DELETE CASCADE
         );`
       );
-
-      // FIXED: Check and add missing columns for the offline_assessments table
-      let assessmentColumns = await db.getAllAsync(
-        `PRAGMA table_info(offline_assessments);`
-      );
-      let hasAssessmentFilePath = assessmentColumns.some((col: any) => col.name === 'assessment_file_path');
-      let hasAssessmentFileUrl = assessmentColumns.some((col: any) => col.name === 'assessment_file_url');
-      let hasPoints = assessmentColumns.some((col: any) => col.name === 'points');
-
-      if (!hasAssessmentFilePath) {
-        await db.execAsync(`ALTER TABLE offline_assessments ADD COLUMN assessment_file_path TEXT;`);
-        console.log('⚠️ Migrated offline_assessments table: added assessment_file_path column.');
-      }
-      if (!hasAssessmentFileUrl) {
-        await db.execAsync(`ALTER TABLE offline_assessments ADD COLUMN assessment_file_url TEXT;`);
-        console.log('⚠️ Migrated offline_assessments table: added assessment_file_url column.');
-      }
-      if (!hasPoints) {
-        await db.execAsync(`ALTER TABLE offline_assessments ADD COLUMN points INTEGER;`);
-        console.log('⚠️ Migrated offline_assessments table: added points column.');
-      }
-      
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_assessments (
           id INTEGER PRIMARY KEY NOT NULL,
           user_email TEXT NOT NULL,
           course_id INTEGER NOT NULL,
           title TEXT NOT NULL,
+          due_date TEXT NOT NULL,
           description TEXT,
-          type TEXT NOT NULL,
-          available_at TEXT,
-          unavailable_at TEXT,
-          max_attempts INTEGER,
-          duration_minutes INTEGER,
+          assessment_type TEXT,
           assessment_file_path TEXT,
           assessment_file_url TEXT,
-          points INTEGER,
+          assessment_data TEXT NOT NULL,
           FOREIGN KEY (course_id, user_email) REFERENCES offline_course_details(course_id, user_email) ON DELETE CASCADE
         );`
       );
-      
-      // Create a new table to store additional, dynamic assessment data
+
+      // ADD THIS TABLE - This was missing and causing the error
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_assessment_data (
           assessment_id INTEGER NOT NULL,
           user_email TEXT NOT NULL,
-          data TEXT NOT NULL, -- This will store the JSON object for attempt status and latest submission
-          PRIMARY KEY (assessment_id, user_email),
-          FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessments(id, user_email) ON DELETE CASCADE
+          data TEXT NOT NULL,
+          PRIMARY KEY (assessment_id, user_email)
         );`
       );
-      
-      // Create time check logs table for additional security
+
+      // We still need a table to store server time, but for the logged-in user.
       await db.execAsync(
-        `CREATE TABLE IF NOT EXISTS time_check_logs (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          user_email TEXT NOT NULL,
-          device_time INTEGER NOT NULL,
-          expected_time INTEGER NOT NULL,
-          time_diff INTEGER NOT NULL,
-          is_valid INTEGER NOT NULL,
-          created_at INTEGER NOT NULL
+        `CREATE TABLE IF NOT EXISTS app_state (
+            user_email TEXT PRIMARY KEY NOT NULL,
+            server_time TEXT,
+            server_time_offset INTEGER,
+            last_time_check INTEGER,
+            time_check_sequence INTEGER DEFAULT 0
         );`
       );
       
       dbInitialized = true;
-      console.log('✅ Multi-user offline tables created successfully');
+      console.log('✅ Database initialization complete');
     } catch (error) {
-      console.error('❌ Failed to create offline tables:', error);
-      dbInstance = null;
-      dbInitialized = false;
+      console.error('❌ Database initialization failed:', error);
       throw error;
+    } finally {
+      initializationPromise = null;
     }
   })();
   await initializationPromise;
-  initializationPromise = null;
-};
-
-export const saveUserForOfflineAccess = async (
-  user: any,
-  password: string // We need the plain password to hash and store
-): Promise<void> => {
-  try {
-    await initDb(); // Ensure DB is initialized
-    const db = await getDb();
-    
-    console.log('💾 Saving user for offline access:', user.email);
-    
-    const passwordHash = await hashPassword(password);
-    const currentTime = new Date().toISOString();
-    const currentTimestamp = Date.now();
-    const isVerified = user.email_verified_at ? 1 : 0;
-
-    // Check if user already exists with proper error handling
-    const existingUser = await db.getAllAsync(
-      `SELECT * FROM offline_users WHERE email = ?;`,
-      [user.email]
-    );
-
-    if (existingUser && existingUser.length > 0) {
-      // Update existing user
-      await db.runAsync(
-        `UPDATE offline_users SET
-         name = ?, password_hash = ?, user_data = ?, updated_at = ?,
-         last_login = ?, login_count = login_count + 1, is_verified = ?,
-         last_time_check = ?, time_check_sequence = 1
-         WHERE email = ?;`,
-        [
-          user.name,
-          passwordHash,
-          JSON.stringify(user),
-          currentTime,
-          currentTime,
-          isVerified,
-          currentTimestamp,
-          user.email
-        ]
-      );
-      console.log('✅ Updated existing offline user:', user.email);
-    } else {
-      // Insert new user
-      await db.runAsync(
-        `INSERT INTO offline_users
-         (id, name, email, password_hash, user_data, created_at, updated_at, last_login, is_verified, last_time_check, time_check_sequence)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
-        [
-          user.id.toString(),
-          user.name,
-          user.email,
-          passwordHash,
-          JSON.stringify(user),
-          user.created_at || currentTime,
-          currentTime,
-          currentTime,
-          isVerified,
-          currentTimestamp,
-          1
-        ]
-      );
-      console.log('✅ Saved new offline user:', user.email);
-    }
-  } catch (error) {
-    console.error('❌ Failed to save user for offline access:', error);
-    throw error;
-  }
-};
-
-export const validateOfflineLogin = async (email: string, password: string) => {
-  try {
-    await initDb(); // Ensure DB is initialized
-    const db = await getDb();
-    
-    console.log('🔍 Validating offline login for:', email);
-    
-    // First check for time manipulation
-    const timeCheck = await detectTimeManipulation(email);
-    if (!timeCheck.isValid) {
-      console.log('❌ Time manipulation detected:', timeCheck.reason);
-      return { 
-        success: false, 
-        user: null, 
-        error: 'Time manipulation detected. Please connect to the internet to re-sync.' 
-      };
-    }
-    
-    const passwordHash = await hashPassword(password);
-    const resultSet = await db.getAllAsync(
-      `SELECT * FROM offline_users WHERE email = ? AND password_hash = ?;`,
-      [email, passwordHash]
-    );
-    
-    if (resultSet && resultSet.length > 0) {
-      const user = resultSet[0] as any;
-      
-      // Update last login
-      await db.runAsync(
-        `UPDATE offline_users SET last_login = ?, login_count = login_count + 1 WHERE email = ?;`,
-        [new Date().toISOString(), email]
-      );
-      
-      console.log('✅ Offline login validated for:', email);
-      
-      // Return user data
-      const userData = JSON.parse(user.user_data);
-      return { 
-        success: true, 
-        user: userData, 
-        loginCount: (user.login_count || 0) + 1 
-      };
-    } else {
-      console.log('❌ Offline login failed for:', email);
-      return { 
-        success: false, 
-        user: null, 
-        error: 'Invalid email or password, or account not found offline.' 
-      };
-    }
-  } catch (error) {
-    console.error('❌ Offline login validation error:', error);
-    return { 
-      success: false, 
-      user: null, 
-      error: `Database error: ${error.message}` 
-    };
-  }
-};
-
-export const getAllOfflineUsers = async () => {
-  try {
-    await initDb(); // Ensure DB is initialized
-    const db = await getDb();
-    
-    const resultSet = await db.getAllAsync(
-      `SELECT id, name, email, last_login, login_count FROM offline_users ORDER BY last_login DESC;`
-    );
-    
-    return resultSet || [];
-  } catch (error) {
-    console.error('❌ Failed to get all offline users:', error);
-    return [];
-  }
 };
 
 export const saveCourseToDb = async (course: any, userEmail: string): Promise<void> => {
@@ -494,7 +232,6 @@ export const saveCourseDetailsToDb = async (course: any, userEmail: string): Pro
     throw error;
   }
 };
-
 
 export const getCourseDetailsFromDb = async (courseId: number, userEmail: string): Promise<any | null> => {
   try {
@@ -664,6 +401,143 @@ export const saveAssessmentDetailsToDb = async (
   }
 };
 
+// Get all assessments that don't have detailed data saved
+export const getAssessmentsWithoutDetails = async (userEmail: string): Promise<number[]> => {
+  try {
+    await initDb();
+    const db = await getDb();
+    
+    // Get all assessment IDs for the user
+    const allAssessments = await db.getAllAsync(
+      `SELECT DISTINCT id FROM offline_assessments WHERE user_email = ?;`,
+      [userEmail]
+    );
+    
+    // Get assessment IDs that already have detailed data
+    const assessmentsWithData = await db.getAllAsync(
+      `SELECT DISTINCT assessment_id FROM offline_assessment_data WHERE user_email = ?;`,
+      [userEmail]
+    );
+    
+    const allAssessmentIds = allAssessments.map((row: any) => row.id);
+    const assessmentIdsWithData = assessmentsWithData.map((row: any) => row.assessment_id);
+    
+    // Return IDs that don't have detailed data
+    const assessmentsWithoutData = allAssessmentIds.filter(
+      id => !assessmentIdsWithData.includes(id)
+    );
+    
+    console.log(`📊 Found ${assessmentsWithoutData.length} assessments without detailed data`);
+    return assessmentsWithoutData;
+  } catch (error) {
+    console.error('❌ Failed to get assessments without details:', error);
+    return [];
+  }
+};
+
+// Check if assessment needs detailed data download
+export const checkIfAssessmentNeedsDetails = async (assessmentId: number, userEmail: string): Promise<boolean> => {
+  try {
+    const db = await getDb();
+    const result = await db.getFirstAsync(
+      `SELECT COUNT(*) as count FROM offline_assessment_data WHERE assessment_id = ? AND user_email = ?;`,
+      [assessmentId, userEmail]
+    );
+    return (result as any)?.count === 0;
+  } catch (error) {
+    console.error('❌ Error checking assessment details:', error);
+    return true; // Assume it needs details if there's an error
+  }
+};
+
+// Replace the downloadAllAssessmentDetails function in localDb.ts with this version:
+
+export const downloadAllAssessmentDetails = async (
+  userEmail: string, 
+  apiInstance: any, // Pass api as parameter instead of requiring it
+  onProgress?: (current: number, total: number) => void
+): Promise<{ success: number, failed: number }> => {
+  try {
+    const assessmentIds = await getAssessmentsWithoutDetails(userEmail);
+    if (assessmentIds.length === 0) {
+      console.log('✅ All assessments already have detailed data');
+      return { success: 0, failed: 0 };
+    }
+    
+    let successCount = 0;
+    let failedCount = 0;
+    
+    console.log(`📥 Starting batch download for ${assessmentIds.length} assessments`);
+    
+    for (let i = 0; i < assessmentIds.length; i++) {
+      const assessmentId = assessmentIds[i];
+      
+      try {
+        if (onProgress) {
+          onProgress(i + 1, assessmentIds.length);
+        }
+        
+        let attemptStatus = null;
+        let latestSubmission = null;
+        
+        const db = await getDb();
+        const assessmentResult = await db.getFirstAsync(
+          `SELECT type FROM offline_assessments WHERE id = ? AND user_email = ?;`,
+          [assessmentId, userEmail]
+        );
+        
+        if (!assessmentResult) {
+          console.warn(`⚠️ Assessment ${assessmentId} not found in local DB`);
+          failedCount++;
+          continue;
+        }
+        
+        const assessmentType = (assessmentResult as any).type;
+        
+        // Fetch attempt status for quiz/exam types
+        if (assessmentType === 'quiz' || assessmentType === 'exam') {
+          try {
+            const attemptResponse = await apiInstance.get(`/assessments/${assessmentId}/attempt-status`);
+            if (attemptResponse.status === 200) {
+              attemptStatus = attemptResponse.data;
+            }
+          } catch (error) {
+            console.warn(`⚠️ Failed to fetch attempt status for assessment ${assessmentId}`);
+          }
+        }
+        
+        // Fetch latest submission for assignment types
+        if (['assignment', 'activity', 'project'].includes(assessmentType)) {
+          try {
+            const submissionResponse = await apiInstance.get(`/assessments/${assessmentId}/latest-assignment-submission`);
+            if (submissionResponse.status === 200) {
+              latestSubmission = submissionResponse.data;
+            }
+          } catch (error) {
+            console.warn(`⚠️ Failed to fetch submission for assessment ${assessmentId}`);
+          }
+        }
+        
+        await saveAssessmentDetailsToDb(assessmentId, userEmail, attemptStatus, latestSubmission);
+        successCount++;
+        
+        console.log(`✅ Downloaded details for assessment ${assessmentId}`);
+        
+      } catch (error) {
+        console.error(`❌ Failed to download details for assessment ${assessmentId}:`, error);
+        failedCount++;
+      }
+    }
+    
+    console.log(`📥 Batch download completed: ${successCount} successful, ${failedCount} failed`);
+    return { success: successCount, failed: failedCount };
+    
+  } catch (error) {
+    console.error('❌ Batch download failed:', error);
+    throw error;
+  }
+};
+
 export const getAssessmentDetailsFromDb = async (assessmentId: number | string, userEmail: string): Promise<any | null> => {
   try {
     const db = await getDb();
@@ -712,7 +586,7 @@ export const clearAllData = async (): Promise<void> => {
     
     console.log('🗑️ Clearing all local data...');
     
-    await db.execAsync(`DELETE FROM offline_users;`);
+    // --- MODIFIED: Removed the now-obsolete `offline_users` table from the clear logic.
     await db.execAsync(`DELETE FROM offline_courses;`);
     await db.execAsync(`DELETE FROM offline_course_details;`);
     await db.execAsync(`DELETE FROM time_check_logs;`);
@@ -721,40 +595,6 @@ export const clearAllData = async (): Promise<void> => {
   } catch (error) {
     console.error('❌ Failed to clear local data:', error);
     throw error;
-  }
-};
-
-export const hasOfflineAccount = async (email: string): Promise<boolean> => {
-  try {
-    await initDb(); // Ensure DB is initialized
-    const db = await getDb();
-    
-    const result = await db.getAllAsync(
-      `SELECT id FROM offline_users WHERE email = ?;`,
-      [email]
-    );
-    
-    return (result && result.length > 0);
-  } catch (error) {
-    console.error('❌ hasOfflineAccount error:', error);
-    return false;
-  }
-};
-
-export const getOfflineAccountInfo = async (email: string): Promise<any | null> => {
-  try {
-    await initDb(); // Ensure DB is initialized
-    const db = await getDb();
-    
-    const result = await db.getAllAsync(
-      `SELECT * FROM offline_users WHERE email = ?;`,
-      [email]
-    );
-    
-    return (result && result.length > 0) ? result[0] : null;
-  } catch (error) {
-    console.error('❌ getOfflineAccountInfo error:', error);
-    return null;
   }
 };
 
@@ -779,6 +619,22 @@ export const resetDatabaseState = (): void => {
 };
 
 
+export const clearOfflineData = async (): Promise<void> => {
+    try {
+        const db = await getDb();
+        console.log('🗑️ Clearing all offline data...');
+        // Delete all data from all offline tables
+        await db.execAsync(`DELETE FROM offline_courses;`);
+        await db.execAsync(`DELETE FROM offline_course_details;`);
+        await db.execAsync(`DELETE FROM offline_materials;`);
+        await db.execAsync(`DELETE FROM offline_assessments;`);
+        await db.execAsync(`DELETE FROM app_state;`); // Clear the app state (server time) as well
+        console.log('✅ All offline data cleared successfully.');
+    } catch (error) {
+        console.error('❌ Error clearing offline data:', error);
+    }
+}
+
 
 {/* SERVER ONLY FOR OFFLINE USE */}
 
@@ -793,19 +649,21 @@ export const saveServerTime = async (userEmail: string, apiServerTime: string, c
     const serverTimeOffset = serverTimeMs - deviceTimeMs;
 
     console.log('💾 Saving server time, device time, and offset to local DB.');
+    // Correctly update the `app_state` table, not `offline_users`
     await db.runAsync(
-      `UPDATE offline_users SET 
-         server_time = ?, 
-         server_time_offset = ?, 
-         last_time_check = ?, 
-         time_check_sequence = ? 
-       WHERE email = ?;`,
+      `INSERT OR REPLACE INTO app_state (
+         user_email, 
+         server_time, 
+         server_time_offset, 
+         last_time_check, 
+         time_check_sequence
+       ) VALUES (?, ?, ?, ?, ?);`,
       [
+        userEmail, 
         apiServerTime, 
         serverTimeOffset, 
         deviceTimeMs, // Store the device time at the point of sync
-        1,
-        userEmail
+        1, // Reset sequence on every new login
       ]
     );
     console.log('✅ Server time and offset saved successfully.');
@@ -823,7 +681,7 @@ export const getSavedServerTime = async (userEmail: string): Promise<string | nu
     console.log('🔍 Retrieving server time and offset from local DB...');
     
     const result = await db.getAllAsync(
-      `SELECT last_time_check, server_time_offset FROM offline_users WHERE email = ?;`,
+      `SELECT last_time_check, server_time_offset FROM app_state WHERE user_email = ?;`,
       [userEmail]
     );
     
@@ -852,15 +710,35 @@ export const getSavedServerTime = async (userEmail: string): Promise<string | nu
   }
 };
 
+export const resetTimeCheckData = async (userEmail: string) => {
+  try {
+    console.log('🔄 Resetting time check data for user:', userEmail);
+    const db = await getDb();
+    
+    // Update the app_state table with fresh time data.
+    await db.runAsync(
+      `INSERT OR REPLACE INTO app_state (user_email, last_time_check, server_time_offset) 
+       VALUES (?, ?, ?);`,
+      [userEmail, Date.now(), 0]
+    );
+
+    console.log('✅ Time check data reset successfully.');
+  } catch (error) {
+    console.error('❌ Failed to reset time check data:', error);
+    // You might want to handle this error, but for now, just log it.
+  }
+};
+
 export const detectTimeManipulation = async (userEmail: string): Promise<{ isValid: boolean, reason?: string }> => {
   try {
     await initDb();
     const db = await getDb();
     const result = await db.getAllAsync(
-      `SELECT last_time_check, server_time_offset FROM offline_users WHERE email = ?;`,
+      `SELECT last_time_check, server_time_offset FROM app_state WHERE user_email = ?;`,
       [userEmail]
     );
-    
+
+    // This is the crucial part that ensures a fresh start.
     if (!result || result.length === 0 || !result[0].last_time_check) {
       console.log('⏳ No prior time check data found, assuming valid.');
       return { isValid: true };
@@ -870,11 +748,8 @@ export const detectTimeManipulation = async (userEmail: string): Promise<{ isVal
     const serverTimeOffset = result[0].server_time_offset;
     const currentDeviceTimeMs = Date.now();
     
-    // Calculate the expected device time based on the server time offset
-    // This is the core of the new, more robust logic
     const expectedServerTimeMs = currentDeviceTimeMs + serverTimeOffset;
     
-    // We compare the last saved device time to the current device time to detect backward travel
     if (currentDeviceTimeMs < lastDeviceTimeMs) {
       return { isValid: false, reason: 'Device time moved backward.' };
     }
@@ -882,10 +757,7 @@ export const detectTimeManipulation = async (userEmail: string): Promise<{ isVal
     // Calculate the elapsed time in milliseconds on the device
     const timeElapsed = currentDeviceTimeMs - lastDeviceTimeMs;
     
-    // Check if the device time has jumped forward excessively
-    // We check against a small threshold to catch subtle manipulation
     if (timeElapsed > (5 * 60 * 1000) && lastDeviceTimeMs !== 0) { // 5 minutes tolerance
-      // This is a new check for a small forward jump
       return { isValid: false, reason: 'Device time jumped forward excessively.' };
     }
     
@@ -910,15 +782,17 @@ export const updateTimeSync = async (userEmail: string): Promise<void> => {
             return;
         }
 
+        // Correctly query the `app_state` table
         const result = await db.getAllAsync(
-            `SELECT time_check_sequence FROM offline_users WHERE email = ?;`,
+            `SELECT time_check_sequence FROM app_state WHERE user_email = ?;`,
             [userEmail]
         );
         const currentSequence = result[0]?.time_check_sequence || 0;
         const newSequence = currentSequence + 1;
         
+        // Correctly update the `app_state` table
         await db.runAsync(
-            `UPDATE offline_users SET last_time_check = ?, time_check_sequence = ? WHERE email = ?;`,
+            `UPDATE app_state SET last_time_check = ?, time_check_sequence = ? WHERE user_email = ?;`,
             [Date.now(), newSequence, userEmail]
         );
         console.log(`✅ Time sync updated for ${userEmail}. Sequence: ${newSequence}`);
@@ -934,20 +808,14 @@ export const emergencyResetTimeDetection = async (): Promise<void> => {
     
     console.log('🚨 Emergency reset of ALL time detection data');
     
+    // Removed all queries related to `offline_users` and `time_check_logs` as they are now obsolete.
     await db.execAsync(
-      `UPDATE offline_users SET 
-       last_time_check = ?, 
-       time_check_sequence = 0
-       WHERE last_time_check IS NOT NULL;`
+      `DELETE FROM app_state;`
     );
     
-    await db.execAsync(
-      `DELETE FROM time_check_logs;`
-    );
-    
-    console.log('✅ All time check data and logs have been cleared.');
+    console.log('✅ All time detection data cleared.');
   } catch (error) {
-    console.error('❌ Error during emergency time reset:', error);
+    console.error('❌ Failed to clear time detection data:', error);
     throw error;
   }
 };

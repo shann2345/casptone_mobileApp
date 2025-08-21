@@ -5,7 +5,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Animated, FlatList, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useNetworkStatus } from '../../context/NetworkContext';
 import api, { clearAuthToken, getAuthToken, getServerTime, getUserData } from '../../lib/api';
-import { getDb, getEnrolledCoursesFromDb, initDb, saveCourseDetailsToDb, saveCourseToDb, saveServerTime, updateTimeSync } from '../../lib/localDb';
+import { downloadAllAssessmentDetails, getAssessmentsWithoutDetails, getDb, getEnrolledCoursesFromDb, initDb, saveCourseDetailsToDb, saveCourseToDb, saveServerTime, updateTimeSync } from '../../lib/localDb';
 
 
 interface Course {
@@ -43,14 +43,12 @@ export default function HomeScreen() {
   const [enrolledCourses, setEnrolledCourses] = useState<EnrolledCourse[]>([]);
   const [isLoadingEnrolledCourses, setIsLoadingEnrolledCourses] = useState<boolean>(true);
   const [isInitialized, setIsInitialized] = useState<boolean>(false);
-
-  // New state and animated value for the ad-style dropdown
+  const [downloadProgress, setDownloadProgress] = useState({ current: 0, total: 0 });
+  const [isDownloadingData, setIsDownloadingData] = useState(false);
+  const [assessmentsNeedingDetails, setAssessmentsNeedingDetails] = useState<number>(0);
   const [isAdVisible, setIsAdVisible] = useState<boolean>(false);
-  const adContentHeight = 60; // Define the height of the ad content
-  // Corrected initial value to 0, so the ad starts collapsed
+  const adContentHeight = 60;
   const adHeight = useRef(new Animated.Value(0)).current;
-
-  // Use the custom hook to get network status
   const { isConnected, netInfo } = useNetworkStatus();
   const enrolledCoursesFlatListRef = useRef<FlatList<EnrolledCourse>>(null);
 
@@ -74,6 +72,24 @@ export default function HomeScreen() {
     initialize();
     return () => { isMounted = false; };
   }, []);
+
+  useEffect(() => {
+    const checkAssessmentsNeedingDetails = async () => {
+      if (!isInitialized) return;
+      
+      try {
+        const userData = await getUserData();
+        if (userData?.email) {
+          const assessmentIds = await getAssessmentsWithoutDetails(userData.email);
+          setAssessmentsNeedingDetails(assessmentIds.length);
+        }
+      } catch (error) {
+        console.error('Error checking assessments needing details:', error);
+      }
+    };
+    
+    checkAssessmentsNeedingDetails();
+  }, [enrolledCourses, isInitialized]);
 
   const fetchAndSaveCompleteCoursesData = async (courses: EnrolledCourse[], userEmail: string) => {
     console.log('📦 Starting to fetch complete course data for offline access...');
@@ -411,9 +427,81 @@ export default function HomeScreen() {
     }).start();
   };
 
-  const handleAdButtonPress = () => {
-    Alert.alert('Ad Button Clicked', 'This button can navigate to a new page or perform an action.');
-    toggleAd(); // Retracts the ad after the button is clicked
+  const handleAdButtonPress = async () => {
+    if (!isConnected) {
+      Alert.alert('Offline Mode', 'You must be online to download assessment details.');
+      return;
+    }
+
+    try {
+      const userData = await getUserData();
+      if (!userData?.email) {
+        Alert.alert('Error', 'User data not found. Please log in again.');
+        return;
+      }
+
+      const assessmentIds = await getAssessmentsWithoutDetails(userData.email);
+      
+      if (assessmentIds.length === 0) {
+        Alert.alert(
+          'Already Up to Date', 
+          'All assessment details are already downloaded for offline use.',
+          [{ text: 'OK', onPress: toggleAd }]
+        );
+        return;
+      }
+
+      Alert.alert(
+        'Download Assessment Details',
+        `Found ${assessmentIds.length} assessments that need detailed data (attempts, submissions, etc.). This will download all missing details for offline use.\n\nProceed with download?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Download',
+            onPress: async () => {
+              setIsDownloadingData(true);
+              setDownloadProgress({ current: 0, total: assessmentIds.length });
+
+              try {
+                // Pass api instance as parameter
+                const result = await downloadAllAssessmentDetails(
+                  userData.email,
+                  api, // Pass the api instance here
+                  (current, total) => {
+                    setDownloadProgress({ current, total });
+                  }
+                );
+
+                Alert.alert(
+                  'Download Complete',
+                  `Successfully downloaded details for ${result.success} assessments.${
+                    result.failed > 0 ? `\n${result.failed} assessments failed to download.` : ''
+                  }\n\nAll data is now available offline!`,
+                  [{ text: 'OK', onPress: toggleAd }]
+                );
+
+                // Update the count of assessments needing details
+                setAssessmentsNeedingDetails(0);
+
+              } catch (error) {
+                console.error('Download failed:', error);
+                Alert.alert(
+                  'Download Failed',
+                  'Failed to download assessment details. Please check your internet connection and try again.',
+                  [{ text: 'OK' }]
+                );
+              } finally {
+                setIsDownloadingData(false);
+                setDownloadProgress({ current: 0, total: 0 });
+              }
+            }
+          }
+        ]
+      );
+    } catch (error) {
+      console.error('Error in handleAdButtonPress:', error);
+      Alert.alert('Error', 'An unexpected error occurred. Please try again.');
+    }
   };
 
   // Show loading while initializing
@@ -431,8 +519,31 @@ export default function HomeScreen() {
       {/* Ad-style dropdown at the very top */}
       <View style={styles.adContainer}>
         <Animated.View style={[styles.adContent, { height: adHeight }]}>
-          <TouchableOpacity style={styles.adButton} onPress={handleAdButtonPress}>
-            <Text style={styles.adButtonText}>Download All Data for offline use</Text>
+          <TouchableOpacity 
+            style={[
+              styles.adButton, 
+              isDownloadingData && styles.adButtonDownloading,
+              !isConnected && styles.disabledButton
+            ]} 
+            onPress={handleAdButtonPress}
+            disabled={isDownloadingData || !isConnected}
+          >
+            {isDownloadingData ? (
+              <View style={styles.downloadProgressContainer}>
+                <ActivityIndicator color="#fff" size="small" />
+                <Text style={styles.adButtonText}>
+                  Downloading... ({downloadProgress.current}/{downloadProgress.total})
+                </Text>
+              </View>
+            ) : (
+              <Text style={styles.adButtonText}>
+                {assessmentsNeedingDetails > 0 
+                  ? `Download All Data (${assessmentsNeedingDetails} assessments need details)`
+                  : 'Download All Data for Offline Use'
+                }
+                {!isConnected && ' - Offline'}
+              </Text>
+            )}
           </TouchableOpacity>
         </Animated.View>
         <TouchableOpacity style={styles.adToggle} onPress={toggleAd}>
@@ -922,5 +1033,13 @@ const styles = StyleSheet.create({
   disabledButton: {
     backgroundColor: '#ccc',
     shadowColor: 'transparent',
+  },
+  adButtonDownloading: {
+  backgroundColor: '#17a2b8', // Different color when downloading
+  },
+  downloadProgressContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
 });

@@ -134,7 +134,7 @@ export default function AssessmentDetailsScreen() {
           setLatestAssignmentSubmission(offlineAssessment.latestSubmission);
           setSelectedFile(null);
         } else {
-          setError('Offline: Assessment details not available locally.');
+          setError('Offline: Assessment details not available locally. Please connect to the internet to load.');
           Alert.alert('Offline Mode', 'Assessment details not found in local storage. Please connect to the internet to load.');
         }
       }
@@ -403,6 +403,7 @@ export default function AssessmentDetailsScreen() {
   }
 
   const isAssignmentType = ['assignment', 'activity', 'project'].includes(assessmentDetail.type);
+  const isQuizOrExamType = ['quiz', 'exam'].includes(assessmentDetail.type);
 
   return (
     <View style={styles.container}>
@@ -423,18 +424,14 @@ export default function AssessmentDetailsScreen() {
         {/* Details Section */}
         <View style={styles.sectionContainer}>
           <Text style={styles.sectionHeader}>Details</Text>
-          <View style={styles.detailRow}>
-            <Ionicons name="timer-outline" size={18} color="#666" style={styles.icon} />
-            <Text style={styles.detailText}>
-              <Text style={styles.detailLabel}>Duration:</Text> {assessmentDetail.duration_minutes ? `${assessmentDetail.duration_minutes} minutes` : 'N/A'}
-            </Text>
-          </View>
-          <View style={styles.detailRow}>
-            <Ionicons name="checkbox-outline" size={18} color="#666" style={styles.icon} />
-            <Text style={styles.detailText}>
-              <Text style={styles.detailLabel}>Points:</Text> {assessmentDetail.points}
-            </Text>
-          </View>
+          {isQuizOrExamType && (
+            <View style={styles.detailRow}>
+              <Ionicons name="timer-outline" size={18} color="#666" style={styles.icon} />
+              <Text style={styles.detailText}>
+                <Text style={styles.detailLabel}>Duration:</Text> {assessmentDetail.duration_minutes ? `${assessmentDetail.duration_minutes} minutes` : 'N/A'}
+              </Text>
+            </View>
+          )}
           <View style={styles.detailRow}>
             <Ionicons name="calendar-outline" size={18} color="#666" style={styles.icon} />
             <Text style={styles.detailText}>
@@ -449,28 +446,39 @@ export default function AssessmentDetailsScreen() {
               </Text>
             </View>
           )}
-          <View style={styles.detailRow}>
-            <Ionicons name="repeat-outline" size={18} color="#666" style={styles.icon} />
-            <Text style={styles.detailText}>
-              <Text style={styles.detailLabel}>Max Attempts:</Text> {assessmentDetail.max_attempts ?? 'Unlimited'}
-            </Text>
-          </View>
-          {/* Display current attempt status for quizzes/exams */}
-          {(assessmentDetail.type === 'quiz' || assessmentDetail.type === 'exam') && attemptStatus && (
+
+          {/* Conditional rendering for Quiz/Exam specific details */}
+          {isQuizOrExamType && (
             <>
               <View style={styles.detailRow}>
-                <Ionicons name="checkmark-done-circle-outline" size={18} color="#666" style={styles.icon} />
+                <Ionicons name="checkbox-outline" size={18} color="#666" style={styles.icon} />
                 <Text style={styles.detailText}>
-                  <Text style={styles.detailLabel}>Attempts Made:</Text> {attemptStatus.attempts_made}
+                  <Text style={styles.detailLabel}>Points:</Text> {assessmentDetail.points}
                 </Text>
               </View>
-              {attemptStatus.max_attempts !== null && (
-                <View style={styles.detailRow}>
-                  <Ionicons name="hourglass-outline" size={18} color="#666" style={styles.icon} />
-                  <Text style={styles.detailText}>
-                    <Text style={styles.detailLabel}>Attempts Remaining:</Text> {attemptStatus.attempts_remaining}
-                  </Text>
-                </View>
+              <View style={styles.detailRow}>
+                <Ionicons name="repeat-outline" size={18} color="#666" style={styles.icon} />
+                <Text style={styles.detailText}>
+                  <Text style={styles.detailLabel}>Max Attempts:</Text> {assessmentDetail.max_attempts ?? 'Unlimited'}
+                </Text>
+              </View>
+              {attemptStatus && (
+                <>
+                  <View style={styles.detailRow}>
+                    <Ionicons name="checkmark-done-circle-outline" size={18} color="#666" style={styles.icon} />
+                    <Text style={styles.detailText}>
+                      <Text style={styles.detailLabel}>Attempts Made:</Text> {attemptStatus.attempts_made}
+                    </Text>
+                  </View>
+                  {attemptStatus.max_attempts !== null && (
+                    <View style={styles.detailRow}>
+                      <Ionicons name="hourglass-outline" size={18} color="#666" style={styles.icon} />
+                      <Text style={styles.detailText}>
+                        <Text style={styles.detailLabel}>Attempts Remaining:</Text> {attemptStatus.attempts_remaining}
+                      </Text>
+                    </View>
+                  )}
+                </>
               )}
             </>
           )}

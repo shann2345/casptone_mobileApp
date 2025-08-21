@@ -1,7 +1,8 @@
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { clearAuthToken, getUserData } from '../../lib/api'; // Assuming you have these
+import { clearAuthToken, getUserData } from '../../lib/api';
+import { clearOfflineData } from '../../lib/localDb'; // Import the new function
 
 export default function ProfileScreen() {
   const [userName, setUserName] = useState<string | null>(null);
@@ -33,10 +34,11 @@ export default function ProfileScreen() {
     fetchProfileData();
   }, []);
 
+  // --- MODIFIED FUNCTION: handleLogout ---
   const handleLogout = async () => {
     Alert.alert(
       'Logout',
-      'Are you sure you want to log out?',
+      'Are you sure you want to log out? This will clear all offline data.',
       [
         {
           text: 'Cancel',
@@ -45,39 +47,35 @@ export default function ProfileScreen() {
         {
           text: 'Logout',
           onPress: async () => {
-            try {
-              await clearAuthToken();
-              Alert.alert('Logged Out', 'You have been successfully logged out.');
-              router.replace('/login');
-            } catch (error) {
-              console.error('Error during logout:', error);
-              Alert.alert('Logout Failed', 'An error occurred during logout. Please try again.');
-            }
+            await clearAuthToken();
+            await clearOfflineData(); // Call the new function to clear local data
+            router.replace('/login');
           },
+          style: 'destructive',
         },
-      ],
-      { cancelable: true }
+      ]
     );
   };
 
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#0000ff" />
-        <Text>Loading profile...</Text>
+        <ActivityIndicator size="large" color="#007bff" />
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>My Profile</Text>
+      <Text style={styles.title}>Profile</Text>
+      
       <View style={styles.profileInfo}>
-        <Text style={styles.label}>Name:</Text>
+        <Text style={styles.label}>Name</Text>
         <Text style={styles.value}>{userName || 'N/A'}</Text>
       </View>
+
       <View style={styles.profileInfo}>
-        <Text style={styles.label}>Email:</Text>
+        <Text style={styles.label}>Email</Text>
         <Text style={styles.value}>{userEmail || 'N/A'}</Text>
       </View>
 
@@ -131,17 +129,13 @@ const styles = StyleSheet.create({
     color: '#333',
   },
   logoutButton: {
-    backgroundColor: '#dc3545', // Red color for logout
+    backgroundColor: '#dc3545',
     paddingVertical: 12,
-    paddingHorizontal: 25,
+    paddingHorizontal: 30,
     borderRadius: 8,
-    marginTop: 30,
-    alignSelf: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 3,
-    elevation: 5,
+    marginTop: 20,
+    width: '90%',
+    alignItems: 'center',
   },
   logoutButtonText: {
     color: '#fff',
