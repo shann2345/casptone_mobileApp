@@ -5,7 +5,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Animated, FlatList, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useNetworkStatus } from '../../context/NetworkContext';
 import api, { clearAuthToken, getAuthToken, getServerTime, getUserData } from '../../lib/api';
-import { downloadAllAssessmentDetails, getAssessmentsWithoutDetails, getDb, getEnrolledCoursesFromDb, initDb, saveCourseDetailsToDb, saveCourseToDb, saveServerTime, updateTimeSync } from '../../lib/localDb';
+import { downloadAllAssessmentDetails, getAssessmentsWithoutDetails, getDb, getEnrolledCoursesFromDb, initDb, resetTimeCheckData, saveCourseDetailsToDb, saveCourseToDb, saveServerTime, updateTimeSync } from '../../lib/localDb';
 
 
 interface Course {
@@ -157,7 +157,10 @@ export default function HomeScreen() {
              setIsLoadingEnrolledCourses(false);
              return;
           }
-
+          
+          await resetTimeCheckData(userEmail);
+          // --- ADDED CODE END ---
+          
           try {
             const apiServerTime = await getServerTime();
             if (apiServerTime) {
