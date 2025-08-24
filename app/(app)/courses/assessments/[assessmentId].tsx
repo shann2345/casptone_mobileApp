@@ -3,12 +3,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { useNetworkStatus } from '../../../../context/NetworkContext';
-import api, { getUserData } from '../../../../lib/api';
-import { checkIfAssessmentNeedsDetails, getAssessmentDetailsFromDb, saveAssessmentDetailsToDb, saveAssessmentsToDb } from '../../../../lib/localDb'; // Updated import
+import api, { getUserData, syncOfflineSubmission } from '../../../../lib/api'; // Add syncOfflineSubmission here
+import { checkIfAssessmentNeedsDetails, deleteOfflineSubmission, getAssessmentDetailsFromDb, getUnsyncedSubmissions, saveAssessmentDetailsToDb, saveAssessmentsToDb, saveOfflineSubmission } from '../../../../lib/localDb';
 
 interface AssessmentDetail {
   id: number;
@@ -48,7 +48,6 @@ export default function AssessmentDetailsScreen() {
   const { id: courseId, assessmentId } = useLocalSearchParams();
   const router = useRouter();
   const { isConnected } = useNetworkStatus();
-
   const [assessmentDetail, setAssessmentDetail] = useState<AssessmentDetail | null>(null);
   const [attemptStatus, setAttemptStatus] = useState<AttemptStatus | null>(null);
   const [latestAssignmentSubmission, setLatestAssignmentSubmission] = useState<LatestAssignmentSubmission | null>(null);
@@ -165,6 +164,46 @@ export default function AssessmentDetailsScreen() {
       fetchAssessmentDetailsAndAttemptStatus();
     }, [fetchAssessmentDetailsAndAttemptStatus])
   );
+
+  useEffect(() => {
+    const syncSubmissions = async () => {
+      if (isConnected) {
+        console.log('✅ Network is back online. Checking for unsynced submissions...');
+        const user = await getUserData();
+        if (!user || !user.email) return;
+
+        const unsyncedSubmissions = await getUnsyncedSubmissions(user.email);
+        if (unsyncedSubmissions.length > 0) {
+          Alert.alert(
+            'Synchronization',
+            `Found ${unsyncedSubmissions.length} offline submission(s) to sync.`,
+            [{ text: 'OK' }]
+          );
+
+          for (const submission of unsyncedSubmissions) {
+            const success = await syncOfflineSubmission(
+              submission.assessment_id,
+              submission.file_uri,
+              submission.original_filename
+            );
+
+            if (success) {
+              // After successful sync, delete the local record
+              await deleteOfflineSubmission(submission.id); // Call the new deletion function
+              console.log(`✅ Successfully synced and deleted local record for assessment ${submission.assessment_id}`);
+            } else {
+              console.warn(`❌ Failed to sync submission for assessment ${submission.assessment_id}`);
+            }
+          }
+          
+          // After attempting sync for all, refetch the latest status
+          fetchAssessmentDetailsAndAttemptStatus();
+        }
+      }
+    };
+
+    syncSubmissions();
+  }, [isConnected]);
 
   const isAssessmentAvailable = (assessment: AssessmentDetail) => {
     if (!assessment.available_at) return true;
@@ -286,11 +325,6 @@ export default function AssessmentDetailsScreen() {
   const handleSubmitAssignment = async () => {
     if (!assessmentDetail) return;
 
-    if (!isConnected) {
-      Alert.alert('Offline Mode', 'You must be online to submit an assignment.');
-      return;
-    }
-
     if (!isAssessmentAvailable(assessmentDetail)) {
       Alert.alert(
         'Not Yet Available',
@@ -316,30 +350,54 @@ export default function AssessmentDetailsScreen() {
 
     setSubmissionLoading(true);
     try {
-      const formData = new FormData();
-      formData.append('assignment_file', {
-        uri: selectedFile.uri,
-        name: selectedFile.name,
-        type: selectedFile.mimeType || 'application/octet-stream',
-      } as any);
+      if (isConnected) {
+        // ONLINE MODE - Existing logic
+        const formData = new FormData();
+        formData.append('assignment_file', {
+          uri: selectedFile.uri,
+          name: selectedFile.name,
+          type: selectedFile.mimeType || 'application/octet-stream',
+        } as any);
 
-      console.log('Submitting assignment with FormData');
+        console.log('Submitting assignment with FormData (Online)');
 
-      const response = await api.post(`/assessments/${assessmentDetail.id}/submit-assignment`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
+        const response = await api.post(`/assessments/${assessmentDetail.id}/submit-assignment`, formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        });
 
-      console.log('Assignment submission response:', response.data);
+        console.log('Assignment submission response:', response.data);
 
-      if (response.status === 200) {
-        Alert.alert('Success', response.data.message || 'Assignment submitted successfully!');
-        setSelectedFile(null); // Clear selected file after successful submission
-        
-        await fetchAssessmentDetailsAndAttemptStatus();
+        if (response.status === 200) {
+          Alert.alert('Success', response.data.message || 'Assignment submitted successfully!');
+          setSelectedFile(null); // Clear selected file
+          await fetchAssessmentDetailsAndAttemptStatus();
+        } else {
+          Alert.alert('Error', response.data.message || 'Failed to submit assignment.');
+        }
       } else {
-        Alert.alert('Error', response.data.message || 'Failed to submit assignment.');
+        // OFFLINE MODE
+        console.log('⚠️ Offline: Saving submission to local DB.');
+        const user = await getUserData();
+        if (user && user.email) {
+          await saveOfflineSubmission(user.email, assessmentDetail.id, selectedFile.uri, selectedFile.name);
+          Alert.alert('Offline Submission', 'Your assignment has been saved locally and will be submitted once you are online.');
+          
+          // Manually update the state to reflect the new "to sync" status
+          setLatestAssignmentSubmission({
+            has_submitted_file: true,
+            submitted_file_path: selectedFile.uri,
+            submitted_file_url: null, // No URL yet
+            submitted_file_name: selectedFile.name,
+            original_filename: selectedFile.name,
+            submitted_at: new Date().toISOString(),
+            status: 'to sync', // The new status
+          });
+          setSelectedFile(null);
+        } else {
+          Alert.alert('Error', 'User not found. Cannot save offline submission.');
+        }
       }
     } catch (err: any) {
       console.error('Error submitting assignment:', {
@@ -536,75 +594,68 @@ export default function AssessmentDetailsScreen() {
           {isAssignmentType ? (
             // Assignment, Activity, Project Types
             <View>
-              <Text style={styles.sectionHeader}>Submit Assessment</Text>
-              
-              {!isConnected && (
-                  <Text style={[styles.offlineWarning, { textAlign: 'center', marginBottom: 10 }]}>
-                    Submission is disabled in offline mode.
-                  </Text>
-              )}
-
-              {latestAssignmentSubmission?.has_submitted_file && (
-                <View style={styles.submittedFileContainer}>
-                  <Text style={styles.submittedFileLabel}>Previously Submitted File:</Text>
-                  <TouchableOpacity 
-                    onPress={() => latestAssignmentSubmission.submitted_file_url && handleDownloadSubmittedFile(latestAssignmentSubmission.submitted_file_url)}
-                    style={styles.downloadFileButton}
-                    disabled={!isConnected}
-                  >
-                    <Ionicons name="document-text-outline" size={20} color={isConnected ? "#007bff" : "#666"} />
-                    <Text style={[styles.downloadFileButtonText, !isConnected && { color: '#666' }]}>
-                      {latestAssignmentSubmission.original_filename || 
-                      latestAssignmentSubmission.submitted_file_name || 
-                      'Unknown File'}
-                    </Text>
-                  </TouchableOpacity>
-                  {latestAssignmentSubmission.submitted_at && (
-                    <Text style={styles.submittedAtText}>
-                      Submitted on: {formatDate(latestAssignmentSubmission.submitted_at)}
-                    </Text>
-                  )}
-                  {latestAssignmentSubmission.status && (
-                    <Text style={styles.submittedStatusText}>
-                      Status: {latestAssignmentSubmission.status.replace('_', ' ')}
-                    </Text>
-                  )}
-                  {!isConnected && <Text style={styles.offlineWarning}>Must be online to view/download submission.</Text>}
-                </View>
-              )}
-
-              <TouchableOpacity
-                style={styles.pickFileButton}
-                onPress={handlePickDocument}
-                disabled={!isAvailable || submissionLoading || !isConnected}
-              >
-                <Ionicons name="folder-open-outline" size={20} color={!isAvailable || !isConnected ? "#666" : "#007bff"} />
-                <Text style={[styles.pickFileButtonText, (!isAvailable || !isConnected) && { color: '#666' }]}>
-                  {selectedFile ? selectedFile.name : `Select ${assessmentDetail.type || 'assessment'} File`}
-                </Text>
-              </TouchableOpacity>
-              {selectedFile && (
-                <Text style={styles.selectedFileName}>Selected: {selectedFile.name}</Text>
-              )}
-              <TouchableOpacity
-                style={[
-                  styles.actionButton,
-                  (!isAvailable || !selectedFile || submissionLoading || !isConnected) && styles.actionButtonDisabled,
-                ]}
-                onPress={handleSubmitAssignment}
-                disabled={!isAvailable || !selectedFile || submissionLoading || !isConnected}
-              >
-                {submissionLoading ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <>
-                    <Ionicons name="cloud-upload-outline" size={24} color="#fff" style={styles.icon} />
-                    <Text style={styles.actionButtonText}>
-                      {isAvailable ? `Submit ${assessmentDetail.type || 'assessment'}` : `${assessmentDetail.type || 'assessment'} Not Yet Available`}
-                    </Text>
-                  </>
+                <Text style={styles.sectionHeader}>Submit Assessment</Text>
+                {latestAssignmentSubmission?.has_submitted_file && (
+                    <View style={styles.submittedFileContainer}>
+                        <Text style={styles.submittedFileLabel}>Previously Submitted File:</Text>
+                        <TouchableOpacity 
+                            onPress={() => latestAssignmentSubmission.submitted_file_url && handleDownloadSubmittedFile(latestAssignmentSubmission.submitted_file_url)}
+                            style={styles.downloadFileButton}
+                            disabled={!isConnected}
+                        >
+                            <Ionicons name="document-text-outline" size={20} color={isConnected ? "#007bff" : "#666"} />
+                            <Text style={[styles.downloadFileButtonText, !isConnected && { color: '#666' }]}>
+                                {latestAssignmentSubmission.original_filename || 
+                                latestAssignmentSubmission.submitted_file_name || 
+                                'Unknown File'}
+                            </Text>
+                        </TouchableOpacity>
+                        {latestAssignmentSubmission.submitted_at && (
+                            <Text style={styles.submittedAtText}>
+                                Submitted on: {formatDate(latestAssignmentSubmission.submitted_at)}
+                            </Text>
+                        )}
+                        {latestAssignmentSubmission.status && (
+                            <Text style={styles.submittedStatusText}>
+                                Status: {latestAssignmentSubmission.status.replace('_', ' ')}
+                            </Text>
+                        )}
+                        {!isConnected && <Text style={styles.offlineWarning}>Must be online to view/download submission.</Text>}
+                    </View>
                 )}
-              </TouchableOpacity>
+
+                <TouchableOpacity
+                    style={styles.pickFileButton}
+                    onPress={handlePickDocument}
+                    disabled={!isAvailable || submissionLoading}
+                >
+                    <Ionicons name="folder-open-outline" size={20} color={!isAvailable || !isConnected ? "#666" : "#007bff"} />
+                    <Text style={[styles.pickFileButtonText, (!isAvailable || !isConnected) && { color: '#007bff' }]}>
+                        {selectedFile ? selectedFile.name : `Select ${assessmentDetail.type || 'assessment'} File`}
+                    </Text>
+                </TouchableOpacity>
+                {selectedFile && (
+                    <Text style={styles.selectedFileName}>Selected: {selectedFile.name}</Text>
+                )}
+                <TouchableOpacity
+                    style={[
+                        styles.actionButton,
+                        (!isAvailable || !selectedFile || submissionLoading || !isConnected) && styles.actionButtonDisabled,
+                    ]}
+                    onPress={handleSubmitAssignment}
+                    disabled={!isAvailable || !selectedFile || submissionLoading}
+                >
+                    {submissionLoading ? (
+                        <ActivityIndicator color="#fff" />
+                    ) : (
+                        <>
+                            <Ionicons name="cloud-upload-outline" size={24} color="#007bff" style={styles.icon} />
+                            <Text style={styles.actionButtonText}>
+                                {isAvailable ? `Submit ${assessmentDetail.type || 'assessment'}` : `${assessmentDetail.type || 'assessment'} Not Yet Available`}
+                            </Text>
+                        </>
+                    )}
+                </TouchableOpacity>
             </View>
           ) : (
             // Quiz/Exam Type
@@ -751,7 +802,7 @@ const styles = StyleSheet.create({
   actionButtonText: {
     fontSize: 17,
     fontWeight: 'bold',
-    color: '#fff',
+    color: '#007bff',
     marginLeft: 5,
   },
   pickFileButton: {

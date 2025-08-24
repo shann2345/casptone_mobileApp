@@ -131,6 +131,19 @@ export const initDb = async (): Promise<void> => {
         );`
       );
       
+      // Add this new table inside the initDb function
+      await db.execAsync(
+        `CREATE TABLE IF NOT EXISTS offline_submissions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_email TEXT NOT NULL,
+          assessment_id INTEGER NOT NULL,
+          file_uri TEXT NOT NULL,
+          original_filename TEXT NOT NULL,
+          submission_status TEXT NOT NULL,
+          submitted_at TEXT NOT NULL,
+          UNIQUE(user_email, assessment_id) ON CONFLICT REPLACE
+        );`
+      );
 
       // We still need a table to store server time, but for the logged-in user.
       await db.execAsync(
@@ -402,7 +415,6 @@ export const saveAssessmentDetailsToDb = async (
   }
 };
 
-// Get all assessments that don't have detailed data saved
 export const getAssessmentsWithoutDetails = async (userEmail: string): Promise<number[]> => {
   try {
     await initDb();
@@ -436,7 +448,6 @@ export const getAssessmentsWithoutDetails = async (userEmail: string): Promise<n
   }
 };
 
-// Check if assessment needs detailed data download
 export const checkIfAssessmentNeedsDetails = async (assessmentId: number, userEmail: string): Promise<boolean> => {
   try {
     const db = await getDb();
@@ -450,8 +461,6 @@ export const checkIfAssessmentNeedsDetails = async (assessmentId: number, userEm
     return true; // Assume it needs details if there's an error
   }
 };
-
-// Replace the downloadAllAssessmentDetails function in localDb.ts with this version:
 
 export const downloadAllAssessmentDetails = async (
   userEmail: string, 
@@ -577,6 +586,60 @@ export const getAssessmentDetailsFromDb = async (assessmentId: number | string, 
   } catch (error) {
     console.error(`❌ Failed to get assessment ${assessmentId} from DB:`, error);
     return null;
+  }
+};
+
+// New function to save an offline submission
+export const saveOfflineSubmission = async (
+  userEmail: string,
+  assessmentId: number,
+  fileUri: string,
+  originalFilename: string
+) => {
+  try {
+    await initDb();
+    const db = await getDb();
+    const submittedAt = new Date().toISOString();
+    console.log('💾 Saving offline submission to local DB');
+
+    await db.runAsync(
+      `INSERT OR REPLACE INTO offline_submissions (user_email, assessment_id, file_uri, original_filename, submission_status, submitted_at) VALUES (?, ?, ?, ?, ?, ?);`,
+      [userEmail, assessmentId, fileUri, originalFilename, 'to sync', submittedAt]
+    );
+
+    console.log('✅ Offline submission saved successfully.');
+  } catch (error) {
+    console.error('❌ Failed to save offline submission:', error);
+    throw error;
+  }
+};
+
+export const getUnsyncedSubmissions = async (userEmail: string) => {
+  try {
+    await initDb();
+    const db = await getDb();
+    const result = await db.getAllAsync(
+      `SELECT * FROM offline_submissions WHERE user_email = ? AND submission_status = 'to sync';`,
+      [userEmail]
+    );
+    console.log(`🔍 Found ${result.length} unsynced submissions for user ${userEmail}`);
+    return result;
+  } catch (error) {
+    console.error('❌ Failed to get unsynced submissions:', error);
+    return [];
+  }
+};
+
+export const deleteOfflineSubmission = async (id: number) => {
+  try {
+    await initDb();
+    const db = await getDb();
+    console.log(`🗑️ Deleting offline submission with ID: ${id}`);
+    await db.runAsync(`DELETE FROM offline_submissions WHERE id = ?;`, [id]);
+    console.log(`✅ Offline submission ID ${id} deleted successfully.`);
+  } catch (error) {
+    console.error(`❌ Failed to delete offline submission ID ${id}:`, error);
+    throw error;
   }
 };
 
