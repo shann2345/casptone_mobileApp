@@ -243,17 +243,19 @@ export const getServerTime = async (): Promise<string | null> => {
 
 
 
-// New function to sync an offline assignment submission
-export const syncOfflineSubmission = async (assessmentId: number, fileUri: string, originalFilename: string) => {
+export const syncOfflineSubmission = async (assessmentId: number, fileUri: string, originalFilename: string, submittedAt: string) => {
   try {
     const formData = new FormData();
     formData.append('assignment_file', {
       uri: fileUri,
       name: originalFilename,
-      type: 'application/octet-stream', // A generic type is fine if you don't know the specific MIME type
+      type: 'application/octet-stream',
     } as any);
+    
+    // Add the original submission timestamp to preserve offline submission time
+    formData.append('submitted_at', submittedAt);
 
-    console.log(`📡 Attempting to sync offline submission for assessment ${assessmentId}...`);
+    console.log(`🔡 Attempting to sync offline submission for assessment ${assessmentId} with original timestamp: ${submittedAt}`);
 
     const response = await api.post(`/assessments/${assessmentId}/submit-assignment`, formData, {
       headers: {

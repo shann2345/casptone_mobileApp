@@ -594,23 +594,56 @@ export const saveOfflineSubmission = async (
   userEmail: string,
   assessmentId: number,
   fileUri: string,
-  originalFilename: string
+  originalFilename: string,
+  submittedAt?: string // Optional parameter for server time
 ) => {
   try {
     await initDb();
     const db = await getDb();
-    const submittedAt = new Date().toISOString();
-    console.log('💾 Saving offline submission to local DB');
+    
+    // Use provided server time or fallback to current server time calculation
+    let finalSubmittedAt = submittedAt;
+    if (!finalSubmittedAt) {
+      const serverTime = await getSavedServerTime(userEmail);
+      finalSubmittedAt = serverTime || new Date().toISOString();
+    }
+    
+    console.log('💾 Saving offline submission to local DB with timestamp:', finalSubmittedAt);
 
     await db.runAsync(
       `INSERT OR REPLACE INTO offline_submissions (user_email, assessment_id, file_uri, original_filename, submission_status, submitted_at) VALUES (?, ?, ?, ?, ?, ?);`,
-      [userEmail, assessmentId, fileUri, originalFilename, 'to sync', submittedAt]
+      [userEmail, assessmentId, fileUri, originalFilename, 'to sync', finalSubmittedAt]
     );
 
     console.log('✅ Offline submission saved successfully.');
+    return finalSubmittedAt; // Return the timestamp that was used
   } catch (error) {
     console.error('❌ Failed to save offline submission:', error);
     throw error;
+  }
+};
+
+export const getCurrentServerTime = async (userEmail: string): Promise<string> => {
+  try {
+    // First check for time manipulation
+    const timeCheck = await detectTimeManipulation(userEmail);
+    if (!timeCheck.isValid) {
+      console.warn('⚠️ Time manipulation detected, using fallback time');
+      return new Date().toISOString(); // Fallback to local time
+    }
+
+    // Get the calculated server time
+    const serverTime = await getSavedServerTime(userEmail);
+    if (serverTime) {
+      console.log('🕒 Using calculated server time:', serverTime);
+      return serverTime;
+    } else {
+      console.warn('⚠️ No server time data available, using local time');
+      return new Date().toISOString();
+    }
+  } catch (error) {
+    console.error('❌ Error getting current server time:', error);
+    return new Date().toISOString(); // Fallback to local time
   }
 };
 
@@ -822,7 +855,7 @@ export const detectTimeManipulation = async (userEmail: string): Promise<{ isVal
     // Calculate the elapsed time in milliseconds on the device
     const timeElapsed = currentDeviceTimeMs - lastDeviceTimeMs;
     
-    if (timeElapsed > (5 * 60 * 1000) && lastDeviceTimeMs !== 0) { // 5 minutes tolerance
+    if (timeElapsed > (60 * 1000) && lastDeviceTimeMs !== 0) { // 5 minutes tolerance
       return { isValid: false, reason: 'Device time jumped forward excessively.' };
     }
     

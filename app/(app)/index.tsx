@@ -49,7 +49,7 @@ export default function HomeScreen() {
   const [isAdVisible, setIsAdVisible] = useState<boolean>(false);
   const adContentHeight = 60;
   const adHeight = useRef(new Animated.Value(0)).current;
-  const { isConnected, netInfo } = useNetworkStatus();
+  const {isConnected, netInfo } = useNetworkStatus();
   const enrolledCoursesFlatListRef = useRef<FlatList<EnrolledCourse>>(null);
 
   useEffect(() => {
@@ -116,7 +116,7 @@ export default function HomeScreen() {
   };
 
   const fetchCourses = async () => {
-    // Only proceed if DB is initialized
+  // Only proceed if DB is initialized
     if (!isInitialized || netInfo === null) return;
 
     // Always get user data from local storage first for a quick load
@@ -142,25 +142,29 @@ export default function HomeScreen() {
     setIsLoadingEnrolledCourses(true);
 
     try {
-      if (isConnected) {
+      // CRITICAL FIX: Use isInternetReachable instead of just isConnected
+      const hasRealInternet = netInfo?.isInternetReachable === true;
+      
+      if (hasRealInternet) {
         // ONLINE MODE: Fetch from API and sync to local DB
         // Check for a token first before attempting API call
         const token = await getAuthToken();
         if (!token) {
-           // Redirect to login if no token exists after coming online
-           Alert.alert(
-             "Session Expired",
-             "You were logged in offline. Please log in again to sync your data.",
-             [{ text: "OK", onPress: () => router.replace('/login') }]
-           );
-           setIsLoadingEnrolledCourses(false);
-           return;
+          // Redirect to login if no token exists after coming online
+          Alert.alert(
+            "Session Expired",
+            "You were logged in offline. Please log in again to sync your data.",
+            [{ text: "OK", onPress: () => router.replace('/login') }]
+          );
+          setIsLoadingEnrolledCourses(false);
+          return;
         }
         
+        // Only reset time check data when we have REAL internet connectivity
         await resetTimeCheckData(userEmail);
-        // --- ADDED CODE END ---
         
         try {
+          // Only attempt to get server time when we have real internet
           const apiServerTime = await getServerTime();
           if (apiServerTime) {
             const currentDeviceTime = new Date().toISOString();
@@ -169,6 +173,14 @@ export default function HomeScreen() {
           }
         } catch (timeError) {
           console.error('❌ Failed to fetch or save server time:', timeError);
+          // If server time sync fails, we should not proceed with other API calls
+          // as this could indicate no real internet connectivity
+          console.log('🔄 Server time sync failed, falling back to offline mode...');
+          const offlineCourses = await getEnrolledCoursesFromDb(userEmail);
+          setEnrolledCourses(offlineCourses as EnrolledCourse[]);
+          setIsLoadingEnrolledCourses(false);
+          setIsRefreshing(false);
+          return;
         }
 
         console.log('✅ Online: Fetching courses from API.');
@@ -192,15 +204,17 @@ export default function HomeScreen() {
 
       } else {
         // OFFLINE MODE: Fetch from local DB
-        console.log('⚠️ Offline: Fetching courses from local DB.');
+        console.log('⚠️ Offline or no internet reachability: Fetching courses from local DB.');
         const offlineCourses = await getEnrolledCoursesFromDb(userEmail);
         setEnrolledCourses(offlineCourses as EnrolledCourse[]);
       }
     } catch (error: any) {
       console.error('Error fetching enrolled courses:', error.response?.data || error.message);
 
+
+      const hasRealInternet = netInfo?.isInternetReachable === true
       // If online request fails, try to load from local DB as fallback
-      if (isConnected) {
+      if (hasRealInternet) {
         console.log('🔄 API failed, falling back to local DB...');
         try {
           const offlineCourses = await getEnrolledCoursesFromDb(userEmail);
@@ -220,57 +234,76 @@ export default function HomeScreen() {
 
   useEffect(() => {
     fetchCourses();
-  }, [isConnected, netInfo, isInitialized]);
+  }, [netInfo?.isInternetReachable, netInfo, isInitialized]);
 
   useEffect(() => {
-  if (!isConnected || !isInitialized) return;
+    const hasRealInternet = netInfo?.isInternetReachable === true;
+    
+    if (!hasRealInternet || !isInitialized) return;
 
-  // Set up periodic time sync while online and on home screen
-  const timeSyncInterval = setInterval(async () => {
-    try {
-      const userData = await getUserData();
-      if (userData && userData.email) {
-        // Update the time sync periodically to prevent stale time issues
-        await updateTimeSync(userData.email);
-        
-        // Optionally, fetch fresh server time every 10 minutes
-        const now = Date.now();
-        
-        // Get the last sync time from the database
-        const db = await getDb();
-        const result = await db.getFirstAsync(
-          `SELECT last_time_check FROM offline_users WHERE email = ?;`,
-          [userData.email]
-        ) as any;
-        
-        const lastSync = result?.last_time_check;
-        if (!lastSync || (now - lastSync) > 600000) { // 10 minutes
-          try {
-            const apiServerTime = await getServerTime();
-            if (apiServerTime) {
-              await saveServerTime(userData.email, apiServerTime, new Date().toISOString());
+    // Set up periodic time sync while online and on home screen
+    const timeSyncInterval = setInterval(async () => {
+      try {
+        const userData = await getUserData();
+        if (userData && userData.email) {
+          // Update the time sync periodically to prevent stale time issues
+          await updateTimeSync(userData.email);
+          
+          // Optionally, fetch fresh server time every 10 minutes
+          const now = Date.now();
+          
+          // Get the last sync time from the database
+          const db = await getDb();
+          const result = await db.getFirstAsync(
+            `SELECT last_time_check FROM app_state WHERE user_email = ?;`, // Fixed table name
+            [userData.email]
+          ) as any;
+          
+          const lastSync = result?.last_time_check;
+          if (!lastSync || (now - lastSync) > 600000) { // 10 minutes
+            try {
+              const apiServerTime = await getServerTime();
+              if (apiServerTime) {
+                await saveServerTime(userData.email, apiServerTime, new Date().toISOString());
+              }
+            } catch (timeError) {
+              console.error('⚠️ Periodic server time sync failed:', timeError);
             }
-          } catch (timeError) {
-            console.error('⚠️ Periodic server time sync failed:', timeError);
           }
         }
+      } catch (error) {
+        console.error('❌ Periodic time sync error:', error);
       }
-    } catch (error) {
-      console.error('❌ Periodic time sync error:', error);
-    }
-    }, 60000); // Run every minute
+      }, 60000); // Run every minute
 
-    return () => clearInterval(timeSyncInterval);
-  }, [isConnected, isInitialized]);
+      return () => clearInterval(timeSyncInterval);
+  }, [netInfo?.isInternetReachable, isInitialized]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    // Fetch user data within the function
-    const userData = await getUserData();
-    if (userData && userData.email) {
-      await resetTimeCheckData(userData.email);
+    
+    // Use isInternetReachable for a true internet connection check
+    if (!netInfo?.isInternetReachable) {
+      Alert.alert(
+        'Offline',
+        'Please check your internet connection to refresh data.',
+        [{ text: 'OK' }]
+      );
+      setIsRefreshing(false);
+      return;
     }
-    await fetchCourses();
+    
+    try {
+      const userData = await getUserData();
+      if (userData && userData.email) {
+      }
+      await fetchCourses();
+    } catch (error) {
+      console.error('Refresh failed:', error);
+      Alert.alert('Error', 'Failed to refresh data. Please try again.');
+    } finally {
+      setIsRefreshing(false);
+    }
   };
 
   const handleSearchPress = () => {
@@ -287,7 +320,7 @@ export default function HomeScreen() {
       return;
     }
 
-    if (!isConnected) {
+    if (!netInfo?.isInternetReachable) {
       Alert.alert('Offline', 'You must be connected to the internet to search for courses.');
       return;
     }
@@ -308,7 +341,7 @@ export default function HomeScreen() {
   };
 
   const handleEnrollCourse = async (course: Course) => {
-    if (!isConnected) {
+    if (!netInfo?.isInternetReachable) {
       Alert.alert('Offline', 'You must be connected to the internet to enroll in a course.');
       return;
     }
@@ -390,10 +423,10 @@ export default function HomeScreen() {
       <TouchableOpacity
         style={[
           styles.enrollButton,
-          !isConnected && styles.disabledButton
+          !netInfo?.isInternetReachable && styles.disabledButton
         ]}
         onPress={() => handleEnrollCourse(item)}
-        disabled={!isConnected}
+        disabled={!netInfo?.isInternetReachable}
       >
         <Text style={styles.enrollButtonText}>Enroll Course</Text>
       </TouchableOpacity>
@@ -442,7 +475,7 @@ export default function HomeScreen() {
   };
 
   const handleAdButtonPress = async () => {
-    if (!isConnected) {
+    if (!netInfo?.isInternetReachable) {
       Alert.alert('Offline Mode', 'You must be online to download assessment details.');
       return;
     }
@@ -537,6 +570,7 @@ export default function HomeScreen() {
           onRefresh={handleRefresh}
           tintColor="#fff"
           colors={['#fff']}
+          enabled={netInfo?.isInternetReachable ?? false} // This will totally disable the function when there's no internet
         />
       }
     >
@@ -547,10 +581,10 @@ export default function HomeScreen() {
             style={[
               styles.adButton, 
               isDownloadingData && styles.adButtonDownloading,
-              !isConnected && styles.disabledButton
+              !netInfo?.isInternetReachable && styles.disabledButton
             ]} 
             onPress={handleAdButtonPress}
-            disabled={isDownloadingData || !isConnected}
+            disabled={isDownloadingData || !netInfo?.isInternetReachable}
           >
             {isDownloadingData ? (
               <View style={styles.downloadProgressContainer}>
@@ -565,7 +599,7 @@ export default function HomeScreen() {
                   ? `Download All Data (${assessmentsNeedingDetails} assessments need details)`
                   : 'Download All Data for Offline Use'
                 }
-                {!isConnected && ' - Offline'}
+                {!netInfo?.isInternetReachable && ' - Offline'}
               </Text>
             )}
           </TouchableOpacity>
@@ -595,10 +629,10 @@ export default function HomeScreen() {
       <TouchableOpacity
         style={[
           styles.searchButton,
-          !isConnected && styles.disabledButton
+          !netInfo?.isInternetReachable && styles.disabledButton
         ]}
         onPress={handleSearchPress}
-        disabled={!isConnected}
+        disabled={!netInfo?.isInternetReachable}
       >
         <Ionicons name="search" size={20} color="#fff" style={styles.searchIcon} />
         <Text style={styles.searchButtonText}>Search for Courses, Topics, etc.</Text>
@@ -639,7 +673,7 @@ export default function HomeScreen() {
           <View style={styles.noCoursesEnrolledContainer}>
             <Text style={styles.noCoursesEnrolledText}>You haven't enrolled in any courses yet.</Text>
             <Text style={styles.noCoursesEnrolledSubText}>
-              {isConnected
+              {netInfo?.isInternetReachable
                 ? 'Search for courses above to get started!'
                 : 'Connect to the internet to enroll in new courses.'
               }
@@ -682,10 +716,10 @@ export default function HomeScreen() {
             <TouchableOpacity
               style={[
                 styles.modalSearchButton,
-                !isConnected && styles.disabledButton
+                !netInfo?.isInternetReachable && styles.disabledButton
               ]}
               onPress={handleSearchSubmit}
-              disabled={isLoadingSearch || !isConnected}
+              disabled={isLoadingSearch || !netInfo?.isInternetReachable}
             >
               {isLoadingSearch ? (
                 <ActivityIndicator color="#fff" />
@@ -693,7 +727,7 @@ export default function HomeScreen() {
                 <Text style={styles.modalSearchButtonText}>Search</Text>
               )}
             </TouchableOpacity>
-            {!isConnected && (
+            {!netInfo?.isInternetReachable && (
               <Text style={styles.offlineModalHint}>
                 You must be online to search for new courses.
               </Text>

@@ -8,7 +8,16 @@ import { ActivityIndicator, Alert, Linking, ScrollView, StyleSheet, Text, Toucha
 
 import { useNetworkStatus } from '../../../../context/NetworkContext';
 import api, { getUserData, syncOfflineSubmission } from '../../../../lib/api'; // Add syncOfflineSubmission here
-import { checkIfAssessmentNeedsDetails, deleteOfflineSubmission, getAssessmentDetailsFromDb, getUnsyncedSubmissions, saveAssessmentDetailsToDb, saveAssessmentsToDb, saveOfflineSubmission } from '../../../../lib/localDb';
+import {
+  checkIfAssessmentNeedsDetails,
+  deleteOfflineSubmission,
+  getAssessmentDetailsFromDb,
+  getCurrentServerTime,
+  getUnsyncedSubmissions,
+  saveAssessmentDetailsToDb,
+  saveAssessmentsToDb,
+  saveOfflineSubmission
+} from '../../../../lib/localDb';
 
 interface AssessmentDetail {
   id: number;
@@ -168,7 +177,7 @@ export default function AssessmentDetailsScreen() {
   useEffect(() => {
     const syncSubmissions = async () => {
       if (isConnected) {
-        console.log('✅ Network is back online. Checking for unsynced submissions...');
+        console.log('Network is back online. Checking for unsynced submissions...');
         const user = await getUserData();
         if (!user || !user.email) return;
 
@@ -181,18 +190,20 @@ export default function AssessmentDetailsScreen() {
           );
 
           for (const submission of unsyncedSubmissions) {
+            // Pass the original submission timestamp to preserve offline submission time
             const success = await syncOfflineSubmission(
               submission.assessment_id,
               submission.file_uri,
-              submission.original_filename
+              submission.original_filename,
+              submission.submitted_at // Pass the original timestamp
             );
 
             if (success) {
               // After successful sync, delete the local record
-              await deleteOfflineSubmission(submission.id); // Call the new deletion function
-              console.log(`✅ Successfully synced and deleted local record for assessment ${submission.assessment_id}`);
+              await deleteOfflineSubmission(submission.id);
+              console.log(`Successfully synced and deleted local record for assessment ${submission.assessment_id}`);
             } else {
-              console.warn(`❌ Failed to sync submission for assessment ${submission.assessment_id}`);
+              console.warn(`Failed to sync submission for assessment ${submission.assessment_id}`);
             }
           }
           
@@ -351,7 +362,7 @@ export default function AssessmentDetailsScreen() {
     setSubmissionLoading(true);
     try {
       if (isConnected) {
-        // ONLINE MODE - Existing logic
+        // ONLINE MODE - Existing logic remains the same
         const formData = new FormData();
         formData.append('assignment_file', {
           uri: selectedFile.uri,
@@ -371,28 +382,40 @@ export default function AssessmentDetailsScreen() {
 
         if (response.status === 200) {
           Alert.alert('Success', response.data.message || 'Assignment submitted successfully!');
-          setSelectedFile(null); // Clear selected file
+          setSelectedFile(null);
           await fetchAssessmentDetailsAndAttemptStatus();
         } else {
           Alert.alert('Error', response.data.message || 'Failed to submit assignment.');
         }
       } else {
-        // OFFLINE MODE
-        console.log('⚠️ Offline: Saving submission to local DB.');
+        // OFFLINE MODE - Modified to use server time
+        console.log('⚠️ Offline: Saving submission to local DB with server time.');
         const user = await getUserData();
         if (user && user.email) {
-          await saveOfflineSubmission(user.email, assessmentDetail.id, selectedFile.uri, selectedFile.name);
+          // Get current server time for the submission
+          const serverSubmissionTime = await getCurrentServerTime(user.email);
+          console.log('🕒 Using server time for offline submission:', serverSubmissionTime);
+          
+          // Save offline submission with the calculated server time
+          const actualSubmissionTime = await saveOfflineSubmission(
+            user.email, 
+            assessmentDetail.id, 
+            selectedFile.uri, 
+            selectedFile.name,
+            serverSubmissionTime // Pass the server time explicitly
+          );
+          
           Alert.alert('Offline Submission', 'Your assignment has been saved locally and will be submitted once you are online.');
           
-          // Manually update the state to reflect the new "to sync" status
+          // Manually update the state to reflect the new "to sync" status with server time
           setLatestAssignmentSubmission({
             has_submitted_file: true,
             submitted_file_path: selectedFile.uri,
-            submitted_file_url: null, // No URL yet
+            submitted_file_url: null,
             submitted_file_name: selectedFile.name,
             original_filename: selectedFile.name,
-            submitted_at: new Date().toISOString(),
-            status: 'to sync', // The new status
+            submitted_at: actualSubmissionTime, // Use the actual timestamp that was saved
+            status: 'to sync',
           });
           setSelectedFile(null);
         } else {
