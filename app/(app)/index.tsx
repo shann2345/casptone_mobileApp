@@ -1,8 +1,7 @@
-// This is the modified code for `index.tsx`.
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Animated, FlatList, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Animated, FlatList, Modal, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useNetworkStatus } from '../../context/NetworkContext';
 import api, { clearAuthToken, getAuthToken, getServerTime, getUserData } from '../../lib/api';
 import { downloadAllAssessmentDetails, getAssessmentsWithoutDetails, getDb, getEnrolledCoursesFromDb, initDb, resetTimeCheckData, saveCourseDetailsToDb, saveCourseToDb, saveServerTime, updateTimeSync } from '../../lib/localDb';
@@ -42,6 +41,7 @@ export default function HomeScreen() {
   const [hasSearched, setHasSearched] = useState<boolean>(false);
   const [enrolledCourses, setEnrolledCourses] = useState<EnrolledCourse[]>([]);
   const [isLoadingEnrolledCourses, setIsLoadingEnrolledCourses] = useState<boolean>(true);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false); // State for refresh
   const [isInitialized, setIsInitialized] = useState<boolean>(false);
   const [downloadProgress, setDownloadProgress] = useState({ current: 0, total: 0 });
   const [isDownloadingData, setIsDownloadingData] = useState(false);
@@ -115,110 +115,111 @@ export default function HomeScreen() {
     console.log('✅ Completed fetching and saving all course data for offline access');
   };
 
-  useEffect(() => {
-    const fetchData = async () => {
-      // Only proceed if DB is initialized
-      if (!isInitialized || netInfo === null) return;
+  const fetchCourses = async () => {
+    // Only proceed if DB is initialized
+    if (!isInitialized || netInfo === null) return;
 
-      // Always get user data from local storage first for a quick load
-      let userEmail = '';
-      try {
-        const userData = await getUserData();
-        if (userData && userData.name && userData.email) {
-          setUserName(userData.name);
-          userEmail = userData.email;
-        } else {
-          // If no user data, it's an invalid session, redirect to login
-          console.warn('User data or name not found in local storage. Redirecting to login.');
-          await clearAuthToken();
-          router.replace('/login');
-          return;
-        }
-      } catch (error) {
-        console.error('❌ Error getting user data:', error);
+    // Always get user data from local storage first for a quick load
+    let userEmail = '';
+    try {
+      const userData = await getUserData();
+      if (userData && userData.name && userData.email) {
+        setUserName(userData.name);
+        userEmail = userData.email;
+      } else {
+        // If no user data, it's an invalid session, redirect to login
+        console.warn('User data or name not found in local storage. Redirecting to login.');
+        await clearAuthToken();
         router.replace('/login');
         return;
       }
+    } catch (error) {
+      console.error('❌ Error getting user data:', error);
+      router.replace('/login');
+      return;
+    }
 
-      setIsLoadingEnrolledCourses(true);
+    setIsLoadingEnrolledCourses(true);
 
-      try {
-        if (isConnected) {
-          // ONLINE MODE: Fetch from API and sync to local DB
-          // Check for a token first before attempting API call
-          const token = await getAuthToken();
-          if (!token) {
-             // Redirect to login if no token exists after coming online
-             Alert.alert(
-               "Session Expired",
-               "You were logged in offline. Please log in again to sync your data.",
-               [{ text: "OK", onPress: () => router.replace('/login') }]
-             );
-             setIsLoadingEnrolledCourses(false);
-             return;
+    try {
+      if (isConnected) {
+        // ONLINE MODE: Fetch from API and sync to local DB
+        // Check for a token first before attempting API call
+        const token = await getAuthToken();
+        if (!token) {
+           // Redirect to login if no token exists after coming online
+           Alert.alert(
+             "Session Expired",
+             "You were logged in offline. Please log in again to sync your data.",
+             [{ text: "OK", onPress: () => router.replace('/login') }]
+           );
+           setIsLoadingEnrolledCourses(false);
+           return;
+        }
+        
+        await resetTimeCheckData(userEmail);
+        // --- ADDED CODE END ---
+        
+        try {
+          const apiServerTime = await getServerTime();
+          if (apiServerTime) {
+            const currentDeviceTime = new Date().toISOString();
+            await saveServerTime(userEmail, apiServerTime, currentDeviceTime);
+            console.log('✅ Server time synced and saved locally.');
           }
-          
-          await resetTimeCheckData(userEmail);
-          // --- ADDED CODE END ---
-          
+        } catch (timeError) {
+          console.error('❌ Failed to fetch or save server time:', timeError);
+        }
+
+        console.log('✅ Online: Fetching courses from API.');
+        const response = await api.get('/my-courses');
+        const courses = response.data.courses || [];
+        setEnrolledCourses(courses);
+
+        // First, save basic course info to local DB
+        for (const course of courses) {
           try {
-            const apiServerTime = await getServerTime();
-            if (apiServerTime) {
-              const currentDeviceTime = new Date().toISOString();
-              await saveServerTime(userEmail, apiServerTime, currentDeviceTime);
-              console.log('✅ Server time synced and saved locally.');
-            }
-          } catch (timeError) {
-            console.error('❌ Failed to fetch or save server time:', timeError);
+            await saveCourseToDb(course, userEmail);
+          } catch (saveError) {
+            console.error('⚠️ Failed to save basic course to DB:', saveError);
+            // Continue with other courses even if one fails
           }
+        }
+        console.log('📄 Basic course info synced to local DB.');
 
-          console.log('✅ Online: Fetching courses from API.');
-          const response = await api.get('/my-courses');
-          const courses = response.data.courses || [];
-          setEnrolledCourses(courses);
+        // Then, fetch and save complete course details including materials and assessments
+        await fetchAndSaveCompleteCoursesData(courses, userEmail);
 
-          // First, save basic course info to local DB
-          for (const course of courses) {
-            try {
-              await saveCourseToDb(course, userEmail);
-            } catch (saveError) {
-              console.error('⚠️ Failed to save basic course to DB:', saveError);
-              // Continue with other courses even if one fails
-            }
-          }
-          console.log('📄 Basic course info synced to local DB.');
+      } else {
+        // OFFLINE MODE: Fetch from local DB
+        console.log('⚠️ Offline: Fetching courses from local DB.');
+        const offlineCourses = await getEnrolledCoursesFromDb(userEmail);
+        setEnrolledCourses(offlineCourses as EnrolledCourse[]);
+      }
+    } catch (error: any) {
+      console.error('Error fetching enrolled courses:', error.response?.data || error.message);
 
-          // Then, fetch and save complete course details including materials and assessments
-          await fetchAndSaveCompleteCoursesData(courses, userEmail);
-
-        } else {
-          // OFFLINE MODE: Fetch from local DB
-          console.log('⚠️ Offline: Fetching courses from local DB.');
+      // If online request fails, try to load from local DB as fallback
+      if (isConnected) {
+        console.log('🔄 API failed, falling back to local DB...');
+        try {
           const offlineCourses = await getEnrolledCoursesFromDb(userEmail);
           setEnrolledCourses(offlineCourses as EnrolledCourse[]);
+        } catch (localError) {
+          console.error('❌ Local DB fallback also failed:', localError);
+          Alert.alert('Error', 'Failed to load your enrolled courses.');
         }
-      } catch (error: any) {
-        console.error('Error fetching enrolled courses:', error.response?.data || error.message);
-
-        // If online request fails, try to load from local DB as fallback
-        if (isConnected) {
-          console.log('🔄 API failed, falling back to local DB...');
-          try {
-            const offlineCourses = await getEnrolledCoursesFromDb(userEmail);
-            setEnrolledCourses(offlineCourses as EnrolledCourse[]);
-          } catch (localError) {
-            console.error('❌ Local DB fallback also failed:', localError);
-            Alert.alert('Error', 'Failed to load your enrolled courses.');
-          }
-        } else {
-          Alert.alert('Error', 'Failed to load your enrolled courses from local storage.');
-        }
-      } finally {
-        setIsLoadingEnrolledCourses(false);
+      } else {
+        Alert.alert('Error', 'Failed to load your enrolled courses from local storage.');
       }
-    };
+    } finally {
+      setIsLoadingEnrolledCourses(false);
+      setIsRefreshing(false); // Stop refreshing animation
+    }
+  };
 
-    fetchData();
+  useEffect(() => {
+    fetchCourses();
   }, [isConnected, netInfo, isInitialized]);
 
   useEffect(() => {
@@ -261,6 +262,16 @@ export default function HomeScreen() {
 
     return () => clearInterval(timeSyncInterval);
   }, [isConnected, isInitialized]);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    // Fetch user data within the function
+    const userData = await getUserData();
+    if (userData && userData.email) {
+      await resetTimeCheckData(userData.email);
+    }
+    await fetchCourses();
+  };
 
   const handleSearchPress = () => {
     setSearchModalVisible(true);
@@ -518,7 +529,17 @@ export default function HomeScreen() {
   }
 
   return (
-    <ScrollView style={styles.container}>
+    <ScrollView 
+      style={styles.container}
+      refreshControl={
+        <RefreshControl
+          refreshing={isRefreshing}
+          onRefresh={handleRefresh}
+          tintColor="#fff"
+          colors={['#fff']}
+        />
+      }
+    >
       {/* Ad-style dropdown at the very top */}
       <View style={styles.adContainer}>
         <Animated.View style={[styles.adContent, { height: adHeight }]}>
@@ -559,7 +580,9 @@ export default function HomeScreen() {
       </View>
 
       <View style={styles.header}>
-        <Text style={styles.welcomeText}>Welcome, {userName}!</Text>
+        <View style={styles.headerContent}>
+          <Text style={styles.welcomeText}>Welcome, {userName}!</Text>
+        </View>
         <Text style={styles.subText}>Start learning something new today.</Text>
         {!isConnected && (
           <View style={styles.offlineNotice}>
@@ -756,6 +779,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  headerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+  },
   welcomeText: {
     fontSize: 28,
     fontWeight: 'bold',
@@ -763,6 +792,14 @@ const styles = StyleSheet.create({
     marginTop: 10,
     marginBottom: 5,
     textAlign: 'center',
+  },
+  reloadButton: {
+    position: 'absolute',
+    right: 20,
+    top: 15,
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
   },
   subText: {
     fontSize: 16,
