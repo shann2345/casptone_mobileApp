@@ -14,6 +14,7 @@ interface Material {
   type: 'material';
   created_at: string;
   available_at?: string;
+  unavailable_at?: string;
   isNested?: boolean;
 }
 
@@ -23,6 +24,7 @@ interface Assessment {
   type: 'assessment';
   created_at: string;
   available_at?: string;
+  unavailable_at?: string;
   access_code?: string;
   isNested?: boolean;
 }
@@ -100,17 +102,22 @@ export default function CourseDetailsScreen() {
       return false;
     }
 
-    if ('available_at' in item && item.available_at) {
-      const availableDate = new Date(item.available_at);
-      const isItemAvailable = serverTime >= availableDate;
-      console.log(`📅 Checking availability for "${item.title}":`, {
-        serverTime: serverTime.toISOString(),
-        availableAt: availableDate.toISOString(),
-        isAvailable: isItemAvailable
-      });
-      return isItemAvailable; // Compare against server time
-    }
-    return true; // If no available_at is set, item is always available
+    const availableAt = 'available_at' in item ? item.available_at : null;
+    const unavailableAt = 'unavailable_at' in item ? item.unavailable_at : null;
+
+    const isAvailable = !availableAt || serverTime >= new Date(availableAt);
+    const isNotUnavailable = !unavailableAt || serverTime < new Date(unavailableAt);
+
+    const isItemAvailable = isAvailable && isNotUnavailable;
+
+    console.log(`📅 Checking availability for "${item.title}":`, {
+      serverTime: serverTime.toISOString(),
+      availableAt: availableAt ? new Date(availableAt).toISOString() : 'N/A',
+      unavailableAt: unavailableAt ? new Date(unavailableAt).toISOString() : 'N/A',
+      isAvailable: isItemAvailable
+    });
+    
+    return isItemAvailable;
   };
 
   useEffect(() => {
@@ -194,7 +201,7 @@ export default function CourseDetailsScreen() {
           const courseData = response.data.course;
           setCourseDetail(courseData);
           await saveCourseDetailsToDb(courseData, userEmail);
-          console.log('🔄 Course details synced to local DB.');
+          console.log('✅ Course details fetched and saved to local DB:', JSON.stringify(response.data, null, 2));
         } else {
           Alert.alert('Error', 'Failed to fetch course details.');
           const offlineData = await getCourseDetailsFromDb(Number(courseId), userEmail);
@@ -393,6 +400,21 @@ export default function CourseDetailsScreen() {
                 const opacityStyle = available ? {} : { opacity: 0.5 };
                 const disabled = !available || timeManipulationDetected;
 
+                let availabilityText = '';
+                if (!available) {
+                  const now = serverTime ? serverTime : new Date();
+                  const availableDate = assessment.available_at ? new Date(assessment.available_at) : null;
+                  const unavailableDate = assessment.unavailable_at ? new Date(assessment.unavailable_at) : null;
+                  
+                  if (availableDate && now < availableDate) {
+                    availabilityText = `(Available: ${formatDate(assessment.available_at!)})`;
+                  } else if (unavailableDate && now >= unavailableDate) {
+                    availabilityText = `(Unavailable)`;
+                  } else {
+                    availabilityText = `(Not Available)`;
+                  }
+                }
+                
                 return (
                   <TouchableOpacity
                     key={assessment.id}
@@ -414,19 +436,22 @@ export default function CourseDetailsScreen() {
                           router.push(`/courses/assessments/${assessment.id}`);
                         }
                       } else {
-                        Alert.alert('Not Available Yet', `This assessment will be available on ${formatDate(assessment.available_at!)}.`);
+                        Alert.alert('Access Denied', `This assessment is not currently available. It was available from ${formatDate(assessment.available_at!)} to ${formatDate(assessment.unavailable_at!)}.`);
                       }
                     }}
                     disabled={disabled}
                   >
                     <Text style={styles.itemTitleNested}>{assessment.title}</Text>
                     <Text style={styles.itemTypeNested}>
-                      Assessment {available ? '' : '(Not Available Yet)'}
+                      Assessment {availabilityText}
                       {assessment.access_code ? ' (Code Required)' : ''}
                       {timeManipulationDetected ? ' (Time Sync Required)' : ''}
                     </Text>
-                    {assessment.available_at && !available && !timeManipulationDetected && (
-                      <Text style={styles.itemDateNested}>Available: {formatDate(assessment.available_at)}</Text>
+                    {(assessment.available_at && !available) || (assessment.unavailable_at && !available) && !timeManipulationDetected && (
+                      <Text style={styles.itemDateNested}>
+                        {assessment.available_at && !available ? `Available: ${formatDate(assessment.available_at)}` : ''}
+                        {assessment.unavailable_at && !available ? ` to ${formatDate(assessment.unavailable_at)}` : ''}
+                      </Text>
                     )}
                     <Text style={styles.itemDateNested}>Created: {formatDate(assessment.created_at)}</Text>
                   </TouchableOpacity>
@@ -481,6 +506,21 @@ export default function CourseDetailsScreen() {
       const opacityStyle = available ? {} : { opacity: 0.5 };
       const disabled = !available || timeManipulationDetected;
 
+      let availabilityText = '';
+      if (!available) {
+        const now = serverTime ? serverTime : new Date();
+        const availableDate = assessment.available_at ? new Date(assessment.available_at) : null;
+        const unavailableDate = assessment.unavailable_at ? new Date(assessment.unavailable_at) : null;
+        
+        if (availableDate && now < availableDate) {
+          availabilityText = `(Available: ${formatDate(assessment.available_at!)})`;
+        } else if (unavailableDate && now >= unavailableDate) {
+          availabilityText = `(Unavailable)`;
+        } else {
+          availabilityText = `(Not Available)`;
+        }
+      }
+
       return (
         <TouchableOpacity
           style={[styles.itemCard, opacityStyle, timeManipulationDetected && styles.disabledCard]}
@@ -501,19 +541,22 @@ export default function CourseDetailsScreen() {
                 router.push(`/courses/assessments/${assessment.id}`);
               }
             } else {
-              Alert.alert('Not Available Yet', `This assessment will be available on ${formatDate(assessment.available_at!)}.`);
+              Alert.alert('Access Denied', `This assessment is not currently available. It was available from ${formatDate(assessment.available_at!)} to ${formatDate(assessment.unavailable_at!)}.`);
             }
           }}
           disabled={disabled}
         >
           <Text style={styles.itemTitle}>{assessment.title}</Text>
           <Text style={styles.itemType}>
-            Assessment (Independent) {available ? '' : '(Not Available Yet)'}
+            Assessment (Independent) {availabilityText}
             {assessment.access_code ? ' (Code Required)' : ''}
             {timeManipulationDetected ? ' (Time Sync Required)' : ''}
           </Text>
-          {assessment.available_at && !available && !timeManipulationDetected && (
-            <Text style={styles.itemDate}>Available: {formatDate(assessment.available_at)}</Text>
+          {(assessment.available_at && !available) || (assessment.unavailable_at && !available) && !timeManipulationDetected && (
+            <Text style={styles.itemDate}>
+              {assessment.available_at && !available ? `Available: ${formatDate(assessment.available_at)}` : ''}
+              {assessment.unavailable_at && !available ? ` to ${formatDate(assessment.unavailable_at)}` : ''}
+            </Text>
           )}
           <Text style={styles.itemDate}>Created: {formatDate(assessment.created_at)}</Text>
         </TouchableOpacity>

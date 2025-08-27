@@ -2,10 +2,25 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Animated, FlatList, Modal, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { useNetworkStatus } from '../../context/NetworkContext';
-import api, { clearAuthToken, getAuthToken, getServerTime, getUserData } from '../../lib/api';
-import { downloadAllAssessmentDetails, getAssessmentsWithoutDetails, getDb, getEnrolledCoursesFromDb, initDb, resetTimeCheckData, saveCourseDetailsToDb, saveCourseToDb, saveServerTime, updateTimeSync } from '../../lib/localDb';
 
+import { useNetworkStatus } from '../../context/NetworkContext';
+import api, { clearAuthToken, getAuthToken, getServerTime, getUserData, syncOfflineSubmission } from '../../lib/api'; // Add syncOfflineSubmission
+import {
+  deleteAllAssessmentDetails,
+  deleteOfflineSubmission, downloadAllAssessmentDetails,
+  getAssessmentsWithoutDetails,
+  getDb,
+  getEnrolledCoursesFromDb,
+  getUnsyncedSubmissions,
+  initDb,
+  resetTimeCheckData,
+  saveAssessmentDetailsToDb,
+  saveCourseDetailsToDb,
+  saveCourseToDb,
+  saveQuizQuestionsToDb,
+  saveServerTime,
+  updateTimeSync
+} from '../../lib/localDb';
 
 interface Course {
   id: number;
@@ -72,6 +87,56 @@ export default function HomeScreen() {
     initialize();
     return () => { isMounted = false; };
   }, []);
+
+  // ADD THIS NEW useEffect HOOK TO HANDLE AUTOMATIC SYNC
+  useEffect(() => {
+    const syncSubmissions = async () => {
+      // Ensure the database is initialized before trying to sync
+      if (!isInitialized) return;
+
+      const hasRealInternet = netInfo?.isInternetReachable === true;
+      if (hasRealInternet) {
+        console.log('Network is back online. Checking for unsynced submissions...');
+        const user = await getUserData();
+        if (!user || !user.email) {
+          console.log('User not found. Cannot sync submissions.');
+          return;
+        }
+
+        const unsyncedSubmissions = await getUnsyncedSubmissions(user.email);
+        if (unsyncedSubmissions.length > 0) {
+          Alert.alert(
+            'Synchronization',
+            `Found ${unsyncedSubmissions.length} offline submission(s) to sync.`,
+            [{ text: 'OK' }]
+          );
+
+          for (const submission of unsyncedSubmissions) {
+            console.log(`Attempting to sync submission for assessment ID: ${submission.assessment_id}`);
+            // syncOfflineSubmission is a function from the api.ts file
+            const success = await syncOfflineSubmission(
+              submission.assessment_id,
+              submission.file_uri,
+              submission.original_filename,
+              submission.submitted_at
+            );
+
+            if (success) {
+              await deleteOfflineSubmission(submission.id);
+              console.log(`Successfully synced and deleted local record for assessment ${submission.assessment_id}`);
+            } else {
+              console.warn(`Failed to sync submission for assessment ${submission.assessment_id}`);
+            }
+          }
+
+          // After attempting to sync, refresh the course list to get updated submission statuses
+          fetchCourses();
+        }
+      }
+    };
+
+    syncSubmissions();
+  }, [netInfo?.isInternetReachable, isInitialized]);
 
   useEffect(() => {
     const checkAssessmentsNeedingDetails = async () => {
@@ -279,10 +344,9 @@ export default function HomeScreen() {
       return () => clearInterval(timeSyncInterval);
   }, [netInfo?.isInternetReachable, isInitialized]);
 
-  const handleRefresh = async () => {
+ const handleRefresh = async () => {
     setIsRefreshing(true);
-    
-    // Use isInternetReachable for a true internet connection check
+
     if (!netInfo?.isInternetReachable) {
       Alert.alert(
         'Offline',
@@ -292,19 +356,115 @@ export default function HomeScreen() {
       setIsRefreshing(false);
       return;
     }
-    
+
     try {
       const userData = await getUserData();
-      if (userData && userData.email) {
+      if (!userData?.email) {
+        Alert.alert('Error', 'User data not found. Please log in again.');
+        setIsRefreshing(false);
+        return;
       }
-      await fetchCourses();
+
+      // 1. First delete all assessment details
+      console.log('🗑️ Clearing all assessment details for fresh download...');
+      await deleteAllAssessmentDetails(userData.email);
+      await resetTimeCheckData(userData.email);
+
+      // 2. Fetch fresh course data (but don't call fetchCourses which would save course details)
+      console.log('📱 Fetching fresh course data from API...');
+      const response = await api.get('/my-courses');
+      const courses = response.data.courses || [];
+      setEnrolledCourses(courses);
+
+      // Save basic course info to local DB
+      for (const course of courses) {
+        try {
+          await saveCourseToDb(course, userData.email);
+        } catch (saveError) {
+          console.error('Failed to save basic course to DB:', saveError);
+        }
+      }
+
+      // 3. Fetch and save complete course details
+      await fetchAndSaveCompleteCoursesData(courses, userData.email);
+
+      // 4. Now download all assessment details
+      console.log('📥 Starting fresh download of all assessment details...');
+      setIsDownloadingData(true);
+      const assessmentsToDownload = await getAssessmentsWithoutDetails(userData.email);
+      setDownloadProgress({ current: 0, total: assessmentsToDownload.length });
+
+      if (assessmentsToDownload.length > 0) {
+        // Fetch assessments from local DB to get their type
+        const db = await getDb();
+        const allAssessments = await db.getAllAsync(
+          `SELECT id, type FROM offline_assessments WHERE id IN (${assessmentsToDownload.join(',')}) AND user_email = ?;`,
+          [userData.email]
+        );
+
+        let successCount = 0;
+        let failedCount = 0;
+
+        for (const assessment of allAssessments) {
+          try {
+            if (assessment.type === 'quiz' || assessment.type === 'exam') {
+              console.log(`Downloading quiz questions for assessment ${assessment.id}...`);
+              const quizResponse = await api.get(`/assessments/${assessment.id}/questions-and-options`);
+
+              console.log(`QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ`, quizResponse.data);
+
+              if (quizResponse.data.questions) {
+                await saveQuizQuestionsToDb(assessment.id, userData.email, quizResponse.data.questions);
+              }
+            }
+
+            // The rest of your existing download logic for assessment details...
+            let attemptStatus = null;
+            let latestSubmission = null;
+
+            if (assessment.type === 'quiz' || assessment.type === 'exam') {
+              const attemptResponse = await api.get(`/assessments/${assessment.id}/attempt-status`);
+              attemptStatus = attemptResponse.data;
+            } else if (assessment.type === 'assignment' || assessment.type === 'project') {
+              const submissionResponse = await api.get(`/assessments/${assessment.id}/latest-assignment-submission`);
+              latestSubmission = submissionResponse.data;
+            }
+
+            await saveAssessmentDetailsToDb(assessment.id, userData.email, attemptStatus, latestSubmission);
+            successCount++;
+
+          } catch (downloadError) {
+            console.error(`⚠️ Failed to download details for assessment ${assessment.id}:`, downloadError);
+            failedCount++;
+          }
+          if (downloadProgress.current < downloadProgress.total) {
+            setDownloadProgress(prev => ({ ...prev, current: prev.current + 1 }));
+          }
+        }
+
+        console.log(`Download completed: ${successCount} successful, ${failedCount} failed`);
+        Alert.alert(
+          'Refresh Complete',
+          `Successfully refreshed course data and downloaded details for ${successCount} assessments.${
+            failedCount > 0 ? `\n${failedCount} assessments failed to download.` : ''
+          }`,
+          [{ text: 'OK' }]
+        );
+      }
+
+      // Update assessment count
+      const remainingAssessments = await getAssessmentsWithoutDetails(userData.email);
+      setAssessmentsNeedingDetails(remainingAssessments.length);
+
     } catch (error) {
       console.error('Refresh failed:', error);
       Alert.alert('Error', 'Failed to refresh data. Please try again.');
     } finally {
+      setIsDownloadingData(false);
+      setDownloadProgress({ current: 0, total: 0 });
       setIsRefreshing(false);
     }
-  };
+  }; 
 
   const handleSearchPress = () => {
     setSearchModalVisible(true);

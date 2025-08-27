@@ -18,12 +18,12 @@ const openDatabase = async (): Promise<SQLite.SQLiteDatabase> => {
       });
     }
     
-    console.log('📂 Opening database:', DB_NAME);
+    console.log('ðŸ“‚ Opening database:', DB_NAME);
     const db = await SQLite.openDatabaseAsync(DB_NAME);
-    console.log('✅ Database opened successfully');
+    console.log('âœ… Database opened successfully');
     return db;
   } catch (error) {
-    console.error('❌ Failed to open database:', error);
+    console.error('âŒ Failed to open database:', error);
     throw error;
   }
 };
@@ -49,23 +49,20 @@ export const getDb = async (): Promise<SQLite.SQLiteDatabase> => {
 
 export const initDb = async (): Promise<void> => {
   if (dbInitialized && dbInstance) {
-    console.log('✅ Database already initialized');
+    console.log('âœ… Database already initialized');
     return;
   }
   if (initializationPromise) {
-    console.log('⏳ Database initialization in progress, waiting...');
+    console.log('â³ Database initialization in progress, waiting...');
     await initializationPromise;
     return;
   }
   initializationPromise = (async () => {
     try {
-      console.log('🔧 Initializing database...');
+      console.log('ðŸ”§ Initializing database...');
       const db = await getDb();
 
-      // Removed the creation of the offline_users table.
-      // The app will no longer store user credentials locally for offline login.
-
-      // Keep the tables for course and material data.
+      // COURSES
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_courses (
           id INTEGER PRIMARY KEY NOT NULL,
@@ -81,6 +78,7 @@ export const initDb = async (): Promise<void> => {
           enrollment_date TEXT NOT NULL
         );`
       );
+      // COURSES DETAILS
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_course_details (
           course_id INTEGER NOT NULL,
@@ -89,6 +87,8 @@ export const initDb = async (): Promise<void> => {
           PRIMARY KEY (course_id, user_email)
         );`
       );
+
+      // COURSES MATERIALS
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_materials (
           id INTEGER PRIMARY KEY NOT NULL,
@@ -105,6 +105,8 @@ export const initDb = async (): Promise<void> => {
           FOREIGN KEY (course_id, user_email) REFERENCES offline_course_details(course_id, user_email) ON DELETE CASCADE
         );`
       );
+
+      // COURSES ASSESSMENTS
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_assessments (
           id INTEGER PRIMARY KEY NOT NULL,
@@ -113,15 +115,15 @@ export const initDb = async (): Promise<void> => {
           title TEXT NOT NULL,
           due_date TEXT NOT NULL,
           description TEXT,
-          assessment_type TEXT,
+          type TEXT,
           assessment_file_path TEXT,
           assessment_file_url TEXT,
           assessment_data TEXT NOT NULL,
           FOREIGN KEY (course_id, user_email) REFERENCES offline_course_details(course_id, user_email) ON DELETE CASCADE
         );`
       );
-
-      // ADD THIS TABLE - This was missing and causing the error
+      
+      // COURSES ASSESSMENTS OTHER DETAILS
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_assessment_data (
           assessment_id INTEGER NOT NULL,
@@ -130,8 +132,18 @@ export const initDb = async (): Promise<void> => {
           PRIMARY KEY (assessment_id, user_email)
         );`
       );
+
+      // ASSESSMENTS TO SYNC OFFLINE
+      await db.execAsync(
+        `CREATE TABLE IF NOT EXISTS offline_assessment_sync (
+          assessment_id INTEGER NOT NULL,
+          user_email TEXT NOT NULL,
+          last_sync_timestamp TEXT NOT NULL,
+          PRIMARY KEY (assessment_id, user_email)
+        );`
+      );
       
-      // Add this new table inside the initDb function
+      // ASSIGNMENT TYPE ASSESSMENT OFFLINE SUBMISSION
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_submissions (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -145,7 +157,32 @@ export const initDb = async (): Promise<void> => {
         );`
       );
 
-      // We still need a table to store server time, but for the logged-in user.
+      // QUIZZES QUESTION DETAILS
+      await db.execAsync(
+        `CREATE TABLE IF NOT EXISTS offline_quiz_data (
+            id INTEGER PRIMARY KEY NOT NULL,
+            user_email TEXT NOT NULL,
+            assessment_id INTEGER NOT NULL,
+            questions_data TEXT NOT NULL,
+            FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessments(id, user_email) ON DELETE CASCADE
+        );`
+      );
+    
+      // OFFLINE QUIZ ATTEMPTS
+      await db.execAsync(
+        `CREATE TABLE IF NOT EXISTS offline_quiz_attempts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_email TEXT NOT NULL,
+          assessment_id INTEGER NOT NULL,
+          status TEXT NOT NULL,
+          assessment_data TEXT NOT NULL,
+          questions_data TEXT NOT NULL,
+          start_time TEXT NOT NULL,
+          FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessments(id, user_email) ON DELETE CASCADE
+        );`
+      );
+
+      // SERVER TIME RESET
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS app_state (
             user_email TEXT PRIMARY KEY NOT NULL,
@@ -157,9 +194,9 @@ export const initDb = async (): Promise<void> => {
       );
       
       dbInitialized = true;
-      console.log('✅ Database initialization complete');
+      console.log('âœ… Database initialization complete');
     } catch (error) {
-      console.error('❌ Database initialization failed:', error);
+      console.error('âŒ Database initialization failed:', error);
       throw error;
     } finally {
       initializationPromise = null;
@@ -168,12 +205,15 @@ export const initDb = async (): Promise<void> => {
   await initializationPromise;
 };
 
+
+
+// COURSES
 export const saveCourseToDb = async (course: any, userEmail: string): Promise<void> => {
   try {
     await initDb(); // Ensure DB is initialized
     const db = await getDb();
     
-    console.log('💾 Saving course to local DB for user:', userEmail);
+    console.log('ðŸ’¾ Saving course to local DB for user:', userEmail);
     
     const currentTime = new Date().toISOString();
 
@@ -196,9 +236,9 @@ export const saveCourseToDb = async (course: any, userEmail: string): Promise<vo
       ]
     );
     
-    console.log('✅ Saved course to local DB:', course.title);
+    console.log('âœ… Saved course to local DB:', course.title);
   } catch (error) {
-    console.error('❌ Failed to save course to local DB:', error);
+    console.error('âŒ Failed to save course to local DB:', error);
     throw error;
   }
 };
@@ -207,7 +247,7 @@ export const saveCourseDetailsToDb = async (course: any, userEmail: string): Pro
   try {
     await initDb();
     const db = await getDb();
-    console.log('💾 Saving detailed course data for user:', userEmail, ' and course:', course.id);
+    console.log('ðŸ’¾ Saving detailed course data for user:', userEmail, ' and course:', course.id);
 
     // Save the main course data
     await db.runAsync(
@@ -240,9 +280,9 @@ export const saveCourseDetailsToDb = async (course: any, userEmail: string): Pro
     await saveMaterialsToDb(materialsToSave, course.id, userEmail);
     await saveAssessmentsToDb(assessmentsToSave, course.id, userEmail);
 
-    console.log('✅ Detailed course data saved successfully.');
+    console.log('âœ… Detailed course data saved successfully.');
   } catch (error) {
-    console.error('❌ Failed to save detailed course data:', error);
+    console.error('âŒ Failed to save detailed course data:', error);
     throw error;
   }
 };
@@ -252,7 +292,7 @@ export const getCourseDetailsFromDb = async (courseId: number, userEmail: string
     await initDb();
     const db = await getDb();
 
-    console.log('🔍 Retrieving course details from local DB for course ID:', courseId);
+    console.log('ðŸ” Retrieving course details from local DB for course ID:', courseId);
 
     const result = await db.getAllAsync(
       `SELECT course_data FROM offline_course_details WHERE course_id = ? AND user_email = ?;`,
@@ -260,14 +300,14 @@ export const getCourseDetailsFromDb = async (courseId: number, userEmail: string
     );
     
     if (result && result.length > 0) {
-      console.log('✅ Course details found in local DB.');
+      console.log('âœ… Course details found in local DB.');
       return JSON.parse(result[0].course_data);
     }
     
-    console.log('❌ Course details not found in local DB.');
+    console.log('âŒ Course details not found in local DB.');
     return null;
   } catch (error) {
-    console.error('❌ Failed to get course details from local DB:', error);
+    console.error('âŒ Failed to get course details from local DB:', error);
     return null;
   }
 };
@@ -304,21 +344,24 @@ export const getEnrolledCoursesFromDb = async (userEmail: string) => {
       }
     }));
     
-    console.log(`✅ Retrieved ${courses.length} courses from local DB for user: ${userEmail}`);
+    console.log(`âœ… Retrieved ${courses.length} courses from local DB for user: ${userEmail}`);
     return courses;
   } catch (error) {
-    console.error('❌ Failed to get enrolled courses from local DB:', error);
+    console.error('âŒ Failed to get enrolled courses from local DB:', error);
     return [];
   }
 };
 
+
+
+// MATERIALS
 export const saveMaterialsToDb = async (materials: any[], courseId: number, userEmail: string): Promise<void> => {
   if (!materials || materials.length === 0) {
     return;
   }
   await initDb();
   const db = await getDb();
-  console.log('💾 Saving materials for course:', courseId);
+  console.log('ðŸ’¾ Saving materials for course:', courseId);
 
   await db.withTransactionAsync(async () => {
     for (const material of materials) {
@@ -338,7 +381,7 @@ export const saveMaterialsToDb = async (materials: any[], courseId: number, user
       );
     }
   });
-  console.log(`✅ Saved ${materials.length} materials for course ${courseId}`);
+  console.log(`âœ… Saved ${materials.length} materials for course ${courseId}`);
 };
 
 export const getMaterialDetailsFromDb = async (materialId: number, userEmail: string): Promise<any | null> => {
@@ -350,10 +393,13 @@ export const getMaterialDetailsFromDb = async (materialId: number, userEmail: st
     );
     return result || null;
   } catch (error) {
-    console.error(`❌ Failed to get material ${materialId} from DB:`, error);
+    console.error(`âŒ Failed to get material ${materialId} from DB:`, error);
     return null;
   }
 };
+
+
+// ASSESSMENTS
 
 export const saveAssessmentsToDb = async (assessments: any[], courseId: number, userEmail: string): Promise<void> => {
   if (!assessments || assessments.length === 0) {
@@ -361,7 +407,7 @@ export const saveAssessmentsToDb = async (assessments: any[], courseId: number, 
   }
   await initDb();
   const db = await getDb();
-  console.log('💾 Saving assessments for course:', courseId);
+  console.log('ðŸ’¾ Saving assessments for course:', courseId);
   await db.withTransactionAsync(async () => {
     for (const assessment of assessments) {
       await db.runAsync(
@@ -384,7 +430,7 @@ export const saveAssessmentsToDb = async (assessments: any[], courseId: number, 
       );
     }
   });
-  console.log(`✅ Saved ${assessments.length} assessments for course ${courseId}`);
+  console.log(`âœ… Saved ${assessments.length} assessments for course ${courseId}`);
 };
 
 export const saveAssessmentDetailsToDb = async (
@@ -396,7 +442,7 @@ export const saveAssessmentDetailsToDb = async (
   try {
     await initDb();
     const db = await getDb();
-    console.log('💾 Saving detailed assessment data for user:', userEmail, ' and assessment:', assessmentId);
+    console.log('ðŸ’¾ Saving detailed assessment data for user:', userEmail, ' and assessment:', assessmentId);
 
     const assessmentData = {
       attemptStatus: attemptStatus || null,
@@ -408,9 +454,9 @@ export const saveAssessmentDetailsToDb = async (
       [assessmentId, userEmail, JSON.stringify(assessmentData)]
     );
 
-    console.log('✅ Detailed assessment data saved successfully.');
+    console.log('âœ… Detailed assessment data saved successfully.');
   } catch (error) {
-    console.error('❌ Failed to save detailed assessment data:', error);
+    console.error('âŒ Failed to save detailed assessment data:', error);
     throw error;
   }
 };
@@ -440,10 +486,10 @@ export const getAssessmentsWithoutDetails = async (userEmail: string): Promise<n
       id => !assessmentIdsWithData.includes(id)
     );
     
-    console.log(`📊 Found ${assessmentsWithoutData.length} assessments without detailed data`);
+    console.log(`ðŸ“Š Found ${assessmentsWithoutData.length} assessments without detailed data`);
     return assessmentsWithoutData;
   } catch (error) {
-    console.error('❌ Failed to get assessments without details:', error);
+    console.error('âŒ Failed to get assessments without details:', error);
     return [];
   }
 };
@@ -457,8 +503,25 @@ export const checkIfAssessmentNeedsDetails = async (assessmentId: number, userEm
     );
     return (result as any)?.count === 0;
   } catch (error) {
-    console.error('❌ Error checking assessment details:', error);
+    console.error('âŒ Error checking assessment details:', error);
     return true; // Assume it needs details if there's an error
+  }
+};
+
+export const deleteAllAssessmentDetails = async (userEmail: string): Promise<void> => {
+  try {
+    await initDb();
+    const db = await getDb();
+    
+    console.log(`ðŸ—‘ï¸ Deleting all assessment data for user: ${userEmail}`);
+
+    await db.runAsync(`DELETE FROM offline_assessments WHERE user_email = ?;`, [userEmail]);
+    await db.runAsync(`DELETE FROM offline_assessment_data WHERE user_email = ?;`, [userEmail]);
+
+    console.log('âœ… All assessment data cleared successfully.');
+  } catch (error) {
+    console.error('âŒ Failed to delete all assessment data:', error);
+    throw error;
   }
 };
 
@@ -470,14 +533,14 @@ export const downloadAllAssessmentDetails = async (
   try {
     const assessmentIds = await getAssessmentsWithoutDetails(userEmail);
     if (assessmentIds.length === 0) {
-      console.log('✅ All assessments already have detailed data');
+      console.log('âœ… All assessments already have detailed data');
       return { success: 0, failed: 0 };
     }
     
     let successCount = 0;
     let failedCount = 0;
     
-    console.log(`📥 Starting batch download for ${assessmentIds.length} assessments`);
+    console.log(`ðŸ“¥ Starting batch download for ${assessmentIds.length} assessments`);
     
     for (let i = 0; i < assessmentIds.length; i++) {
       const assessmentId = assessmentIds[i];
@@ -497,7 +560,7 @@ export const downloadAllAssessmentDetails = async (
         );
         
         if (!assessmentResult) {
-          console.warn(`⚠️ Assessment ${assessmentId} not found in local DB`);
+          console.warn(`âš ï¸ Assessment ${assessmentId} not found in local DB`);
           failedCount++;
           continue;
         }
@@ -512,7 +575,7 @@ export const downloadAllAssessmentDetails = async (
               attemptStatus = attemptResponse.data;
             }
           } catch (error) {
-            console.warn(`⚠️ Failed to fetch attempt status for assessment ${assessmentId}`);
+            console.warn(`âš ï¸ Failed to fetch attempt status for assessment ${assessmentId}`);
           }
         }
         
@@ -524,26 +587,26 @@ export const downloadAllAssessmentDetails = async (
               latestSubmission = submissionResponse.data;
             }
           } catch (error) {
-            console.warn(`⚠️ Failed to fetch submission for assessment ${assessmentId}`);
+            console.warn(`âš ï¸ Failed to fetch submission for assessment ${assessmentId}`);
           }
         }
         
         await saveAssessmentDetailsToDb(assessmentId, userEmail, attemptStatus, latestSubmission);
         successCount++;
         
-        console.log(`✅ Downloaded details for assessment ${assessmentId}`);
+        console.log(`âœ… Downloaded details for assessment ${assessmentId}`);
         
       } catch (error) {
-        console.error(`❌ Failed to download details for assessment ${assessmentId}:`, error);
+        console.error(`âŒ Failed to download details for assessment ${assessmentId}:`, error);
         failedCount++;
       }
     }
     
-    console.log(`📥 Batch download completed: ${successCount} successful, ${failedCount} failed`);
+    console.log(`ðŸ“¥ Batch download completed: ${successCount} successful, ${failedCount} failed`);
     return { success: successCount, failed: failedCount };
     
   } catch (error) {
-    console.error('❌ Batch download failed:', error);
+    console.error('âŒ Batch download failed:', error);
     throw error;
   }
 };
@@ -584,12 +647,11 @@ export const getAssessmentDetailsFromDb = async (assessmentId: number | string, 
       latestSubmission: additionalData.latestSubmission,
     };
   } catch (error) {
-    console.error(`❌ Failed to get assessment ${assessmentId} from DB:`, error);
+    console.error(`âŒ Failed to get assessment ${assessmentId} from DB:`, error);
     return null;
   }
 };
 
-// New function to save an offline submission
 export const saveOfflineSubmission = async (
   userEmail: string,
   assessmentId: number,
@@ -608,41 +670,313 @@ export const saveOfflineSubmission = async (
       finalSubmittedAt = serverTime || new Date().toISOString();
     }
     
-    console.log('💾 Saving offline submission to local DB with timestamp:', finalSubmittedAt);
+    console.log('ðŸ’¾ Saving offline submission to local DB with timestamp:', finalSubmittedAt);
 
     await db.runAsync(
       `INSERT OR REPLACE INTO offline_submissions (user_email, assessment_id, file_uri, original_filename, submission_status, submitted_at) VALUES (?, ?, ?, ?, ?, ?);`,
       [userEmail, assessmentId, fileUri, originalFilename, 'to sync', finalSubmittedAt]
     );
 
-    console.log('✅ Offline submission saved successfully.');
+    console.log('âœ… Offline submission saved successfully.');
     return finalSubmittedAt; // Return the timestamp that was used
   } catch (error) {
-    console.error('❌ Failed to save offline submission:', error);
+    console.error('âŒ Failed to save offline submission:', error);
     throw error;
   }
 };
+
+export const saveAssessmentSyncTimestamp = async (
+  assessmentId: number,
+  userEmail: string,
+  syncTimestamp: string
+): Promise<void> => {
+  try {
+    await initDb();
+    const db = await getDb();
+    
+    await db.runAsync(
+      `INSERT OR REPLACE INTO offline_assessment_sync (assessment_id, user_email, last_sync_timestamp) VALUES (?, ?, ?);`,
+      [assessmentId, userEmail, syncTimestamp]
+    );
+  } catch (error) {
+    console.error('Failed to save sync timestamp:', error);
+  }
+};
+
+export const getAssessmentsNeedingSync = async (
+  userEmail: string,
+  apiInstance: any
+): Promise<{ missing: number[], outdated: number[] }> => {
+  try {
+    await initDb();
+    const db = await getDb();
+    
+    // Get all assessment IDs for the user
+    const allAssessments = await db.getAllAsync(
+      `SELECT DISTINCT id FROM offline_assessments WHERE user_email = ?;`,
+      [userEmail]
+    );
+    
+    // Get assessments with detailed data and sync timestamps
+    const assessmentsWithData = await db.getAllAsync(
+      `SELECT assessment_id, last_sync_timestamp FROM offline_assessment_sync WHERE user_email = ?;`,
+      [userEmail]
+    );
+    
+    const allAssessmentIds = allAssessments.map((row: any) => row.id);
+    const syncedAssessmentIds = assessmentsWithData.map((row: any) => row.assessment_id);
+    
+    // Find missing assessments (never synced)
+    const missingAssessments = allAssessmentIds.filter(
+      id => !syncedAssessmentIds.includes(id)
+    );
+    
+    // Check for outdated assessments by comparing server timestamps
+    const outdatedAssessments = [];
+    
+    for (const syncedAssessment of assessmentsWithData) {
+      try {
+        // Get server's last modified timestamp for this assessment
+        const response = await apiInstance.get(`/assessments/${syncedAssessment.assessment_id}/last-modified`);
+        const serverTimestamp = response.data.last_modified;
+        
+        // Compare with local sync timestamp
+        if (new Date(serverTimestamp) > new Date(syncedAssessment.last_sync_timestamp)) {
+          outdatedAssessments.push(syncedAssessment.assessment_id);
+        }
+      } catch (error) {
+        console.warn(`Failed to check timestamp for assessment ${syncedAssessment.assessment_id}`);
+      }
+    }
+    
+    return {
+      missing: missingAssessments,
+      outdated: outdatedAssessments
+    };
+    
+  } catch (error) {
+    console.error('Failed to check assessments needing sync:', error);
+    return { missing: [], outdated: [] };
+  }
+};
+
+export const syncAllAssessmentDetails = async (
+  userEmail: string,
+  apiInstance: any,
+  onProgress?: (current: number, total: number, type: 'missing' | 'updating') => void
+): Promise<{ success: number, failed: number, updated: number }> => {
+  try {
+    const { missing, outdated } = await getAssessmentsNeedingSync(userEmail, apiInstance);
+    const totalAssessments = missing.length + outdated.length;
+    
+    if (totalAssessments === 0) {
+      return { success: 0, failed: 0, updated: 0 };
+    }
+    
+    let successCount = 0;
+    let failedCount = 0;
+    let updatedCount = 0;
+    let currentIndex = 0;
+    
+    // Process missing assessments first
+    for (const assessmentId of missing) {
+      currentIndex++;
+      if (onProgress) {
+        onProgress(currentIndex, totalAssessments, 'missing');
+      }
+      
+      const result = await downloadSingleAssessmentDetails(assessmentId, userEmail, apiInstance);
+      if (result.success) {
+        successCount++;
+        // Save sync timestamp
+        await saveAssessmentSyncTimestamp(assessmentId, userEmail, new Date().toISOString());
+      } else {
+        failedCount++;
+      }
+    }
+    
+    // Process outdated assessments
+    for (const assessmentId of outdated) {
+      currentIndex++;
+      if (onProgress) {
+        onProgress(currentIndex, totalAssessments, 'updating');
+      }
+      
+      const result = await downloadSingleAssessmentDetails(assessmentId, userEmail, apiInstance);
+      if (result.success) {
+        successCount++;
+        updatedCount++;
+        // Update sync timestamp
+        await saveAssessmentSyncTimestamp(assessmentId, userEmail, new Date().toISOString());
+      } else {
+        failedCount++;
+      }
+    }
+    
+    return { success: successCount, failed: failedCount, updated: updatedCount };
+    
+  } catch (error) {
+    console.error('Sync failed:', error);
+    throw error;
+  }
+};
+
+const downloadSingleAssessmentDetails = async (
+  assessmentId: number,
+  userEmail: string,
+  apiInstance: any
+): Promise<{ success: boolean }> => {
+  try {
+    const db = await getDb();
+    const assessmentResult = await db.getFirstAsync(
+      `SELECT type FROM offline_assessments WHERE id = ? AND user_email = ?;`,
+      [assessmentId, userEmail]
+    );
+    
+    if (!assessmentResult) {
+      return { success: false };
+    }
+    
+    const assessmentType = (assessmentResult as any).type;
+    let attemptStatus = null;
+    let latestSubmission = null;
+    
+    // Fetch attempt status for quiz/exam types
+    if (assessmentType === 'quiz' || assessmentType === 'exam') {
+      try {
+        const attemptResponse = await apiInstance.get(`/assessments/${assessmentId}/attempt-status`);
+        if (attemptResponse.status === 200) {
+          attemptStatus = attemptResponse.data;
+        }
+      } catch (error) {
+        console.warn(`Failed to fetch attempt status for assessment ${assessmentId}`);
+      }
+    }
+    
+    // Fetch latest submission for assignment types
+    if (['assignment', 'activity', 'project'].includes(assessmentType)) {
+      try {
+        const submissionResponse = await apiInstance.get(`/assessments/${assessmentId}/latest-assignment-submission`);
+        if (submissionResponse.status === 200) {
+          latestSubmission = submissionResponse.data;
+        }
+      } catch (error) {
+        console.warn(`Failed to fetch submission for assessment ${assessmentId}`);
+      }
+    }
+    
+    await saveAssessmentDetailsToDb(assessmentId, userEmail, attemptStatus, latestSubmission);
+    return { success: true };
+    
+  } catch (error) {
+    console.error(`Failed to download details for assessment ${assessmentId}:`, error);
+    return { success: false };
+  }
+};
+
+
+// QUIZZES
+
+export const saveQuizQuestionsToDb = async (assessmentId: number, userEmail: string, questions: any): Promise<void> => {
+  try {
+    await initDb();
+    const db = await getDb();
+    console.log('📦 Saving quiz questions for assessment:', assessmentId);
+  // Prepare data for insertion
+    const dataToSave = JSON.stringify(questions);
+    console.log(`saaaaaaaaaaaaaaaaaaavinggggggggggggggg ${assessmentId}:`, dataToSave);
+
+    await db.runAsync(
+      `INSERT OR REPLACE INTO offline_quiz_data (id, user_email, assessment_id, questions_data) VALUES (?, ?, ?, ?);`,
+      [assessmentId, userEmail, assessmentId, dataToSave]
+    );
+
+    console.log(`✅ Saved quiz questions for assessment ${assessmentId}`);
+  } catch (error) {
+    console.error('❌ Failed to save quiz questions to local DB:', error);
+    throw error;
+  }
+};
+
+
+export const getQuizQuestionsFromDb = async (assessmentId: number, userEmail: string): Promise<any | null> => {
+  try {
+    const db = await getDb();
+    const result = await db.getFirstAsync(
+      `SELECT questions_data FROM offline_quiz_data WHERE assessment_id = ? AND user_email = ?;`,
+      [assessmentId, userEmail]
+    );
+
+    if (result && result.questions_data) {
+      return JSON.parse(result.questions_data);
+    }
+    return null;
+  } catch (error) {
+
+    console.error('❌ Failed to retrieve quiz questions from local DB:', error);
+    return null;
+  }
+};
+
+export const saveQuizAttempt = async (
+  userEmail: string,
+  assessmentId: number,
+  assessmentData: any,
+  questionsData: any
+  ): Promise<void> => {
+    try {
+      await initDb();
+      const db = await getDb();
+      const status = 'in progress';
+      const startTime = new Date().toISOString();
+
+      console.log('ðŸ“¾ Saving quiz attempt to local DB for user:', userEmail, 'and assessment:', assessmentId);
+
+      // Prepare data for insertion
+      const assessmentDataString = JSON.stringify(assessmentData);
+      const questionsDataString = JSON.stringify(questionsData);
+
+      // Insert or replace the quiz attempt record
+
+      await db.runAsync(
+        `INSERT OR REPLACE INTO offline_quiz_attempts
+        (user_email, assessment_id, status, assessment_data, questions_data, start_time)
+        VALUES (?, ?, ?, ?, ?, ?);`,
+        [userEmail, assessmentId, status, assessmentDataString, questionsDataString, startTime]
+    );
+    console.log('âœ… Quiz attempt saved successfully.');
+
+    } catch (error) {
+      console.error('â Œ Failed to save quiz attempt:', error);
+      throw error;
+    }
+};
+
+
+
+
+
 
 export const getCurrentServerTime = async (userEmail: string): Promise<string> => {
   try {
     // First check for time manipulation
     const timeCheck = await detectTimeManipulation(userEmail);
     if (!timeCheck.isValid) {
-      console.warn('⚠️ Time manipulation detected, using fallback time');
+      console.warn('âš ï¸ Time manipulation detected, using fallback time');
       return new Date().toISOString(); // Fallback to local time
     }
 
     // Get the calculated server time
     const serverTime = await getSavedServerTime(userEmail);
     if (serverTime) {
-      console.log('🕒 Using calculated server time:', serverTime);
+      console.log('ðŸ•’ Using calculated server time:', serverTime);
       return serverTime;
     } else {
-      console.warn('⚠️ No server time data available, using local time');
+      console.warn('âš ï¸ No server time data available, using local time');
       return new Date().toISOString();
     }
   } catch (error) {
-    console.error('❌ Error getting current server time:', error);
+    console.error('âŒ Error getting current server time:', error);
     return new Date().toISOString(); // Fallback to local time
   }
 };
@@ -655,10 +989,10 @@ export const getUnsyncedSubmissions = async (userEmail: string) => {
       `SELECT * FROM offline_submissions WHERE user_email = ? AND submission_status = 'to sync';`,
       [userEmail]
     );
-    console.log(`🔍 Found ${result.length} unsynced submissions for user ${userEmail}`);
+    console.log(`ðŸ” Found ${result.length} unsynced submissions for user ${userEmail}`);
     return result;
   } catch (error) {
-    console.error('❌ Failed to get unsynced submissions:', error);
+    console.error('âŒ Failed to get unsynced submissions:', error);
     return [];
   }
 };
@@ -667,11 +1001,11 @@ export const deleteOfflineSubmission = async (id: number) => {
   try {
     await initDb();
     const db = await getDb();
-    console.log(`🗑️ Deleting offline submission with ID: ${id}`);
+    console.log(`ðŸ—‘ï¸ Deleting offline submission with ID: ${id}`);
     await db.runAsync(`DELETE FROM offline_submissions WHERE id = ?;`, [id]);
-    console.log(`✅ Offline submission ID ${id} deleted successfully.`);
+    console.log(`âœ… Offline submission ID ${id} deleted successfully.`);
   } catch (error) {
-    console.error(`❌ Failed to delete offline submission ID ${id}:`, error);
+    console.error(`âŒ Failed to delete offline submission ID ${id}:`, error);
     throw error;
   }
 };
@@ -681,16 +1015,16 @@ export const clearAllData = async (): Promise<void> => {
     await initDb(); // Ensure DB is initialized
     const db = await getDb();
     
-    console.log('🗑️ Clearing all local data...');
+    console.log('ðŸ—‘ï¸ Clearing all local data...');
     
     // --- MODIFIED: Removed the now-obsolete `offline_users` table from the clear logic.
     await db.execAsync(`DELETE FROM offline_courses;`);
     await db.execAsync(`DELETE FROM offline_course_details;`);
     await db.execAsync(`DELETE FROM time_check_logs;`);
     
-    console.log('✅ All local data cleared.');
+    console.log('âœ… All local data cleared.');
   } catch (error) {
-    console.error('❌ Failed to clear local data:', error);
+    console.error('âŒ Failed to clear local data:', error);
     throw error;
   }
 };
@@ -701,10 +1035,10 @@ export const closeDatabase = async (): Promise<void> => {
       await dbInstance.closeAsync();
       dbInstance = null;
       dbInitialized = false;
-      console.log('✅ Database closed successfully');
+      console.log('âœ… Database closed successfully');
     }
   } catch (error) {
-    console.error('❌ Failed to close database:', error);
+    console.error('âŒ Failed to close database:', error);
   }
 };
 
@@ -712,14 +1046,14 @@ export const resetDatabaseState = (): void => {
   dbInstance = null;
   dbInitialized = false;
   initializationPromise = null;
-  console.log('🔄 Database state reset');
+  console.log('ðŸ”„ Database state reset');
 };
 
 
 export const clearOfflineData = async (): Promise<void> => {
     try {
         const db = await getDb();
-        console.log('🗑️ Clearing all offline data...');
+        console.log('ðŸ—‘ï¸ Clearing all offline data...');
         // Delete all data from all offline tables
         await db.execAsync(`DELETE FROM offline_courses;`);
         await db.execAsync(`DELETE FROM offline_course_details;`);
@@ -727,11 +1061,35 @@ export const clearOfflineData = async (): Promise<void> => {
         await db.execAsync(`DELETE FROM offline_assessments;`);
         await db.execAsync(`DELETE FROM app_state;`); 
         await db.execAsync(`DELETE FROM offline_assessment_data;`);
-        console.log('✅ All offline data cleared successfully.');
+        console.log('âœ… All offline data cleared successfully.');
     } catch (error) {
-        console.error('❌ Error clearing offline data:', error);
+        console.error('âŒ Error clearing offline data:', error);
     }
 }
+
+export const deleteAssessmentDetails = async (assessmentId: number, userEmail: string): Promise<void> => {
+  try {
+    await initDb();
+    const db = await getDb();
+    
+    console.log(`ðŸ—‘ï¸ Deleting detailed assessment data for assessment ID: ${assessmentId} and user: ${userEmail}`);
+
+    await db.runAsync(
+      `DELETE FROM offline_assessment_data WHERE assessment_id = ? AND user_email = ?;`,
+      [assessmentId, userEmail]
+    );
+    await db.runAsync(
+      `DELETE FROM offline_assessments WHERE id = ? AND user_email = ?;`,
+      [assessmentId, userEmail]
+    );
+
+    console.log('âœ… Detailed assessment and base data deleted successfully.');
+  } catch (error) {
+    console.error('âŒ Failed to delete detailed assessment data:', error);
+    throw error;
+  }
+};
+
 
 
 {/* SERVER ONLY FOR OFFLINE USE */}
@@ -746,7 +1104,7 @@ export const saveServerTime = async (userEmail: string, apiServerTime: string, c
     const deviceTimeMs = new Date(currentDeviceTime).getTime();
     const serverTimeOffset = serverTimeMs - deviceTimeMs;
 
-    console.log('💾 Saving server time, device time, and offset to local DB.');
+    console.log('ðŸ’¾ Saving server time, device time, and offset to local DB.');
     // Correctly update the `app_state` table, not `offline_users`
     await db.runAsync(
       `INSERT OR REPLACE INTO app_state (
@@ -764,9 +1122,9 @@ export const saveServerTime = async (userEmail: string, apiServerTime: string, c
         1, // Reset sequence on every new login
       ]
     );
-    console.log('✅ Server time and offset saved successfully.');
+    console.log('âœ… Server time and offset saved successfully.');
   } catch (error) {
-    console.error('❌ Failed to save server time and offset:', error);
+    console.error('âŒ Failed to save server time and offset:', error);
     throw error;
   }
 };
@@ -776,7 +1134,7 @@ export const getSavedServerTime = async (userEmail: string): Promise<string | nu
     await initDb();
     const db = await getDb();
     
-    console.log('🔍 Retrieving server time and offset from local DB...');
+    console.log('ðŸ” Retrieving server time and offset from local DB...');
     
     const result = await db.getAllAsync(
       `SELECT last_time_check, server_time_offset FROM app_state WHERE user_email = ?;`,
@@ -784,14 +1142,14 @@ export const getSavedServerTime = async (userEmail: string): Promise<string | nu
     );
     
     if (!result || result.length === 0 || result[0].last_time_check === null) {
-        console.log('⏳ No prior time check data found for offset calculation, assuming valid.');
+        console.log('â³ No prior time check data found for offset calculation, assuming valid.');
         return null;
     }
     
     // Check for time manipulation before proceeding
     const timeCheck = await detectTimeManipulation(userEmail);
     if (!timeCheck.isValid) {
-        console.warn('⚠️ Time manipulation detected. Returning null.');
+        console.warn('âš ï¸ Time manipulation detected. Returning null.');
         return null;
     }
     
@@ -803,14 +1161,14 @@ export const getSavedServerTime = async (userEmail: string): Promise<string | nu
     // Return the calculated time in a readable format
     return new Date(simulatedServerTimeMs).toISOString();
   } catch (error) {
-    console.error('❌ Failed to retrieve and calculate server time:', error);
+    console.error('âŒ Failed to retrieve and calculate server time:', error);
     return null;
   }
 };
 
 export const resetTimeCheckData = async (userEmail: string) => {
   try {
-    console.log('🔄 Resetting time check data for user:', userEmail);
+    console.log('ðŸ”„ Resetting time check data for user:', userEmail);
     const db = await getDb();
     
     // Update the app_state table with fresh time data.
@@ -820,9 +1178,9 @@ export const resetTimeCheckData = async (userEmail: string) => {
       [userEmail, Date.now(), 0]
     );
 
-    console.log('✅ Time check data reset successfully.');
+    console.log('âœ… Time check data reset successfully.');
   } catch (error) {
-    console.error('❌ Failed to reset time check data:', error);
+    console.error('âŒ Failed to reset time check data:', error);
     // You might want to handle this error, but for now, just log it.
   }
 };
@@ -838,7 +1196,7 @@ export const detectTimeManipulation = async (userEmail: string): Promise<{ isVal
 
     // This is the crucial part that ensures a fresh start.
     if (!result || result.length === 0 || !result[0].last_time_check) {
-      console.log('⏳ No prior time check data found, assuming valid.');
+      console.log('â³ No prior time check data found, assuming valid.');
       return { isValid: true };
     }
     
@@ -855,15 +1213,15 @@ export const detectTimeManipulation = async (userEmail: string): Promise<{ isVal
     // Calculate the elapsed time in milliseconds on the device
     const timeElapsed = currentDeviceTimeMs - lastDeviceTimeMs;
     
-    if (timeElapsed > (60 * 1000) && lastDeviceTimeMs !== 0) { // 5 minutes tolerance
+    if (timeElapsed > (5 * 60 * 1000) && lastDeviceTimeMs !== 0) { // 5 minutes tolerance
       return { isValid: false, reason: 'Device time jumped forward excessively.' };
     }
     
-    console.log(`✅ Time check successful for ${userEmail}.`);
+    console.log(`âœ… Time check successful for ${userEmail}.`);
     return { isValid: true };
     
   } catch (error) {
-    console.error('❌ Error in time manipulation detection:', error);
+    console.error('âŒ Error in time manipulation detection:', error);
     // If the check itself fails, we must assume a malicious attempt or a critical error
     return { isValid: false, reason: 'System error during time check. Please reconnect to the internet.' };
   }
@@ -876,7 +1234,7 @@ export const updateTimeSync = async (userEmail: string): Promise<void> => {
 
         const timeCheck = await detectTimeManipulation(userEmail);
         if (!timeCheck.isValid) {
-            console.warn('⚠️ Cannot update time sync due to detected manipulation.');
+            console.warn('âš ï¸ Cannot update time sync due to detected manipulation.');
             return;
         }
 
@@ -893,27 +1251,8 @@ export const updateTimeSync = async (userEmail: string): Promise<void> => {
             `UPDATE app_state SET last_time_check = ?, time_check_sequence = ? WHERE user_email = ?;`,
             [Date.now(), newSequence, userEmail]
         );
-        console.log(`✅ Time sync updated for ${userEmail}. Sequence: ${newSequence}`);
+        console.log(`âœ… Time sync updated for ${userEmail}. Sequence: ${newSequence}`);
     } catch (error) {
-        console.error('❌ Error updating time sync:', error);
+        console.error('âŒ Error updating time sync:', error);
     }
-};
-
-export const emergencyResetTimeDetection = async (): Promise<void> => {
-  try {
-    await initDb();
-    const db = await getDb();
-    
-    console.log('🚨 Emergency reset of ALL time detection data');
-    
-    // Removed all queries related to `offline_users` and `time_check_logs` as they are now obsolete.
-    await db.execAsync(
-      `DELETE FROM app_state;`
-    );
-    
-    console.log('✅ All time detection data cleared.');
-  } catch (error) {
-    console.error('❌ Failed to clear time detection data:', error);
-    throw error;
-  }
 };

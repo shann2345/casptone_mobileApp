@@ -1,4 +1,3 @@
-// app/(app)/courses/assessments/[assessmentId]/attempt-quiz.tsx
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import {
@@ -11,7 +10,9 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import api from '../../../../../lib/api';
+import { useNetworkStatus } from '../../../../../context/NetworkContext';
+import api, { getUserData } from '../../../../../lib/api';
+import { getDb, getOfflineQuizAttempt } from '../../../../../lib/localDb';
 
 interface SubmittedOption {
   id: number;
@@ -27,7 +28,7 @@ interface SubmittedQuestion {
   submitted_assessment_id: number;
   question_id: number;
   question_text: string;
-  question_type: 'multiple_choice' | 'true_false' | 'short_answer' | 'essay' | 'identification';
+  question_type: 'multiple_choice' | 'true_false' | 'essay' | 'identification';
   max_points: number;
   submitted_answer: string | null;
   is_correct: boolean | null;
@@ -67,8 +68,9 @@ type StudentAnswers = {
 };
 
 export default function AttemptQuizScreen() {
-  const { submittedAssessmentId } = useLocalSearchParams();
+  const { submittedAssessmentId, assessmentId, isOffline } = useLocalSearchParams();
   const router = useRouter();
+  const { isConnected } = useNetworkStatus();
   const [submittedAssessment, setSubmittedAssessment] = useState<SubmittedAssessmentData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -85,8 +87,10 @@ export default function AttemptQuizScreen() {
   }, [studentAnswers]);
 
   useEffect(() => {
-    if (submittedAssessmentId) {
-      fetchSubmittedQuizDetails(Number(submittedAssessmentId));
+    // Determine which ID to use based on the mode
+    const idToFetch = isOffline === 'true' ? assessmentId : submittedAssessmentId;
+    if (idToFetch) {
+      fetchQuizData(Number(idToFetch));
     }
 
     return () => {
@@ -98,7 +102,7 @@ export default function AttemptQuizScreen() {
         if (timer) clearTimeout(timer);
       });
     };
-  }, [submittedAssessmentId]);
+  }, [submittedAssessmentId, assessmentId, isOffline]);
 
   useEffect(() => {
     if (submittedAssessment && submittedAssessment.assessment.duration_minutes && submittedAssessment.status === 'in_progress') {
@@ -128,10 +132,94 @@ export default function AttemptQuizScreen() {
     }
   }, [submittedAssessment]);
 
-  const fetchSubmittedQuizDetails = async (id: number) => {
-    setLoading(true);
-    setError(null);
-    try {
+  const fetchQuizData = async (id: number) => {
+  setLoading(true);
+  setError(null);
+  const user = await getUserData();
+  const userEmail = user?.email;
+
+  if (!userEmail) {
+    setError('User not logged in.');
+    setLoading(false);
+    return;
+  }
+
+  try {
+    if (isOffline === 'true') {
+      // OFFLINE MODE - Fetch from offline_quiz_attempts table
+      console.log("⚠️ Offline: Fetching quiz attempt from local DB.");
+      const offlineData = await getOfflineQuizAttempt(userEmail, id);
+
+      if (offlineData) {
+        // Debug the data structure
+        console.log("Offline questionsData structure:", JSON.stringify(offlineData.questionsData, null, 2));
+        
+        // Handle the questions data - it should be an array directly
+        let questions = [];
+        if (Array.isArray(offlineData.questionsData)) {
+          questions = offlineData.questionsData;
+        } else if (offlineData.questionsData?.questions) {
+          questions = offlineData.questionsData.questions;
+        } else {
+          console.error("No questions found in offline data");
+          console.error("Expected structure: [...] or { questions: [...] }");
+          console.error("Actual structure:", offlineData.questionsData);
+          setError('Quiz questions not found in offline data. Please restart the quiz.');
+          Alert.alert(
+            'Data Error',
+            'Quiz questions structure is invalid. Please go back and start the quiz again.',
+            [{ text: 'OK', onPress: () => router.back() }]
+          );
+          setLoading(false);
+          return;
+        }
+
+        // Map the offline data to match the expected structure
+        const mockSubmittedAssessment: SubmittedAssessmentData = {
+          id: -1, // Temporary ID for offline attempts
+          assessment_id: offlineData.assessmentData.id,
+          student_id: 0, // Placeholder
+          score: null,
+          status: 'in_progress',
+          started_at: new Date().toISOString(),
+          completed_at: null,
+          submitted_file_path: null,
+          submitted_questions: questions.map((q: any, index: number) => ({
+            id: q.id || index, // Use question ID or index as fallback
+            submitted_assessment_id: -1,
+            question_id: q.id || index,
+            question_text: q.question_text || q.text,
+            question_type: q.question_type || q.type,
+            max_points: q.max_points || q.points || 1,
+            submitted_answer: null,
+            is_correct: null,
+            score_earned: null,
+            submitted_options: q.options ? q.options.map((opt: any, optIndex: number) => ({
+              id: opt.id || optIndex,
+              submitted_question_id: q.id || index,
+              question_option_id: opt.id || optIndex,
+              option_text: opt.option_text || opt.text,
+              is_correct_option: opt.is_correct_option || opt.is_correct || false,
+              is_selected: false,
+            })) : []
+          })),
+          assessment: offlineData.assessmentData,
+        };
+        
+        setSubmittedAssessment(mockSubmittedAssessment);
+        initializeStudentAnswers(mockSubmittedAssessment.submitted_questions);
+        console.log("✅ Offline quiz data loaded successfully");
+      } else {
+        setError('Offline: Quiz attempt not found locally. Please start the quiz first while online.');
+        Alert.alert(
+          'Quiz Not Found', 
+          'This quiz attempt was not found in local storage. Please connect to the internet and start the quiz again.',
+          [{ text: 'OK', onPress: () => router.back() }]
+        );
+      }
+    } else {
+      // ONLINE MODE - existing logic remains the same
+      console.log("✅ Online: Fetching submitted quiz details from API.");
       const response = await api.get(`/submitted-assessments/${id}`);
       if (response.status === 200) {
         const fetchedSubmittedAssessment = response.data.submitted_assessment;
@@ -141,13 +229,19 @@ export default function AttemptQuizScreen() {
       } else {
         setError(response.data?.message || 'Failed to fetch submitted quiz details.');
       }
-    } catch (err: any) {
-      console.error("Error fetching submitted quiz details:", err.response?.data || err);
-      setError(err.response?.data?.message || 'An unexpected error occurred while fetching quiz details.');
-    } finally {
-      setLoading(false);
     }
-  };
+  } catch (err: any) {
+    console.error("Error fetching quiz details:", err.response?.data || err);
+    if (isOffline === 'true') {
+      setError('Failed to load offline quiz data.');
+      Alert.alert('Error', 'Failed to load quiz from local storage.');
+    } else {
+      setError(err.response?.data?.message || 'An unexpected error occurred while fetching quiz details.');
+    }
+  } finally {
+    setLoading(false);
+  }
+};
 
   const initializeStudentAnswers = (questions: SubmittedQuestion[]) => {
     const initialAnswers: StudentAnswers = {};
@@ -169,22 +263,31 @@ export default function AttemptQuizScreen() {
     setSavingAnswers(prev => new Set(prev.add(submittedQuestionId)));
 
     try {
-      let payload: any = {};
+      if (isConnected) {
+        // ONLINE MODE
+        let payload: any = {};
+        if (answerData.type === 'multiple_choice' || answerData.type === 'true_false') {
+          payload.selected_option_ids = answerData.answer as number[];
+        } else {
+          payload.submitted_answer = answerData.answer as string;
+        }
 
-      if (answerData.type === 'multiple_choice' || answerData.type === 'true_false') {
-        payload.selected_option_ids = answerData.answer as number[];
+        const response = await api.patch(`/submitted-questions/${submittedQuestionId}/answer`, payload);
+
+        if (response.status === 200) {
+          setStudentAnswers(prev => ({
+            ...prev,
+            [submittedQuestionId]: { ...prev[submittedQuestionId], isDirty: false }
+          }));
+          console.log("API Response for Submitted Quiz Details:", JSON.stringify(response.data, null, 2));
+        }
       } else {
-        payload.submitted_answer = answerData.answer as string;
-      }
-
-      const response = await api.patch(`/submitted-questions/${submittedQuestionId}/answer`, payload);
-
-      if (response.status === 200) {
+        // OFFLINE MODE
+        // No need to save individual answers, they will be part of the final submission
         setStudentAnswers(prev => ({
           ...prev,
           [submittedQuestionId]: { ...prev[submittedQuestionId], isDirty: false }
         }));
-        console.log("API Response for Submitted Quiz Details:", JSON.stringify(response.data, null, 2));
       }
     } catch (err: any) {
       console.error('Error saving answer:', err.response?.data || err);
@@ -203,34 +306,37 @@ export default function AttemptQuizScreen() {
       [submittedQuestionId]: { type, answer: value, isDirty: true },
     }));
 
-    if (debounceTimers.current[submittedQuestionId]) {
-      clearTimeout(debounceTimers.current[submittedQuestionId] as unknown as NodeJS.Timeout);
-    }
+    if (isConnected) { // Only debounce and save if online
+      if (debounceTimers.current[submittedQuestionId]) {
+        clearTimeout(debounceTimers.current[submittedQuestionId] as unknown as NodeJS.Timeout);
+      }
 
-    debounceTimers.current[submittedQuestionId] = setTimeout(() => {
-      saveAnswer(submittedQuestionId);
-    }, 1000);
+      debounceTimers.current[submittedQuestionId] = setTimeout(() => {
+        saveAnswer(submittedQuestionId);
+      }, 1000);
+    }
   };
 
-
   const handleFinalizeQuiz = async () => {
-    if (!submittedAssessment) {
-      Alert.alert('Error', 'Quiz data not loaded.');
-      return;
-    }
+  if (!submittedAssessment) {
+    Alert.alert('Error', 'Quiz data not loaded.');
+    return;
+  }
+  
+  Alert.alert(
+    'Confirm Submission',
+    'Are you sure you want to finalize and submit your quiz? This action cannot be undone.',
+    [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Submit',
+        onPress: async () => {
+          setLoading(true);
+          if (timerInterval) clearInterval(timerInterval);
 
-    Alert.alert(
-      'Confirm Submission',
-      'Are you sure you want to finalize and submit your quiz? This action cannot be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Submit',
-          onPress: async () => {
-            setLoading(true);
-            if (timerInterval) clearInterval(timerInterval);
-
-            try {
+          try {
+            if (isConnected && isOffline !== 'true') {
+              // ONLINE MODE - existing logic
               const pendingAnswers = Object.keys(studentAnswers)
                 .filter(key => studentAnswers[parseInt(key)].isDirty)
                 .map(key => parseInt(key));
@@ -248,22 +354,51 @@ export default function AttemptQuizScreen() {
                     onPress: () => router.replace(`/courses/assessments/${submittedAssessment.assessment_id}`)
                   }
                 ]);
-                console.log("API Response for Submitted Quiz Details:", JSON.stringify(response.data, null, 2));
               } else {
                 Alert.alert('Submission Failed', response.data?.message || 'Could not submit quiz.');
               }
-            } catch (err: any) {
-              console.error('Quiz submission error:', err.response?.data || err);
-              Alert.alert('Submission Failed', err.response?.data?.message || 'An error occurred during submission.');
-            } finally {
-              setLoading(false);
+            } else {
+              // OFFLINE MODE - Save completed attempt locally
+              const user = await getUserData();
+              if (!user || !user.email) {
+                throw new Error('User data not available for offline submission.');
+              }
+              
+              // Update the offline quiz attempt status to completed
+              const db = await getDb();
+              await db.runAsync(
+                `UPDATE offline_quiz_attempts 
+                 SET status = 'completed' 
+                 WHERE user_email = ? AND assessment_id = ? AND status = 'in progress';`,
+                [user.email, submittedAssessment.assessment_id]
+              );
+              
+              // Save the final answers (you might want to save these separately for syncing later)
+              const finalAnswers = JSON.stringify(studentAnswers);
+              
+              Alert.alert(
+                'Offline Submission', 
+                'Your quiz has been saved locally and will be submitted once you are online.',
+                [
+                  {
+                    text: 'OK',
+                    onPress: () => router.replace(`/courses/assessments/${submittedAssessment.assessment_id}`)
+                  }
+                ]
+              );
             }
-          },
+          } catch (err: any) {
+            console.error('Quiz submission error:', err.response?.data || err);
+            Alert.alert('Submission Failed', err.response?.data?.message || 'An error occurred during submission.');
+          } finally {
+            setLoading(false);
+          }
         },
-      ],
-      { cancelable: true }
-    );
-  };
+      },
+    ],
+    { cancelable: true }
+  );
+};
 
   const formatTime = (totalSeconds: number | null) => {
     if (totalSeconds === null || totalSeconds < 0) return 'N/A';
@@ -285,7 +420,7 @@ export default function AttemptQuizScreen() {
     return (
       <View style={styles.errorContainer}>
         <Text style={styles.errorText}>{error || 'Quiz not found.'}</Text>
-        <TouchableOpacity onPress={() => fetchSubmittedQuizDetails(Number(submittedAssessmentId))} style={styles.retryButton}>
+        <TouchableOpacity onPress={() => fetchQuizData(Number(assessmentId))} style={styles.retryButton}>
           <Text style={styles.retryButtonText}>Retry</Text>
         </TouchableOpacity>
       </View>
@@ -307,6 +442,9 @@ export default function AttemptQuizScreen() {
           </Text>
         )}
         <Text style={styles.quizStatus}>Status: {submittedAssessment.status.replace('_', ' ')}</Text>
+        {!isConnected && (
+            <Text style={styles.offlineStatus}>âš ï¸ You are currently in Offline Mode</Text>
+        )}
       </View>
 
       {submittedAssessment.submitted_questions.map((question, qIndex) => (
@@ -338,17 +476,15 @@ export default function AttemptQuizScreen() {
                     onPress={() => {
                       let newSelection: number[];
                       if (question.question_type === 'multiple_choice') {
-                        // For multiple choice, allow single selection (toggle)
                         newSelection = isSelected ? [] : [option.question_option_id];
                       } else if (question.question_type === 'true_false') {
-                        // For true/false, only allow single selection
                         newSelection = [option.question_option_id];
                       } else {
                         newSelection = isSelected ? [] : [option.question_option_id];
                       }
                       handleAnswerChange(question.id, question.question_type, newSelection);
                     }}
-                    disabled={submittedAssessment.status !== 'in_progress'}
+                    disabled={submittedAssessment.status !== 'in_progress' && isOffline !== 'true'}
                   >
                     {question.question_type === 'true_false' ? (
                       <View style={styles.radioCircle}>
@@ -356,7 +492,7 @@ export default function AttemptQuizScreen() {
                       </View>
                     ) : (
                       <View style={styles.checkboxSquare}>
-                        {isSelected && <Text style={styles.checkboxCheck}>✓</Text>}
+                        {isSelected && <Text style={styles.checkboxCheck}>âœ“</Text>}
                       </View>
                     )}
                     <Text
@@ -370,7 +506,6 @@ export default function AttemptQuizScreen() {
                   </TouchableOpacity>
                 );
               })}
-              {/* Show fallback only if not MC/TF */}
               {(!question.submitted_options || question.submitted_options.length === 0) && question.question_type !== 'true_false' && (
                 <Text style={styles.errorText}>No options available for this question</Text>
               )}
@@ -378,7 +513,7 @@ export default function AttemptQuizScreen() {
           )}
 
           {/* Short Answer / Identification / Essay */}
-          {['short_answer', 'identification', 'essay'].includes(question.question_type) && (
+          {['identification', 'essay'].includes(question.question_type) && (
             <TextInput
               style={[
                 styles.answerInput,
@@ -399,7 +534,7 @@ export default function AttemptQuizScreen() {
 
           {question.score_earned !== null && (
             <Text style={[styles.scoreText, question.is_correct ? styles.correctScore : styles.incorrectScore]}>
-              {question.is_correct !== null && (question.is_correct ? ' ✓' : ' ✗')}
+              {question.is_correct !== null && (question.is_correct ? ' âœ“' : ' âœ—')}
             </Text>
           )}
         </View>
@@ -690,10 +825,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 10,
-    borderRadius: 4, // Slightly rounded corners for a softer look
+    borderRadius: 4,
   },
   checkboxCheck: {
     color: '#333',
     fontSize: 14,
+  },
+  offlineStatus: {
+    marginTop: 10,
+    fontSize: 14,
+    color: '#ff6347',
+    fontWeight: 'bold',
   },
 });

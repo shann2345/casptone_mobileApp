@@ -13,10 +13,13 @@ import {
   deleteOfflineSubmission,
   getAssessmentDetailsFromDb,
   getCurrentServerTime,
+  getQuizQuestionsFromDb,
   getUnsyncedSubmissions,
   saveAssessmentDetailsToDb,
   saveAssessmentsToDb,
-  saveOfflineSubmission
+  saveOfflineSubmission,
+  saveQuizAttempt,
+  saveQuizQuestionsToDb
 } from '../../../../lib/localDb';
 
 interface AssessmentDetail {
@@ -56,7 +59,7 @@ interface LatestAssignmentSubmission {
 export default function AssessmentDetailsScreen() {
   const { id: courseId, assessmentId } = useLocalSearchParams();
   const router = useRouter();
-  const { isConnected } = useNetworkStatus();
+  const { isConnected, netInfo } = useNetworkStatus();
   const [assessmentDetail, setAssessmentDetail] = useState<AssessmentDetail | null>(null);
   const [attemptStatus, setAttemptStatus] = useState<AttemptStatus | null>(null);
   const [latestAssignmentSubmission, setLatestAssignmentSubmission] = useState<LatestAssignmentSubmission | null>(null);
@@ -216,10 +219,16 @@ export default function AssessmentDetailsScreen() {
     syncSubmissions();
   }, [isConnected]);
 
-  const isAssessmentAvailable = (assessment: AssessmentDetail) => {
-    if (!assessment.available_at) return true;
-    const availableDate = new Date(assessment.available_at);
-    return new Date().getTime() >= availableDate.getTime();
+  // Refactored function to check for full assessment availability
+  const isAssessmentOpen = (assessment: AssessmentDetail) => {
+    const now = new Date().getTime();
+    if (assessment.available_at && now < new Date(assessment.available_at).getTime()) {
+      return false;
+    }
+    if (assessment.unavailable_at && now > new Date(assessment.unavailable_at).getTime()) {
+      return false;
+    }
+    return true;
   };
 
   const formatDate = (dateString?: string) => {
@@ -272,74 +281,164 @@ export default function AssessmentDetailsScreen() {
   const handleStartQuizAttempt = async () => {
     if (!assessmentDetail) return;
     
-    // OFFLINE BEHAVIOR MODIFICATION: Allow starting a quiz attempt offline if attempts are remaining.
-    // However, the actual attempt-quiz screen will need to handle offline submission, which isn't in scope here.
-    // For now, the prompt asks to make the button clickable, but the `attempt-quiz` screen itself needs to be implemented for full offline functionality.
-    if (!isConnected) {
-        // Check if there are remaining attempts in the local DB.
+    if (!netInfo?.isInternetReachable) {
+        // OFFLINE MODE
+        console.log('⚠️ Offline: Starting quiz attempt...');
+        const user = await getUserData();
+        const userEmail = user?.email;
+        
+        if (!userEmail) {
+          Alert.alert('Error', 'User not found. Cannot start quiz offline.');
+          return;
+        }
+
+        if (!hasDetailedData) {
+          Alert.alert('Offline Mode', 'Assessment details not available locally. Please connect to the internet to load.');
+          return;
+        }
+
         if (attemptStatus && attemptStatus.attempts_remaining !== null && attemptStatus.attempts_remaining <= 0) {
             Alert.alert('Attempt Limit Reached', 'You have used all attempts for this quiz.');
             return;
         }
-    }
 
-    if (!isAssessmentAvailable(assessmentDetail)) {
-      Alert.alert(
-        'Not Yet Available',
-        `This quiz will be available on ${formatDate(assessmentDetail.available_at)}.`
-      );
-      return;
-    }
+        // Add this debugging right before you call getQuizQuestionsFromDb
+        console.log('About to fetch questions for assessment:', assessmentDetail.id);
 
-    if (attemptStatus && !attemptStatus.has_in_progress_attempt && !attemptStatus.can_start_new_attempt) {
-      Alert.alert(
-        'Attempt Limit Reached',
-        `You have used all ${attemptStatus.max_attempts} attempts for this ${assessmentDetail.type}.`
-      );
-      return;
-    }
+        const offlineQuizQuestions = await getQuizQuestionsFromDb(assessmentDetail.id, userEmail);
 
-    setSubmissionLoading(true);
-    try {
-      const response = await api.post(`/assessments/${assessmentDetail.id}/start-quiz-attempt`);
-
-      if (response.status === 200 || response.status === 201) {
-        const submittedAssessment = response.data.submitted_assessment;
-        Alert.alert('Success', response.data.message, [
-          {
-            text: 'Start Quiz',
-            onPress: () => {
-              router.push({
-                pathname: '/courses/assessments/[assessmentId]/attempt-quiz',
-                params: { 
-                  assessmentId: assessmentDetail.id.toString(),
-                  submittedAssessmentId: submittedAssessment.id.toString()
-                },
-              });
-            }
-          }
-        ]);
-        console.log("API Response for Quiz type attempt Submission:", JSON.stringify(response.data, null, 2));
+        console.log('getQuizQuestionsFromDb returned:', offlineQuizQuestions);
+        console.log('Type:', typeof offlineQuizQuestions);
+        console.log('Is array:', Array.isArray(offlineQuizQuestions));
         
-      } else {
-        Alert.alert('Error', response.data.message || 'Failed to start quiz attempt.');
-      }
-    } catch (err: any) {
-      console.error('Error starting quiz attempt:', err.response?.data || err.message);
-      Alert.alert('Error', err.response?.data?.message || 'Failed to start quiz attempt due to network error.');
-    } finally {
-      setSubmissionLoading(false);
-      fetchAssessmentDetailsAndAttemptStatus();
+        if (!offlineQuizQuestions || !Array.isArray(offlineQuizQuestions) || offlineQuizQuestions.length === 0) {
+            console.log('No questions found. Checking what was returned:', JSON.stringify(offlineQuizQuestions));
+            Alert.alert('Offline Mode', 'Quiz questions not available locally. Please connect to the internet to download them first.');
+            return;
+        }
+        
+        console.log('Questions found:', offlineQuizQuestions.length, 'questions');
+        console.log('First question sample:', JSON.stringify(offlineQuizQuestions[0], null, 2));
+        
+        try {
+            // Save the attempt to local DB - offlineQuizQuestions is already an array
+            await saveQuizAttempt(
+                userEmail, 
+                assessmentDetail.id, 
+                assessmentDetail, // The full assessment object
+                offlineQuizQuestions // This is already an array of questions
+            );
+
+            Alert.alert('Offline Mode', 'Your quiz has been started and saved locally. You can proceed to attempt it now.');
+            
+            // Navigate to the quiz screen
+            router.push({
+                pathname: '/courses/assessments/[assessmentId]/attempt-quiz',
+                params: {
+                    assessmentId: assessmentDetail.id.toString(),
+                    // Pass a local identifier for the offline attempt
+                    isOffline: 'true'
+                },
+            });
+        } catch (error) {
+            console.error('Error starting offline quiz:', error);
+            Alert.alert('Error', 'Failed to start quiz attempt offline.');
+        }
+
+        return;
+    }
+
+    if (netInfo?.isInternetReachable) {
+        // ONLINE MODE
+        const user = await getUserData();
+        const userEmail = user?.email;
+        if (!userEmail) {
+            Alert.alert('Error', 'User not found. Cannot start quiz.');
+            setSubmissionLoading(false);
+            return;
+        }
+
+        if (!isAssessmentOpen(assessmentDetail)) {
+            Alert.alert(
+                'Assessment Unavailable',
+                `This assessment is not currently available. Please check the dates.`
+            );
+            setSubmissionLoading(false);
+            return;
+        }
+
+        if (attemptStatus && !attemptStatus.has_in_progress_attempt && !attemptStatus.can_start_new_attempt) {
+            Alert.alert(
+                'Attempt Limit Reached',
+                `You have used all ${attemptStatus.max_attempts} attempts for this ${assessmentDetail.type}.`
+            );
+            setSubmissionLoading(false);
+            return;
+        }
+
+        setSubmissionLoading(true);
+        try {
+            // New logic: First, check if we need to fetch questions
+            const needsQuestions = await getQuizQuestionsFromDb(assessmentId as string, userEmail) === null;
+            let questionsData = null;
+
+            if (needsQuestions) {
+                console.log('✅ Online: Assessment questions not found locally. Fetching from API...');
+                const questionsResponse = await api.get(`/assessments/${assessmentId}/questions`);
+                if (questionsResponse.status === 200) {
+                    questionsData = questionsResponse.data;
+                    await saveQuizQuestionsToDb(assessmentId as number, userEmail, questionsData);
+                    console.log('✅ Successfully fetched and saved questions to local DB.');
+                } else {
+                    Alert.alert('Error', 'Failed to download quiz questions. Please try again with a stable connection.');
+                    setSubmissionLoading(false);
+                    return;
+                }
+            } else {
+                console.log('✅ Questions already exist locally. Skipping API fetch.');
+            }
+
+            // Now, proceed with the original logic to start the quiz
+            const response = await api.post(`/assessments/${assessmentDetail.id}/start-quiz-attempt`);
+            
+            if (response.status === 200 || response.status === 201) {
+                const submittedAssessment = response.data.submitted_assessment;
+                Alert.alert('Success', response.data.message, [
+                    {
+                        text: 'Start Quiz',
+                        onPress: () => {
+                            router.push({
+                                pathname: '/courses/assessments/[assessmentId]/attempt-quiz',
+                                params: {
+                                    assessmentId: assessmentDetail.id.toString(),
+                                    submittedAssessmentId: submittedAssessment.id.toString(),
+                                    isOffline: 'false'
+                                },
+                            });
+                        },
+                    },
+                ]);
+                console.log("API Response for Quiz type attempt Submission:", JSON.stringify(response.data, null, 2));
+            } else {
+                Alert.alert('Error', response.data.message || 'Failed to start quiz attempt.');
+            }
+        } catch (err: any) {
+            console.error('Error starting quiz attempt:', err.response?.data || err.message);
+            Alert.alert('Error', err.response?.data?.message || 'Failed to start quiz attempt due to network error.');
+        } finally {
+            setSubmissionLoading(false);
+            fetchAssessmentDetailsAndAttemptStatus();
+        }
     }
   };
 
   const handleSubmitAssignment = async () => {
     if (!assessmentDetail) return;
 
-    if (!isAssessmentAvailable(assessmentDetail)) {
+    if (!isAssessmentOpen(assessmentDetail)) {
       Alert.alert(
-        'Not Yet Available',
-        `This assignment will be available on ${formatDate(assessmentDetail.available_at)}.`
+        'Assessment Unavailable',
+        `This assessment is not currently available. Please check the dates.`
       );
       return;
     }
@@ -441,26 +540,28 @@ export default function AssessmentDetailsScreen() {
     }
   };
 
-  const isAvailable = assessmentDetail ? isAssessmentAvailable(assessmentDetail) : false;
+  // Use the new function for button state
+  const isAssessmentCurrentlyOpen = assessmentDetail ? isAssessmentOpen(assessmentDetail) : false;
 
   let isQuizAttemptButtonDisabled = false;
   let quizButtonText = 'Start Quiz';
 
-
-  if (assessmentDetail && (assessmentDetail.type === 'quiz' || assessmentDetail.type === 'exam') && attemptStatus) {
-    if (attemptStatus.has_in_progress_attempt) {
-      quizButtonText = 'Resume Quiz';
-      isQuizAttemptButtonDisabled = submissionLoading;
-    } else if (!isAvailable) {
-      quizButtonText = 'Quiz Not Yet Available';
+  if (assessmentDetail && (assessmentDetail.type === 'quiz' || assessmentDetail.type === 'exam')) {
+    if (!isAssessmentCurrentlyOpen) {
       isQuizAttemptButtonDisabled = true;
-    } else if (!attemptStatus.can_start_new_attempt || (attemptStatus.attempts_remaining !== null && attemptStatus.attempts_remaining <= 0)) {
-      quizButtonText = 'Attempt Limit Reached';
-      isQuizAttemptButtonDisabled = true;
+      quizButtonText = 'Assessment Unavailable';
+    } else if (attemptStatus) {
+      if (attemptStatus.has_in_progress_attempt) {
+        quizButtonText = 'Resume Quiz';
+        isQuizAttemptButtonDisabled = submissionLoading;
+      } else if (!attemptStatus.can_start_new_attempt || (attemptStatus.attempts_remaining !== null && attemptStatus.attempts_remaining <= 0)) {
+        quizButtonText = 'Attempt Limit Reached';
+        isQuizAttemptButtonDisabled = true;
+      }
     }
-  } else if (!isAvailable) {
-    quizButtonText = 'Quiz Not Yet Available';
+  } else if (!isAssessmentCurrentlyOpen) {
     isQuizAttemptButtonDisabled = true;
+    quizButtonText = 'Assessment Unavailable';
   }
   
   if (!isConnected) {
@@ -473,6 +574,10 @@ export default function AssessmentDetailsScreen() {
         // Has detailed data but no attempts left
         isQuizAttemptButtonDisabled = true;
         quizButtonText = 'Attempt Limit Reached (Offline)';
+      } else if (!isAssessmentCurrentlyOpen) {
+        // Has detailed data but past the deadline
+        isQuizAttemptButtonDisabled = true;
+        quizButtonText = 'Assessment Unavailable (Offline)';
       } else {
         // Has detailed data and attempts available
         isQuizAttemptButtonDisabled = false;
@@ -650,10 +755,10 @@ export default function AssessmentDetailsScreen() {
                 <TouchableOpacity
                     style={styles.pickFileButton}
                     onPress={handlePickDocument}
-                    disabled={!isAvailable || submissionLoading}
+                    disabled={!isAssessmentCurrentlyOpen || submissionLoading}
                 >
-                    <Ionicons name="folder-open-outline" size={20} color={!isAvailable || !isConnected ? "#666" : "#007bff"} />
-                    <Text style={[styles.pickFileButtonText, (!isAvailable || !isConnected) && { color: '#007bff' }]}>
+                    <Ionicons name="folder-open-outline" size={20} color={!isAssessmentCurrentlyOpen || !isConnected ? "#666" : "#007bff"} />
+                    <Text style={[styles.pickFileButtonText, (!isAssessmentCurrentlyOpen || !isConnected) && { color: '#007bff' }]}>
                         {selectedFile ? selectedFile.name : `Select ${assessmentDetail.type || 'assessment'} File`}
                     </Text>
                 </TouchableOpacity>
@@ -663,10 +768,10 @@ export default function AssessmentDetailsScreen() {
                 <TouchableOpacity
                     style={[
                         styles.actionButton,
-                        (!isAvailable || !selectedFile || submissionLoading || !isConnected) && styles.actionButtonDisabled,
+                        (!isAssessmentCurrentlyOpen || !selectedFile || submissionLoading) && styles.actionButtonDisabled,
                     ]}
                     onPress={handleSubmitAssignment}
-                    disabled={!isAvailable || !selectedFile || submissionLoading}
+                    disabled={!isAssessmentCurrentlyOpen || !selectedFile || submissionLoading}
                 >
                     {submissionLoading ? (
                         <ActivityIndicator color="#fff" />
@@ -674,7 +779,7 @@ export default function AssessmentDetailsScreen() {
                         <>
                             <Ionicons name="cloud-upload-outline" size={24} color="#007bff" style={styles.icon} />
                             <Text style={styles.actionButtonText}>
-                                {isAvailable ? `Submit ${assessmentDetail.type || 'assessment'}` : `${assessmentDetail.type || 'assessment'} Not Yet Available`}
+                                {isAssessmentCurrentlyOpen ? `Submit ${assessmentDetail.type || 'assessment'}` : `${assessmentDetail.type || 'assessment'} Unavailable`}
                             </Text>
                         </>
                     )}
