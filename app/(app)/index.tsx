@@ -4,20 +4,25 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Animated, FlatList, Modal, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import { useNetworkStatus } from '../../context/NetworkContext';
-import api, { clearAuthToken, getAuthToken, getServerTime, getUserData, syncOfflineSubmission } from '../../lib/api'; // Add syncOfflineSubmission
+import api, { clearAuthToken, getAuthToken, getServerTime, getUserData, syncOfflineQuiz, syncOfflineSubmission } from '../../lib/api'; // Add syncOfflineSubmission
 import {
   deleteAllAssessmentDetails,
-  deleteOfflineSubmission, downloadAllAssessmentDetails,
+  deleteOfflineQuizAttempt,
+  deleteOfflineSubmission,
+  downloadAllAssessmentDetails,
+  downloadAllQuizQuestions,
+  fixQuizQuestionsTable,
   getAssessmentsWithoutDetails,
+  getCompletedOfflineQuizzes,
   getDb,
   getEnrolledCoursesFromDb,
   getUnsyncedSubmissions,
+  hasAssessmentDetailsSaved,
+  hasQuizQuestionsSaved,
   initDb,
   resetTimeCheckData,
-  saveAssessmentDetailsToDb,
   saveCourseDetailsToDb,
   saveCourseToDb,
-  saveQuizQuestionsToDb,
   saveServerTime,
   updateTimeSync
 } from '../../lib/localDb';
@@ -91,7 +96,6 @@ export default function HomeScreen() {
   // ADD THIS NEW useEffect HOOK TO HANDLE AUTOMATIC SYNC
   useEffect(() => {
     const syncSubmissions = async () => {
-      // Ensure the database is initialized before trying to sync
       if (!isInitialized) return;
 
       const hasRealInternet = netInfo?.isInternetReachable === true;
@@ -103,38 +107,60 @@ export default function HomeScreen() {
           return;
         }
 
-        const unsyncedSubmissions = await getUnsyncedSubmissions(user.email);
-        if (unsyncedSubmissions.length > 0) {
+        // Check and sync for assignment submissions
+        const unsyncedAssignments = await getUnsyncedSubmissions(user.email);
+        if (unsyncedAssignments.length > 0) {
           Alert.alert(
             'Synchronization',
-            `Found ${unsyncedSubmissions.length} offline submission(s) to sync.`,
+            `Found ${unsyncedAssignments.length} offline assignment submission(s) to sync.`,
             [{ text: 'OK' }]
           );
-
-          for (const submission of unsyncedSubmissions) {
-            console.log(`Attempting to sync submission for assessment ID: ${submission.assessment_id}`);
-            // syncOfflineSubmission is a function from the api.ts file
+          for (const submission of unsyncedAssignments) {
+            console.log(`Attempting to sync assignment for assessment ID: ${submission.assessment_id}`);
             const success = await syncOfflineSubmission(
               submission.assessment_id,
               submission.file_uri,
               submission.original_filename,
               submission.submitted_at
             );
-
             if (success) {
               await deleteOfflineSubmission(submission.id);
-              console.log(`Successfully synced and deleted local record for assessment ${submission.assessment_id}`);
+              console.log(`Successfully synced and deleted local record for assignment ${submission.assessment_id}`);
             } else {
-              console.warn(`Failed to sync submission for assessment ${submission.assessment_id}`);
+              console.warn(`Failed to sync assignment for assessment ${submission.assessment_id}`);
             }
           }
-
-          // After attempting to sync, refresh the course list to get updated submission statuses
-          fetchCourses();
         }
+        
+        // NEW: Check and sync for quiz attempts
+        const completedOfflineQuizzes = await getCompletedOfflineQuizzes(user.email);
+        if (completedOfflineQuizzes.length > 0) {
+          Alert.alert(
+            'Synchronization',
+            `Found ${completedOfflineQuizzes.length} offline quiz attempt(s) to sync.`,
+            [{ text: 'OK' }]
+          );
+          for (const quizAttempt of completedOfflineQuizzes) {
+            console.log(`Attempting to sync quiz for assessment ID: ${quizAttempt.assessment_id}`);
+            const success = await syncOfflineQuiz(
+                quizAttempt.assessment_id,
+                quizAttempt.answers,
+                quizAttempt.start_time,
+                quizAttempt.end_time
+            );
+            if (success) {
+                await deleteOfflineQuizAttempt(quizAttempt.attempt_id);
+                console.log(`Successfully synced and deleted local record for quiz attempt ${quizAttempt.attempt_id}`);
+            } else {
+                console.warn(`Failed to sync quiz attempt ${quizAttempt.attempt_id}`);
+            }
+          }
+        }
+        
+        // After attempting to sync, refresh the course list to get updated submission statuses
+        fetchCourses();
       }
     };
-
     syncSubmissions();
   }, [netInfo?.isInternetReachable, isInitialized]);
 
@@ -344,127 +370,151 @@ export default function HomeScreen() {
       return () => clearInterval(timeSyncInterval);
   }, [netInfo?.isInternetReachable, isInitialized]);
 
- const handleRefresh = async () => {
-    setIsRefreshing(true);
+  const handleRefresh = async () => {
+  setIsRefreshing(true);
 
-    if (!netInfo?.isInternetReachable) {
-      Alert.alert(
-        'Offline',
-        'Please check your internet connection to refresh data.',
-        [{ text: 'OK' }]
-      );
+  if (!netInfo?.isInternetReachable) {
+    Alert.alert(
+      'Offline',
+      'Please check your internet connection to refresh data.',
+      [{ text: 'OK' }]
+    );
+    setIsRefreshing(false);
+    return;
+  }
+
+  try {
+    const userData = await getUserData();
+    if (!userData?.email) {
+      Alert.alert('Error', 'User data not found. Please log in again.');
       setIsRefreshing(false);
       return;
     }
 
-    try {
-      const userData = await getUserData();
-      if (!userData?.email) {
-        Alert.alert('Error', 'User data not found. Please log in again.');
-        setIsRefreshing(false);
-        return;
+    // Only clear data if user explicitly wants a fresh download
+    // For regular refresh, we'll skip already downloaded data
+    console.log('Fetching fresh course data from API...');
+    await deleteAllAssessmentDetails(userData.email);
+    await resetTimeCheckData(userData.email);
+
+    // Fetch fresh course data
+    const response = await api.get('/my-courses');
+    const courses = response.data.courses || [];
+    setEnrolledCourses(courses);
+
+    // Save basic course info to local DB
+    for (const course of courses) {
+      try {
+        await saveCourseToDb(course, userData.email);
+      } catch (saveError) {
+        console.error('Failed to save basic course to DB:', saveError);
       }
-
-      // 1. First delete all assessment details
-      console.log('🗑️ Clearing all assessment details for fresh download...');
-      await deleteAllAssessmentDetails(userData.email);
-      await resetTimeCheckData(userData.email);
-
-      // 2. Fetch fresh course data (but don't call fetchCourses which would save course details)
-      console.log('📱 Fetching fresh course data from API...');
-      const response = await api.get('/my-courses');
-      const courses = response.data.courses || [];
-      setEnrolledCourses(courses);
-
-      // Save basic course info to local DB
-      for (const course of courses) {
-        try {
-          await saveCourseToDb(course, userData.email);
-        } catch (saveError) {
-          console.error('Failed to save basic course to DB:', saveError);
-        }
-      }
-
-      // 3. Fetch and save complete course details
-      await fetchAndSaveCompleteCoursesData(courses, userData.email);
-
-      // 4. Now download all assessment details
-      console.log('📥 Starting fresh download of all assessment details...');
-      setIsDownloadingData(true);
-      const assessmentsToDownload = await getAssessmentsWithoutDetails(userData.email);
-      setDownloadProgress({ current: 0, total: assessmentsToDownload.length });
-
-      if (assessmentsToDownload.length > 0) {
-        // Fetch assessments from local DB to get their type
-        const db = await getDb();
-        const allAssessments = await db.getAllAsync(
-          `SELECT id, type FROM offline_assessments WHERE id IN (${assessmentsToDownload.join(',')}) AND user_email = ?;`,
-          [userData.email]
-        );
-
-        let successCount = 0;
-        let failedCount = 0;
-
-        for (const assessment of allAssessments) {
-          try {
-            if (assessment.type === 'quiz' || assessment.type === 'exam') {
-              console.log(`Downloading quiz questions for assessment ${assessment.id}...`);
-              const quizResponse = await api.get(`/assessments/${assessment.id}/questions-and-options`);
-
-              console.log(`QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ`, quizResponse.data);
-
-              if (quizResponse.data.questions) {
-                await saveQuizQuestionsToDb(assessment.id, userData.email, quizResponse.data.questions);
-              }
-            }
-
-            // The rest of your existing download logic for assessment details...
-            let attemptStatus = null;
-            let latestSubmission = null;
-
-            if (assessment.type === 'quiz' || assessment.type === 'exam') {
-              const attemptResponse = await api.get(`/assessments/${assessment.id}/attempt-status`);
-              attemptStatus = attemptResponse.data;
-            } else if (assessment.type === 'assignment' || assessment.type === 'project') {
-              const submissionResponse = await api.get(`/assessments/${assessment.id}/latest-assignment-submission`);
-              latestSubmission = submissionResponse.data;
-            }
-
-            await saveAssessmentDetailsToDb(assessment.id, userData.email, attemptStatus, latestSubmission);
-            successCount++;
-
-          } catch (downloadError) {
-            console.error(`⚠️ Failed to download details for assessment ${assessment.id}:`, downloadError);
-            failedCount++;
-          }
-          if (downloadProgress.current < downloadProgress.total) {
-            setDownloadProgress(prev => ({ ...prev, current: prev.current + 1 }));
-          }
-        }
-
-        console.log(`Download completed: ${successCount} successful, ${failedCount} failed`);
-        Alert.alert(
-          'Refresh Complete',
-          `Successfully refreshed course data and downloaded details for ${successCount} assessments.${
-            failedCount > 0 ? `\n${failedCount} assessments failed to download.` : ''
-          }`,
-          [{ text: 'OK' }]
-        );
-      }
-
-      // Update assessment count
-      const remainingAssessments = await getAssessmentsWithoutDetails(userData.email);
-      setAssessmentsNeedingDetails(remainingAssessments.length);
-
-    } catch (error) {
-      console.error('Refresh failed:', error);
-      Alert.alert('Error', 'Failed to refresh data. Please try again.');
-    } finally {
-      setIsDownloadingData(false);
-      setDownloadProgress({ current: 0, total: 0 });
-      setIsRefreshing(false);
     }
-  }; 
+
+    // Fetch and save complete course details
+    await fetchAndSaveCompleteCoursesData(courses, userData.email);
+
+    // Download assessment details and quiz questions (with skip logic)
+    console.log('Starting download of assessment details and quiz questions...');
+    setIsDownloadingData(true);
+    const assessmentsToDownload = await getAssessmentsWithoutDetails(userData.email);
+    
+    // Calculate total items to download
+    const db = await getDb();
+    const quizAssessments = await db.getAllAsync(
+      `SELECT id FROM offline_assessments 
+       WHERE user_email = ? AND (type = 'quiz' OR type = 'exam');`,
+      [userData.email]
+    );
+    
+    const totalItems = assessmentsToDownload.length + quizAssessments.length;
+    setDownloadProgress({ current: 0, total: totalItems });
+
+    let assessmentResult = { success: 0, failed: 0, skipped: 0 };
+    let quizResult = { success: 0, failed: 0, skipped: 0 };
+
+    if (assessmentsToDownload.length > 0) {
+      // Download assessment details with skip logic
+      assessmentResult = await downloadAllAssessmentDetails(
+        userData.email,
+        api,
+        (current, total, skipped = 0) => {
+          setDownloadProgress({ current, total: totalItems });
+        }
+      );
+    }
+
+    // Download quiz questions with skip logic
+    if (quizAssessments.length > 0) {
+      console.log('Downloading quiz questions...');
+      
+      // Fix table structure if needed
+      try {
+        await fixQuizQuestionsTable();
+      } catch (error) {
+        console.error('Failed to fix quiz questions table:', error);
+      }
+
+      quizResult = await downloadAllQuizQuestions(
+        userData.email,
+        api,
+        (current, total, skipped = 0) => {
+          const totalProgress = assessmentsToDownload.length + current;
+          setDownloadProgress({ current: totalProgress, total: totalItems });
+        }
+      );
+    }
+
+    // Update assessment count
+    const remainingAssessments = await getAssessmentsWithoutDetails(userData.email);
+    setAssessmentsNeedingDetails(remainingAssessments.length);
+
+    // Show completion message with skip information
+    let message = 'Successfully refreshed course data!\n\n';
+    
+    if (assessmentResult.success > 0 || assessmentResult.skipped > 0) {
+      message += `Assessment details: ${assessmentResult.success} downloaded`;
+      if (assessmentResult.skipped > 0) {
+        message += `, ${assessmentResult.skipped} already saved`;
+      }
+      if (assessmentResult.failed > 0) {
+        message += `, ${assessmentResult.failed} failed`;
+      }
+      message += '\n';
+    }
+    
+    if (quizResult.success > 0 || quizResult.skipped > 0) {
+      message += `Quiz questions: ${quizResult.success} downloaded`;
+      if (quizResult.skipped > 0) {
+        message += `, ${quizResult.skipped} already saved`;
+      }
+      if (quizResult.failed > 0) {
+        message += `, ${quizResult.failed} failed`;
+      }
+      message += '\n';
+    }
+
+    if (assessmentResult.success === 0 && quizResult.success === 0 && 
+        assessmentResult.skipped > 0 && quizResult.skipped > 0) {
+      message += '\nAll data was already up to date!';
+    } else {
+      message += '\nAll data is now available offline!';
+    }
+
+    Alert.alert('Refresh Complete', message, [{ text: 'OK' }]);
+
+  } catch (error) {
+    console.error('Refresh failed:', error);
+    Alert.alert('Error', 'Failed to refresh data. Please try again.');
+  } finally {
+    setIsDownloadingData(false);
+    setDownloadProgress({ current: 0, total: 0 });
+    setIsRefreshing(false);
+  }
+};
+
+
+
 
   const handleSearchPress = () => {
     setSearchModalVisible(true);
@@ -635,81 +685,151 @@ export default function HomeScreen() {
   };
 
   const handleAdButtonPress = async () => {
-    if (!netInfo?.isInternetReachable) {
-      Alert.alert('Offline Mode', 'You must be online to download assessment details.');
+  if (!netInfo?.isInternetReachable) {
+    Alert.alert('Offline Mode', 'You must be online to download assessment details.');
+    return;
+  }
+
+  try {
+    const userData = await getUserData();
+    if (!userData?.email) {
+      Alert.alert('Error', 'User data not found. Please log in again.');
       return;
     }
 
-    try {
-      const userData = await getUserData();
-      if (!userData?.email) {
-        Alert.alert('Error', 'User data not found. Please log in again.');
-        return;
-      }
+    const assessmentIds = await getAssessmentsWithoutDetails(userData.email);
+    
+    // Check for quiz assessments
+    const db = await getDb();
+    const quizAssessments = await db.getAllAsync(
+      `SELECT id FROM offline_assessments 
+       WHERE user_email = ? AND (type = 'quiz' OR type = 'exam');`,
+      [userData.email]
+    );
+    
+    // Count how many items actually need downloading
+    let assessmentsNeedingDownload = 0;
+    let quizzesNeedingDownload = 0;
 
-      const assessmentIds = await getAssessmentsWithoutDetails(userData.email);
-      
-      if (assessmentIds.length === 0) {
-        Alert.alert(
-          'Already Up to Date', 
-          'All assessment details are already downloaded for offline use.',
-          [{ text: 'OK', onPress: toggleAd }]
-        );
-        return;
-      }
+    for (const id of assessmentIds) {
+      const hasDetails = await hasAssessmentDetailsSaved(id, userData.email);
+      if (!hasDetails) assessmentsNeedingDownload++;
+    }
 
+    for (const quiz of quizAssessments) {
+      const hasQuestions = await hasQuizQuestionsSaved(quiz.id, userData.email);
+      if (!hasQuestions) quizzesNeedingDownload++;
+    }
+    
+    if (assessmentsNeedingDownload === 0 && quizzesNeedingDownload === 0) {
       Alert.alert(
-        'Download Assessment Details',
-        `Found ${assessmentIds.length} assessments that need detailed data (attempts, submissions, etc.). This will download all missing details for offline use.\n\nProceed with download?`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Download',
-            onPress: async () => {
-              setIsDownloadingData(true);
-              setDownloadProgress({ current: 0, total: assessmentIds.length });
+        'Already Up to Date', 
+        'All assessment details and quiz questions are already downloaded for offline use.',
+        [{ text: 'OK', onPress: toggleAd }]
+      );
+      return;
+    }
 
-              try {
-                // Pass api instance as parameter
-                const result = await downloadAllAssessmentDetails(
+    const totalItems = assessmentIds.length + quizAssessments.length;
+    Alert.alert(
+      'Download Assessment Data',
+      `Found ${assessmentsNeedingDownload} assessments needing details and ${quizzesNeedingDownload} quiz/exam assessments needing questions.\n\nThis will download:\n• Assessment attempts & submissions\n• Quiz/exam questions\n\nAlready downloaded items will be skipped. Proceed?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Download',
+          onPress: async () => {
+            setIsDownloadingData(true);
+            setDownloadProgress({ current: 0, total: totalItems });
+
+            try {
+              let currentProgress = 0;
+              let assessmentResult = { success: 0, failed: 0, skipped: 0 };
+              let quizResult = { success: 0, failed: 0, skipped: 0 };
+
+              // Download assessment details
+              if (assessmentIds.length > 0) {
+                assessmentResult = await downloadAllAssessmentDetails(
                   userData.email,
-                  api, // Pass the api instance here
-                  (current, total) => {
-                    setDownloadProgress({ current, total });
+                  api,
+                  (current, total, skipped = 0) => {
+                    setDownloadProgress({ current: currentProgress + current, total: totalItems });
                   }
                 );
-
-                Alert.alert(
-                  'Download Complete',
-                  `Successfully downloaded details for ${result.success} assessments.${
-                    result.failed > 0 ? `\n${result.failed} assessments failed to download.` : ''
-                  }\n\nAll data is now available offline!`,
-                  [{ text: 'OK', onPress: toggleAd }]
-                );
-
-                // Update the count of assessments needing details
-                setAssessmentsNeedingDetails(0);
-
-              } catch (error) {
-                console.error('Download failed:', error);
-                Alert.alert(
-                  'Download Failed',
-                  'Failed to download assessment details. Please check your internet connection and try again.',
-                  [{ text: 'OK' }]
-                );
-              } finally {
-                setIsDownloadingData(false);
-                setDownloadProgress({ current: 0, total: 0 });
+                currentProgress += assessmentIds.length;
               }
+
+              // Download quiz questions
+              if (quizAssessments.length > 0) {
+                // Fix table structure if needed
+                try {
+                  await fixQuizQuestionsTable();
+                } catch (error) {
+                  console.error('Failed to fix quiz questions table:', error);
+                }
+
+                quizResult = await downloadAllQuizQuestions(
+                  userData.email,
+                  api,
+                  (current, total, skipped = 0) => {
+                    setDownloadProgress({ current: currentProgress + current, total: totalItems });
+                  }
+                );
+              }
+
+              // Show completion message
+              let message = 'Download Complete!\n\n';
+              
+              if (assessmentResult.success > 0 || assessmentResult.skipped > 0) {
+                message += `Assessment details: ${assessmentResult.success} downloaded`;
+                if (assessmentResult.skipped > 0) {
+                  message += `, ${assessmentResult.skipped} already saved`;
+                }
+                if (assessmentResult.failed > 0) {
+                  message += `, ${assessmentResult.failed} failed`;
+                }
+                message += '\n';
+              }
+              
+              if (quizResult.success > 0 || quizResult.skipped > 0) {
+                message += `Quiz questions: ${quizResult.success} downloaded`;
+                if (quizResult.skipped > 0) {
+                  message += `, ${quizResult.skipped} already saved`;
+                }
+                if (quizResult.failed > 0) {
+                  message += `, ${quizResult.failed} failed`;
+                }
+                message += '\n';
+              }
+
+              message += '\nAll data is now available offline!';
+
+              Alert.alert('Success', message, [{ text: 'OK', onPress: toggleAd }]);
+
+              // Update the count of assessments needing details
+              const remainingAssessments = await getAssessmentsWithoutDetails(userData.email);
+              setAssessmentsNeedingDetails(remainingAssessments.length);
+
+            } catch (error) {
+              console.error('Download failed:', error);
+              Alert.alert(
+                'Download Failed',
+                'Failed to download assessment data. Please check your internet connection and try again.',
+                [{ text: 'OK' }]
+              );
+            } finally {
+              setIsDownloadingData(false);
+              setDownloadProgress({ current: 0, total: 0 });
             }
           }
-        ]
-      );
-    } catch (error) {
-      console.error('Error in handleAdButtonPress:', error);
-      Alert.alert('Error', 'An unexpected error occurred. Please try again.');
-    }
-  };
+        }
+      ]
+    );
+  } catch (error) {
+    console.error('Error in handleAdButtonPress:', error);
+    Alert.alert('Error', 'An unexpected error occurred. Please try again.');
+  }
+};
 
   // Show loading while initializing
   if (!isInitialized) {

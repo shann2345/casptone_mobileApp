@@ -12,7 +12,6 @@ import {
 } from 'react-native';
 import api, { storeAuthToken, storeUserData } from '../../lib/api';
 // Import the new multi-account function
-import { saveUserForOfflineAccess } from '../../lib/localDb';
 
 interface Errors {
   name?: string;
@@ -67,9 +66,6 @@ export default function SignupScreen() {
         await storeAuthToken(token);
         await storeUserData(user); 
         
-        // --- NEW: Save account for offline access ---
-        await saveUserForOfflineAccess(user, password);
-        console.log('💾 Account saved for offline access');
 
         Alert.alert(
           'Success', 

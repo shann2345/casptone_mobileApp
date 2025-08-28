@@ -1,6 +1,6 @@
 // [assessmentId].tsx
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
@@ -13,13 +13,12 @@ import {
   deleteOfflineSubmission,
   getAssessmentDetailsFromDb,
   getCurrentServerTime,
-  getQuizQuestionsFromDb,
   getUnsyncedSubmissions,
+  hasQuizQuestionsSaved,
   saveAssessmentDetailsToDb,
   saveAssessmentsToDb,
   saveOfflineSubmission,
-  saveQuizAttempt,
-  saveQuizQuestionsToDb
+  startOfflineQuiz
 } from '../../../../lib/localDb';
 
 interface AssessmentDetail {
@@ -68,6 +67,7 @@ export default function AssessmentDetailsScreen() {
   const [selectedFile, setSelectedFile] = useState<DocumentPicker.DocumentPickerAsset | null>(null);
   const [submissionLoading, setSubmissionLoading] = useState(false);
   const [hasDetailedData, setHasDetailedData] = useState<boolean>(false);
+  const navigation = useNavigation();
 
 
   const fetchAssessmentDetailsAndAttemptStatus = useCallback(async () => {
@@ -282,19 +282,23 @@ export default function AssessmentDetailsScreen() {
     if (!assessmentDetail) return;
     
     if (!netInfo?.isInternetReachable) {
-        // OFFLINE MODE
-        console.log('⚠️ Offline: Starting quiz attempt...');
+        console.log('Offline: Starting quiz attempt...');
         const user = await getUserData();
         const userEmail = user?.email;
         
         if (!userEmail) {
-          Alert.alert('Error', 'User not found. Cannot start quiz offline.');
-          return;
+            Alert.alert('Error', 'User not found. Cannot start quiz offline.');
+            return;
         }
 
-        if (!hasDetailedData) {
-          Alert.alert('Offline Mode', 'Assessment details not available locally. Please connect to the internet to load.');
-          return;
+        // Check if detailed data exists AND quiz questions are available locally
+        const hasQuestions = await hasQuizQuestionsSaved(assessmentDetail.id, userEmail); // A new check
+        if (!hasDetailedData || !hasQuestions) {
+            Alert.alert(
+                'Offline Mode', 
+                'Assessment questions are not available locally. Please connect to the internet to download quiz questions first.'
+            );
+            return;
         }
 
         if (attemptStatus && attemptStatus.attempts_remaining !== null && attemptStatus.attempts_remaining <= 0) {
@@ -302,41 +306,16 @@ export default function AssessmentDetailsScreen() {
             return;
         }
 
-        // Add this debugging right before you call getQuizQuestionsFromDb
-        console.log('About to fetch questions for assessment:', assessmentDetail.id);
-
-        const offlineQuizQuestions = await getQuizQuestionsFromDb(assessmentDetail.id, userEmail);
-
-        console.log('getQuizQuestionsFromDb returned:', offlineQuizQuestions);
-        console.log('Type:', typeof offlineQuizQuestions);
-        console.log('Is array:', Array.isArray(offlineQuizQuestions));
-        
-        if (!offlineQuizQuestions || !Array.isArray(offlineQuizQuestions) || offlineQuizQuestions.length === 0) {
-            console.log('No questions found. Checking what was returned:', JSON.stringify(offlineQuizQuestions));
-            Alert.alert('Offline Mode', 'Quiz questions not available locally. Please connect to the internet to download them first.');
-            return;
-        }
-        
-        console.log('Questions found:', offlineQuizQuestions.length, 'questions');
-        console.log('First question sample:', JSON.stringify(offlineQuizQuestions[0], null, 2));
-        
+        console.log('Fetching questions for assessment:', assessmentDetail.id);
         try {
-            // Save the attempt to local DB - offlineQuizQuestions is already an array
-            await saveQuizAttempt(
-                userEmail, 
-                assessmentDetail.id, 
-                assessmentDetail, // The full assessment object
-                offlineQuizQuestions // This is already an array of questions
-            );
-
+            await startOfflineQuiz(assessmentId, userEmail);
             Alert.alert('Offline Mode', 'Your quiz has been started and saved locally. You can proceed to attempt it now.');
             
-            // Navigate to the quiz screen
             router.push({
                 pathname: '/courses/assessments/[assessmentId]/attempt-quiz',
                 params: {
                     assessmentId: assessmentDetail.id.toString(),
-                    // Pass a local identifier for the offline attempt
+                    userEmail,
                     isOffline: 'true'
                 },
             });
@@ -378,25 +357,6 @@ export default function AssessmentDetailsScreen() {
 
         setSubmissionLoading(true);
         try {
-            // New logic: First, check if we need to fetch questions
-            const needsQuestions = await getQuizQuestionsFromDb(assessmentId as string, userEmail) === null;
-            let questionsData = null;
-
-            if (needsQuestions) {
-                console.log('✅ Online: Assessment questions not found locally. Fetching from API...');
-                const questionsResponse = await api.get(`/assessments/${assessmentId}/questions`);
-                if (questionsResponse.status === 200) {
-                    questionsData = questionsResponse.data;
-                    await saveQuizQuestionsToDb(assessmentId as number, userEmail, questionsData);
-                    console.log('✅ Successfully fetched and saved questions to local DB.');
-                } else {
-                    Alert.alert('Error', 'Failed to download quiz questions. Please try again with a stable connection.');
-                    setSubmissionLoading(false);
-                    return;
-                }
-            } else {
-                console.log('✅ Questions already exist locally. Skipping API fetch.');
-            }
 
             // Now, proceed with the original logic to start the quiz
             const response = await api.post(`/assessments/${assessmentDetail.id}/start-quiz-attempt`);

@@ -157,31 +157,46 @@ export const initDb = async (): Promise<void> => {
         );`
       );
 
-      // QUIZZES QUESTION DETAILS
+      // QUIZ TYPE 
       await db.execAsync(
-        `CREATE TABLE IF NOT EXISTS offline_quiz_data (
-            id INTEGER PRIMARY KEY NOT NULL,
-            user_email TEXT NOT NULL,
-            assessment_id INTEGER NOT NULL,
-            questions_data TEXT NOT NULL,
-            FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessments(id, user_email) ON DELETE CASCADE
-        );`
-      );
-    
-      // OFFLINE QUIZ ATTEMPTS
-      await db.execAsync(
-        `CREATE TABLE IF NOT EXISTS offline_quiz_attempts (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
+        `CREATE TABLE IF NOT EXISTS offline_quiz_questions (
+          id INTEGER PRIMARY KEY NOT NULL,
           user_email TEXT NOT NULL,
           assessment_id INTEGER NOT NULL,
-          status TEXT NOT NULL,
-          assessment_data TEXT NOT NULL,
-          questions_data TEXT NOT NULL,
+          question_text TEXT NOT NULL,
+          question_type TEXT NOT NULL,
+          options TEXT, -- JSON string for multiple choice options
+          correct_answer TEXT,
+          points INTEGER,
+          order_index INTEGER,
+          question_data TEXT NOT NULL, -- Complete question object as JSON
+          FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessment_data(assessment_id, user_email) ON DELETE CASCADE
+        );`
+      );
+      try {
+        // Fix for old schema that had a 'status' column
+        await db.execAsync(`DROP TABLE IF EXISTS offline_quiz_attempts;`);
+        console.log('✅ Dropped old offline_quiz_attempts table to fix schema.');
+      } catch (e) {
+        console.log('offline_quiz_attempts table drop failed, assuming it did not exist.');
+      }
+
+      await db.execAsync(
+        `CREATE TABLE IF NOT EXISTS offline_quiz_attempts (
+          attempt_id INTEGER PRIMARY KEY AUTOINCREMENT,
+          assessment_id INTEGER NOT NULL,
+          user_email TEXT NOT NULL,
           start_time TEXT NOT NULL,
+          end_time TEXT,
+          is_completed INTEGER DEFAULT 0,
+          answers TEXT, -- JSON string to store user's answers
           FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessments(id, user_email) ON DELETE CASCADE
         );`
       );
 
+
+
+      
       // SERVER TIME RESET
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS app_state (
@@ -192,6 +207,14 @@ export const initDb = async (): Promise<void> => {
             time_check_sequence INTEGER DEFAULT 0
         );`
       );
+
+      try {
+        await db.runAsync(`ALTER TABLE offline_quiz_attempts ADD COLUMN is_completed INTEGER DEFAULT 0;`);
+        console.log('✅ Added is_completed column to offline_quiz_attempts table.');
+      } catch (e) {
+        // This will throw an error if the column already exists, which is expected behavior
+        console.log('is_completed column already exists, no need to add.');
+      }
       
       dbInitialized = true;
       console.log('âœ… Database initialization complete');
@@ -433,6 +456,24 @@ export const saveAssessmentsToDb = async (assessments: any[], courseId: number, 
   console.log(`âœ… Saved ${assessments.length} assessments for course ${courseId}`);
 };
 
+export const hasAssessmentDetailsSaved = async (
+  assessmentId: number,
+  userEmail: string
+): Promise<boolean> => {
+  try {
+    const db = await getDb();
+    const result = await db.getFirstAsync(
+      `SELECT COUNT(*) as count FROM offline_assessment_data 
+       WHERE assessment_id = ? AND user_email = ?;`,
+      [assessmentId, userEmail]
+    );
+    return (result as any)?.count > 0;
+  } catch (error) {
+    console.error('Error checking assessment details:', error);
+    return false;
+  }
+};
+
 export const saveAssessmentDetailsToDb = async (
   assessmentId: number | string,
   userEmail: string,
@@ -527,27 +568,36 @@ export const deleteAllAssessmentDetails = async (userEmail: string): Promise<voi
 
 export const downloadAllAssessmentDetails = async (
   userEmail: string, 
-  apiInstance: any, // Pass api as parameter instead of requiring it
-  onProgress?: (current: number, total: number) => void
-): Promise<{ success: number, failed: number }> => {
+  apiInstance: any,
+  onProgress?: (current: number, total: number, skipped?: number) => void
+): Promise<{ success: number, failed: number, skipped: number }> => {
   try {
     const assessmentIds = await getAssessmentsWithoutDetails(userEmail);
     if (assessmentIds.length === 0) {
-      console.log('âœ… All assessments already have detailed data');
-      return { success: 0, failed: 0 };
+      console.log('All assessments already have detailed data');
+      return { success: 0, failed: 0, skipped: 0 };
     }
     
     let successCount = 0;
     let failedCount = 0;
+    let skippedCount = 0;
     
-    console.log(`ðŸ“¥ Starting batch download for ${assessmentIds.length} assessments`);
+    console.log(`Starting download for ${assessmentIds.length} assessments`);
     
     for (let i = 0; i < assessmentIds.length; i++) {
       const assessmentId = assessmentIds[i];
       
       try {
         if (onProgress) {
-          onProgress(i + 1, assessmentIds.length);
+          onProgress(i + 1, assessmentIds.length, skippedCount);
+        }
+        
+        // Check if assessment details are already saved
+        const hasDetails = await hasAssessmentDetailsSaved(assessmentId, userEmail);
+        if (hasDetails) {
+          console.log(`Assessment ${assessmentId} details already saved, skipping`);
+          skippedCount++;
+          continue;
         }
         
         let attemptStatus = null;
@@ -560,7 +610,7 @@ export const downloadAllAssessmentDetails = async (
         );
         
         if (!assessmentResult) {
-          console.warn(`âš ï¸ Assessment ${assessmentId} not found in local DB`);
+          console.warn(`Assessment ${assessmentId} not found in local DB`);
           failedCount++;
           continue;
         }
@@ -575,7 +625,7 @@ export const downloadAllAssessmentDetails = async (
               attemptStatus = attemptResponse.data;
             }
           } catch (error) {
-            console.warn(`âš ï¸ Failed to fetch attempt status for assessment ${assessmentId}`);
+            console.warn(`Failed to fetch attempt status for assessment ${assessmentId}`);
           }
         }
         
@@ -587,26 +637,26 @@ export const downloadAllAssessmentDetails = async (
               latestSubmission = submissionResponse.data;
             }
           } catch (error) {
-            console.warn(`âš ï¸ Failed to fetch submission for assessment ${assessmentId}`);
+            console.warn(`Failed to fetch submission for assessment ${assessmentId}`);
           }
         }
         
         await saveAssessmentDetailsToDb(assessmentId, userEmail, attemptStatus, latestSubmission);
         successCount++;
         
-        console.log(`âœ… Downloaded details for assessment ${assessmentId}`);
+        console.log(`Downloaded details for assessment ${assessmentId}`);
         
       } catch (error) {
-        console.error(`âŒ Failed to download details for assessment ${assessmentId}:`, error);
+        console.error(`Failed to download details for assessment ${assessmentId}:`, error);
         failedCount++;
       }
     }
     
-    console.log(`ðŸ“¥ Batch download completed: ${successCount} successful, ${failedCount} failed`);
-    return { success: successCount, failed: failedCount };
+    console.log(`Download completed: ${successCount} successful, ${failedCount} failed, ${skippedCount} skipped`);
+    return { success: successCount, failed: failedCount, skipped: skippedCount };
     
   } catch (error) {
-    console.error('âŒ Batch download failed:', error);
+    console.error('Batch download failed:', error);
     throw error;
   }
 };
@@ -877,81 +927,403 @@ const downloadSingleAssessmentDetails = async (
 
 // QUIZZES
 
-export const saveQuizQuestionsToDb = async (assessmentId: number, userEmail: string, questions: any): Promise<void> => {
+export const fixQuizQuestionsTable = async (): Promise<void> => {
   try {
     await initDb();
     const db = await getDb();
-    console.log('📦 Saving quiz questions for assessment:', assessmentId);
-  // Prepare data for insertion
-    const dataToSave = JSON.stringify(questions);
-    console.log(`saaaaaaaaaaaaaaaaaaavinggggggggggggggg ${assessmentId}:`, dataToSave);
+    
+    console.log('🔧 Fixing offline_quiz_questions table structure...');
+    
+    // Drop the existing table if it exists
+    await db.execAsync(`DROP TABLE IF EXISTS offline_quiz_questions;`);
+    
+    // Create the table with correct structure
+    await db.execAsync(
+      `CREATE TABLE IF NOT EXISTS offline_quiz_questions (
+        id INTEGER PRIMARY KEY NOT NULL,
+        user_email TEXT NOT NULL,
+        assessment_id INTEGER NOT NULL,
+        question_text TEXT NOT NULL,
+        question_type TEXT NOT NULL,
+        options TEXT,
+        correct_answer TEXT,
+        points INTEGER,
+        order_index INTEGER,
+        question_data TEXT NOT NULL,
+        FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessment_data(assessment_id, user_email) ON DELETE CASCADE
+      );`
+    );
+    
+    console.log('✅ offline_quiz_questions table structure fixed');
+  } catch (error) {
+    console.error('❌ Failed to fix quiz questions table:', error);
+    throw error;
+  }
+};
 
-    await db.runAsync(
-      `INSERT OR REPLACE INTO offline_quiz_data (id, user_email, assessment_id, questions_data) VALUES (?, ?, ?, ?);`,
-      [assessmentId, userEmail, assessmentId, dataToSave]
+export const saveQuizQuestionsToDb = async (
+  assessmentId: number,
+  userEmail: string,
+  questions: any[]
+): Promise<void> => {
+  if (!questions || questions.length === 0) {
+    return;
+  }
+  
+  try {
+    await initDb();
+    const db = await getDb();
+    
+    console.log(`🧠 Saving ${questions.length} quiz questions for assessment ${assessmentId}`);
+    
+    await db.withTransactionAsync(async () => {
+      await db.runAsync(
+        `DELETE FROM offline_quiz_questions WHERE assessment_id = ? AND user_email = ?;`,
+        [assessmentId, userEmail]
+      );
+      
+      for (let i = 0; i < questions.length; i++) {
+        const question = questions[i];
+        
+        const questionId = question.id || `${assessmentId}_${i + 1}`;
+        
+        let optionsToSave = null;
+        // Improved options validation and sanitization
+        if (question.options) {
+          if (typeof question.options === 'string') {
+            try {
+              // Try to parse if it's already a JSON string
+              JSON.parse(question.options);
+              optionsToSave = question.options;
+            } catch (e) {
+              // If parsing fails, it means it's a plain string, so we'll skip it
+              console.warn(`Invalid JSON string for question ${questionId} options:`, question.options);
+              optionsToSave = null;
+            }
+          } else if (typeof question.options === 'object' && question.options !== null) {
+            // It's an object/array, stringify it
+            try {
+              optionsToSave = JSON.stringify(question.options);
+            } catch (e) {
+              console.warn(`Failed to stringify options for question ${questionId}:`, question.options);
+              optionsToSave = null;
+            }
+          } else {
+            console.warn(`Invalid options data type for question ${questionId}:`, typeof question.options, question.options);
+            optionsToSave = null;
+          }
+        }
+
+        await db.runAsync(
+          `INSERT INTO offline_quiz_questions 
+           (id, user_email, assessment_id, question_text, question_type, options, correct_answer, points, order_index, question_data) 
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+          [
+            questionId,
+            userEmail,
+            assessmentId,
+            question.question || question.question_text || '',
+            question.type || question.question_type || 'text',
+            optionsToSave,
+            question.correct_answer || null,
+            question.points || question.point_value || 1,
+            i + 1,
+            JSON.stringify(question)
+          ]
+        );
+      }
+    });
+    
+    console.log(`✅ Saved ${questions.length} quiz questions for assessment ${assessmentId}`);
+  } catch (error) {
+    console.error(`❌ Failed to save quiz questions for assessment ${assessmentId}:`, error);
+    throw error;
+  }
+};
+
+export const hasQuizQuestionsSaved = async (
+  assessmentId: number,
+  userEmail: string
+): Promise<boolean> => {
+  try {
+    const db = await getDb();
+    const result = await db.getFirstAsync(
+      `SELECT COUNT(*) as count FROM offline_quiz_questions 
+       WHERE assessment_id = ? AND user_email = ?;`,
+      [assessmentId, userEmail]
+    );
+    return (result as any)?.count > 0;
+  } catch (error) {
+    console.error('Error checking quiz questions:', error);
+    return false;
+  }
+};
+
+export const getQuizQuestionsFromDb = async (
+  assessmentId: number,
+  userEmail: string
+): Promise<any[]> => {
+  try {
+    const db = await getDb();
+    const result = await db.getAllAsync(
+      `SELECT question_data FROM offline_quiz_questions 
+       WHERE assessment_id = ? AND user_email = ? 
+       ORDER BY order_index ASC;`,
+      [assessmentId, userEmail]
+    );
+    
+    return result.map((row: any) => {
+      try {
+        const questionData = JSON.parse(row.question_data);
+        
+        // Ensure options are properly formatted for the UI
+        if (questionData.options) {
+          if (typeof questionData.options === 'string') {
+            try {
+              questionData.options = JSON.parse(questionData.options);
+            } catch (e) {
+              console.warn(`Failed to parse options for question ${questionData.id}, setting to empty array`);
+              questionData.options = [];
+            }
+          }
+        } else {
+          questionData.options = [];
+        }
+        
+        return questionData;
+      } catch (e) {
+        console.error('Failed to parse question data:', e);
+        return null;
+      }
+    }).filter(Boolean); // Remove any null values
+  } catch (error) {
+    console.error(`❌ Failed to get quiz questions for assessment ${assessmentId}:`, error);
+    return [];
+  }
+};
+
+export const downloadAllQuizQuestions = async (
+  userEmail: string,
+  apiInstance: any,
+  onProgress?: (current: number, total: number, skipped?: number) => void
+): Promise<{ success: number, failed: number, skipped: number }> => {
+  try {
+    await initDb();
+    const db = await getDb();
+    
+    // Get all quiz and exam type assessments
+    const quizAssessments = await db.getAllAsync(
+      `SELECT id FROM offline_assessments 
+       WHERE user_email = ? AND (type = 'quiz' OR type = 'exam');`,
+      [userEmail]
+    );
+    
+    if (quizAssessments.length === 0) {
+      console.log('No quiz/exam assessments found');
+      return { success: 0, failed: 0, skipped: 0 };
+    }
+    
+    let successCount = 0;
+    let failedCount = 0;
+    let skippedCount = 0;
+    
+    console.log(`Starting download of questions for ${quizAssessments.length} quiz/exam assessments`);
+    
+    for (let i = 0; i < quizAssessments.length; i++) {
+      const assessment = quizAssessments[i];
+      
+      try {
+        if (onProgress) {
+          onProgress(i + 1, quizAssessments.length, skippedCount);
+        }
+        
+        // Check if questions are already saved
+        const hasQuestions = await hasQuizQuestionsSaved(assessment.id, userEmail);
+        if (hasQuestions) {
+          console.log(`Quiz questions for assessment ${assessment.id} already saved, skipping`);
+          skippedCount++;
+          continue;
+        }
+        
+        // Fetch quiz questions from API
+        const response = await apiInstance.get(`/assessments/${assessment.id}/questions`);
+        
+        if (response.status === 200 && response.data?.questions) {
+          await saveQuizQuestionsToDb(assessment.id, userEmail, response.data.questions);
+          successCount++;
+          console.log(`Downloaded questions for assessment ${assessment.id}`);
+        } else {
+          console.warn(`No questions found for assessment ${assessment.id}`);
+          failedCount++;
+        }
+        
+      } catch (error) {
+        console.error(`Failed to download questions for assessment ${assessment.id}:`, error);
+        failedCount++;
+      }
+    }
+    
+    console.log(`Quiz questions download completed: ${successCount} successful, ${failedCount} failed, ${skippedCount} skipped`);
+    return { success: successCount, failed: failedCount, skipped: skippedCount };
+    
+  } catch (error) {
+    console.error('Quiz questions download failed:', error);
+    throw error;
+  }
+};
+
+export const startOfflineQuiz = async (assessmentId: number, userEmail: string): Promise < void > => {
+  try {
+    await initDb();
+    const db = await getDb();
+
+    // Check if an attempt for this quiz already exists
+    const existingAttempt = await db.getFirstAsync(
+      `SELECT * FROM offline_quiz_attempts WHERE assessment_id = ? AND user_email = ? AND is_completed = 0;`,
+      [assessmentId, userEmail]
     );
 
-    console.log(`✅ Saved quiz questions for assessment ${assessmentId}`);
+    if (existingAttempt) {
+      console.log(`Quiz attempt for assessment ${assessmentId} by ${userEmail} is already in progress.`);
+      return;
+    }
+
+    // Create a new entry in offline_quiz_attempts table
+    await db.runAsync(
+      `INSERT INTO offline_quiz_attempts (assessment_id, user_email, start_time, answers, is_completed)
+       VALUES (?, ?, ?, ?, ?);`,
+      [
+        assessmentId,
+        userEmail,
+        new Date().toISOString(), // Store the start time
+        JSON.stringify({}), // Initialize with an empty JSON object for answers
+        0 // 0 for incomplete
+      ]
+    );
+
+    console.log(`✅ Started offline quiz for assessment ${assessmentId}.`);
   } catch (error) {
-    console.error('❌ Failed to save quiz questions to local DB:', error);
+    console.error(`❌ Failed to start offline quiz for assessment ${assessmentId}:`, error);
+    throw error;
+  }
+};
+
+export const getOfflineQuizAnswers = async (assessmentId: number, userEmail: string): Promise < any > => {
+  try {
+    await initDb();
+    const db = await getDb();
+    const result = await db.getFirstAsync(
+      `SELECT answers FROM offline_quiz_attempts WHERE assessment_id = ? AND user_email = ?;`,
+      [assessmentId, userEmail]
+    );
+    if (result && result.answers) {
+      return JSON.parse(result.answers);
+    }
+    return {};
+  } catch (error) {
+    console.error('❌ Failed to retrieve offline quiz answers:', error);
+    return {};
+  }
+};
+
+export const updateOfflineQuizAnswers = async (assessmentId: number, userEmail: string, answers: any): Promise < void > => {
+  try {
+    await initDb();
+    const db = await getDb();
+    await db.runAsync(
+      `UPDATE offline_quiz_attempts SET answers = ? WHERE assessment_id = ? AND user_email = ?;`,
+      [
+        JSON.stringify(answers),
+        assessmentId,
+        userEmail
+      ]
+    );
+    console.log(`✅ Updated answers for offline quiz ${assessmentId}.`);
+  } catch (error) {
+    console.error('❌ Failed to update offline quiz answers:', error);
+    throw error;
+  }
+};
+
+export const getOfflineQuizAttemptStatus = async (assessmentId: number, userEmail: string): Promise < string > => {
+  try {
+    await initDb();
+    const db = await getDb();
+    const result = await db.getFirstAsync(
+      `SELECT is_completed FROM offline_quiz_attempts WHERE assessment_id = ? AND user_email = ?;`,
+      [assessmentId, userEmail]
+    );
+    if (result === undefined) {
+      return 'not_started';
+    } else if (result.is_completed === 0) {
+      return 'in_progress';
+    } else {
+      return 'completed';
+    }
+  } catch (error) {
+    console.error('❌ Failed to get quiz attempt status:', error);
+    return 'error';
+  }
+};
+
+export const submitOfflineQuiz = async (assessmentId: number, userEmail: string, answers: any): Promise < void > => {
+  try {
+    await initDb();
+    const db = await getDb();
+    await db.withTransactionAsync(async () => {
+      // First, update the answers
+      await updateOfflineQuizAnswers(assessmentId, userEmail, answers);
+
+      // Then, mark the attempt as completed
+      await db.runAsync(
+        `UPDATE offline_quiz_attempts SET is_completed = 1, end_time = ? WHERE assessment_id = ? AND user_email = ?;`,
+        [new Date().toISOString(), assessmentId, userEmail]
+      );
+    });
+    console.log(`✅ Submitted offline quiz for assessment ${assessmentId}.`);
+  } catch (error) {
+    console.error(`❌ Failed to submit offline quiz for assessment ${assessmentId}:`, error);
     throw error;
   }
 };
 
 
-export const getQuizQuestionsFromDb = async (assessmentId: number, userEmail: string): Promise<any | null> => {
+export const getCompletedOfflineQuizzes = async (userEmail: string): Promise<any[]> => {
   try {
+    await initDb();
     const db = await getDb();
-    const result = await db.getFirstAsync(
-      `SELECT questions_data FROM offline_quiz_data WHERE assessment_id = ? AND user_email = ?;`,
-      [assessmentId, userEmail]
+    console.log(`ðŸ”§ Fetching completed offline quizzes for user: ${userEmail}`);
+
+    const result = await db.getAllAsync(
+      `SELECT * FROM offline_quiz_attempts WHERE user_email = ? AND is_completed = 1;`,
+      [userEmail]
     );
 
-    if (result && result.questions_data) {
-      return JSON.parse(result.questions_data);
-    }
-    return null;
+    console.log(`âœ… Found ${result.length} completed offline quiz attempts.`);
+    return result;
   } catch (error) {
-
-    console.error('❌ Failed to retrieve quiz questions from local DB:', error);
-    return null;
+    console.error('â Œ Failed to get completed offline quiz attempts:', error);
+    throw error;
   }
 };
 
-export const saveQuizAttempt = async (
-  userEmail: string,
-  assessmentId: number,
-  assessmentData: any,
-  questionsData: any
-  ): Promise<void> => {
-    try {
-      await initDb();
-      const db = await getDb();
-      const status = 'in progress';
-      const startTime = new Date().toISOString();
+export const deleteOfflineQuizAttempt = async (attemptId: number): Promise<void> => {
+  try {
+    await initDb();
+    const db = await getDb();
+    console.log(`ðŸ”§ Deleting synced offline quiz attempt with ID: ${attemptId}`);
 
-      console.log('ðŸ“¾ Saving quiz attempt to local DB for user:', userEmail, 'and assessment:', assessmentId);
-
-      // Prepare data for insertion
-      const assessmentDataString = JSON.stringify(assessmentData);
-      const questionsDataString = JSON.stringify(questionsData);
-
-      // Insert or replace the quiz attempt record
-
-      await db.runAsync(
-        `INSERT OR REPLACE INTO offline_quiz_attempts
-        (user_email, assessment_id, status, assessment_data, questions_data, start_time)
-        VALUES (?, ?, ?, ?, ?, ?);`,
-        [userEmail, assessmentId, status, assessmentDataString, questionsDataString, startTime]
+    await db.runAsync(
+      `DELETE FROM offline_quiz_attempts WHERE attempt_id = ?;`,
+      [attemptId]
     );
-    console.log('âœ… Quiz attempt saved successfully.');
 
-    } catch (error) {
-      console.error('â Œ Failed to save quiz attempt:', error);
-      throw error;
-    }
+    console.log(`âœ… Successfully deleted offline quiz attempt with ID: ${attemptId}`);
+  } catch (error) {
+    console.error(`â Œ Failed to delete offline quiz attempt with ID ${attemptId}:`, error);
+    throw error;
+  }
 };
-
 
 
 

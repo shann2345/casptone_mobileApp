@@ -3,7 +3,7 @@ import { router } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
 import { detectTimeManipulation } from './localDb';
 
-export const API_BASE_URL = 'http://172.16.186.92:8000/api'; // Or your actual IP/domain
+export const API_BASE_URL = 'http://192.168.1.29:8000/api'; // Or your actual IP/domain
 
 let lastTimeCheckTimestamp = 0;
 const TIME_CHECK_THROTTLE = 60000; // Only check time manipulation every 60 seconds
@@ -272,6 +272,29 @@ export const syncOfflineSubmission = async (assessmentId: number, fileUri: strin
     }
   } catch (err: any) {
     console.error(`❌ Error syncing offline submission for assessment ${assessmentId}:`, err.response?.data || err.message);
+    return false;
+  }
+};
+
+
+export const syncOfflineQuiz = async (assessmentId: number, answers: string, startTime: string, endTime: string): Promise<boolean> => {
+  try {
+    console.log(`ðŸ”§ Attempting to sync offline quiz for assessment ID: ${assessmentId}`);
+    const response = await api.post(`/assessments/${assessmentId}/sync-offline-quiz`, {
+      answers,
+      started_at: startTime,
+      completed_at: endTime,
+    });
+
+    if (response.status === 200) {
+      console.log(`âœ… Sync successful for quiz ${assessmentId}`);
+      return true;
+    } else {
+      console.error(`â Œ Sync failed for quiz ${assessmentId}:`, response.data.message);
+      return false;
+    }
+  } catch (error) {
+    console.error(`â Œ Error syncing offline quiz for assessment ${assessmentId}:`, error);
     return false;
   }
 };

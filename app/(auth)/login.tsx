@@ -99,17 +99,14 @@ export default function LoginScreen() {
     }
   };
 
-  // --- MODIFIED FUNCTION: handleLogin ---
   const handleLogin = async () => {
-    // New logic: Check network status before attempting login.
-    if (!isConnected) {
-        Alert.alert(
-            "No Network Connection",
-            "You must be connected to the internet to log in for the first time or to restore your session."
-        );
-        return;
+    if (!netInfo?.isInternetReachable) {
+      Alert.alert(
+        "No Network Connection",
+        "You must be connected to the internet to log in for the first time or to restore your session."
+      );
+      return;
     }
-
     setLoading(true);
     setErrors({});
 
@@ -119,11 +116,18 @@ export default function LoginScreen() {
       await storeAuthToken(token);
       await storeUserData(user);
 
-      // ✅ NEW: Reset time check data on successful login
-      await resetTimeCheckData(user.email); 
+      // After successful login and token storage, check verification status.
+      const verificationResponse = await api.get('/user/verification-status');
+      const isVerified = verificationResponse.data.is_verified;
 
-      Alert.alert('Success', 'Logged in successfully!');
-      router.replace('/(app)');
+      if (isVerified) {
+        Alert.alert('Success', 'Logged in successfully!');
+        await resetTimeCheckData(user.email);
+        router.replace('/(app)');
+      } else {
+        Alert.alert('Pending Verification', 'Please check your email to verify your account.');
+        router.replace('/verify-notice');
+      }
     } catch (err: any) {
       console.error('Login error:', err.response?.data || err.message);
       if (err.response && err.response.data && err.response.data.errors) {
@@ -206,7 +210,7 @@ export default function LoginScreen() {
               <TouchableOpacity onPress={() => router.push('/forgot-password')}>
                 <Text style={styles.linkText}>Forgot password?</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => router.push('/register')}>
+              <TouchableOpacity onPress={() => router.push('/signup')}>
                 <Text style={styles.linkText}>Don't have an account? Sign Up</Text>
               </TouchableOpacity>
             </>
