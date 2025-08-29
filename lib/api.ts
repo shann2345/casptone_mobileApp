@@ -3,7 +3,7 @@ import { router } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
 import { detectTimeManipulation } from './localDb';
 
-export const API_BASE_URL = 'http://192.168.1.29:8000/api'; // Or your actual IP/domain
+export const API_BASE_URL = 'http://192.168.1.4:8000/api'; // Or your actual IP/domain
 
 let lastTimeCheckTimestamp = 0;
 const TIME_CHECK_THROTTLE = 60000; // Only check time manipulation every 60 seconds
