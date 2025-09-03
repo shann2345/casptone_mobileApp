@@ -11,7 +11,7 @@ import {
   View,
 } from 'react-native';
 import { useNetworkStatus } from '../../../../../context/NetworkContext';
-import api, { getUserData } from '../../../../../lib/api';
+import api, { getUserData, syncOfflineQuiz } from '../../../../../lib/api';
 import { getOfflineQuizAnswers, getOfflineQuizAttemptStatus, getQuizQuestionsFromDb, submitOfflineQuiz, updateOfflineQuizAnswers } from '../../../../../lib/localDb';
 
 interface SubmittedOption {
@@ -78,6 +78,7 @@ export default function AttemptQuizScreen() {
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
   const [timerInterval, setTimerInterval] = useState<ReturnType<typeof setTimeout> | null>(null);
   const [savingAnswers, setSavingAnswers] = useState<Set<number>>(new Set());
+  const [submitting, setSubmitting] = useState(false);
   const debounceTimers = useRef<{ [key: number]: ReturnType<typeof setTimeout> | null }>({});
   const studentAnswersRef = useRef<StudentAnswers>(studentAnswers);
 
@@ -132,135 +133,133 @@ export default function AttemptQuizScreen() {
     }
   }, [submittedAssessment]);
 
-  // Replace the fetchQuizData function's offline mode section with this:
+  const fetchQuizData = async (id: number) => {
+    setLoading(true);
+    setError(null);
+    const user = await getUserData();
+    const userEmail = user?.email;
 
-const fetchQuizData = async (id: number) => {
-  setLoading(true);
-  setError(null);
-  const user = await getUserData();
-  const userEmail = user?.email;
+    if (!userEmail) {
+      setError('User not logged in.');
+      setLoading(false);
+      return;
+    }
 
-  if (!userEmail) {
-    setError('User not logged in.');
-    setLoading(false);
-    return;
-  }
-
-  try {
-    if (isOffline === 'true') {
-      // OFFLINE MODE - Fetch from local DB
-      console.log("Offline: Fetching quiz attempt from local DB.");
-      
-      const localQuestions = await getQuizQuestionsFromDb(id, userEmail);
-      const localAnswers = await getOfflineQuizAnswers(id, userEmail);
-      const attemptStatusString = await getOfflineQuizAttemptStatus(id, userEmail);
-      const isCompleted = attemptStatusString === 'completed' || attemptStatusString === 'error';
-      
-      if (localQuestions.length > 0) {
-        // Safely process questions with proper options parsing
-        const processedQuestions = localQuestions.map(q => {
-          let parsedOptions: any[] = [];
-          
-          // Safe options parsing
-          if (q.options) {
-            try {
-              if (typeof q.options === 'string') {
-                // Check if string looks like JSON before parsing
-                const trimmed = q.options.trim();
-                if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
-                  parsedOptions = JSON.parse(q.options);
-                } else {
-                  console.warn(`Question ${q.id} has non-JSON options string:`, q.options);
-                  parsedOptions = [];
-                }
-              } else if (Array.isArray(q.options)) {
-                parsedOptions = q.options;
-              } else if (typeof q.options === 'object' && q.options !== null) {
-                parsedOptions = Object.values(q.options);
-              }
-            } catch (e) {
-              console.error('Failed to parse options for question', q.id, 'Error:', e);
-              console.error('Problematic options value:', q.options);
-              parsedOptions = [];
-            }
-          }
-          
-          return {
-            id: q.id,
-            submitted_assessment_id: id,
-            question_id: q.id,
-            question_text: q.question_text || q.question || '',
-            question_type: q.question_type || q.type || 'essay',
-            max_points: q.points || 1,
-            submitted_answer: localAnswers[q.id]?.answer as string || null,
-            is_correct: null,
-            score_earned: null,
-            submitted_options: parsedOptions.map((option, index) => ({
-              id: option.id || index,
-              submitted_question_id: q.id,
-              question_option_id: option.id || option.question_option_id || index,
-              option_text: option.text || option.option_text || option.toString(),
-              is_correct_option: option.is_correct || false,
-              is_selected: false
-            }))
-          };
-        });
-
-        const offlineSubmittedAssessment: SubmittedAssessmentData = {
-          id: id,
-          assessment_id: id,
-          student_id: -1,
-          score: null,
-          status: isCompleted ? 'completed' : 'in_progress',
-          started_at: new Date().toISOString(),
-          completed_at: isCompleted ? new Date().toISOString() : null,
-          submitted_file_path: null,
-          submitted_questions: processedQuestions,
-          assessment: {
-            id: id,
-            course_id: -1,
-            title: 'Offline Quiz',
-            type: 'quiz',
-            points: processedQuestions.reduce((sum, q) => sum + q.max_points, 0),
-          }
-        };
+    try {
+      if (isOffline === 'true') {
+        // OFFLINE MODE - Fetch from local DB
+        console.log("Offline: Fetching quiz attempt from local DB.");
         
-        setSubmittedAssessment(offlineSubmittedAssessment);
-        initializeStudentAnswers(processedQuestions);
-        console.log("Offline Quiz Data Loaded Successfully.");
+        const localQuestions = await getQuizQuestionsFromDb(id, userEmail);
+        const localAnswers = await getOfflineQuizAnswers(id, userEmail);
+        const attemptStatusString = await getOfflineQuizAttemptStatus(id, userEmail);
+        const isCompleted = attemptStatusString === 'completed' || attemptStatusString === 'error';
+        
+        if (localQuestions.length > 0) {
+          // Safely process questions with proper options parsing
+          const processedQuestions = localQuestions.map(q => {
+            let parsedOptions: any[] = [];
+            
+            // Safe options parsing
+            if (q.options) {
+              try {
+                if (typeof q.options === 'string') {
+                  // Check if string looks like JSON before parsing
+                  const trimmed = q.options.trim();
+                  if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+                    parsedOptions = JSON.parse(q.options);
+                  } else {
+                    console.warn(`Question ${q.id} has non-JSON options string:`, q.options);
+                    parsedOptions = [];
+                  }
+                } else if (Array.isArray(q.options)) {
+                  parsedOptions = q.options;
+                } else if (typeof q.options === 'object' && q.options !== null) {
+                  parsedOptions = Object.values(q.options);
+                }
+              } catch (e) {
+                console.error('Failed to parse options for question', q.id, 'Error:', e);
+                console.error('Problematic options value:', q.options);
+                parsedOptions = [];
+              }
+            }
+            
+            return {
+              id: q.id,
+              submitted_assessment_id: id,
+              question_id: q.id,
+              question_text: q.question_text || q.question || '',
+              question_type: q.question_type || q.type || 'essay',
+              max_points: q.points || 1,
+              submitted_answer: localAnswers[q.id]?.answer as string || null,
+              is_correct: null,
+              score_earned: null,
+              submitted_options: parsedOptions.map((option, index) => ({
+                id: option.id || index,
+                submitted_question_id: q.id,
+                question_option_id: option.id || option.question_option_id || index,
+                option_text: option.text || option.option_text || option.toString(),
+                is_correct_option: option.is_correct || false,
+                is_selected: false
+              }))
+            };
+          });
+
+          const offlineSubmittedAssessment: SubmittedAssessmentData = {
+            id: id,
+            assessment_id: id,
+            student_id: -1,
+            score: null,
+            status: isCompleted ? 'completed' : 'in_progress',
+            started_at: new Date().toISOString(),
+            completed_at: isCompleted ? new Date().toISOString() : null,
+            submitted_file_path: null,
+            submitted_questions: processedQuestions,
+            assessment: {
+              id: id,
+              course_id: -1,
+              title: 'Offline Quiz',
+              type: 'quiz',
+              points: processedQuestions.reduce((sum, q) => sum + q.max_points, 0),
+            }
+          };
+          
+          setSubmittedAssessment(offlineSubmittedAssessment);
+          initializeStudentAnswers(processedQuestions);
+          console.log("Offline Quiz Data Loaded Successfully.");
+        } else {
+          setError('Offline: Quiz questions not found locally. Please start the quiz first while online.');
+          Alert.alert(
+            'Quiz Not Found',
+            'This quiz attempt was not found in local storage. Please connect to the internet and start the quiz again.',
+            [{ text: 'OK', onPress: () => router.back() }]
+          );
+        }
       } else {
-        setError('Offline: Quiz questions not found locally. Please start the quiz first while online.');
-        Alert.alert(
-          'Quiz Not Found',
-          'This quiz attempt was not found in local storage. Please connect to the internet and start the quiz again.',
-          [{ text: 'OK', onPress: () => router.back() }]
-        );
+        // ONLINE MODE - existing logic remains the same
+        console.log("Online: Fetching submitted quiz details from API.");
+        const response = await api.get(`/submitted-assessments/${id}`);
+        if (response.status === 200) {
+          const fetchedSubmittedAssessment = response.data.submitted_assessment;
+          setSubmittedAssessment(fetchedSubmittedAssessment);
+          initializeStudentAnswers(fetchedSubmittedAssessment.submitted_questions);
+          console.log("API Response for Submitted Quiz Details:", JSON.stringify(response.data, null, 2));
+        } else {
+          setError(response.data?.message || 'Failed to fetch submitted quiz details.');
+        }
       }
-    } else {
-      // ONLINE MODE - existing logic remains the same
-      console.log("Online: Fetching submitted quiz details from API.");
-      const response = await api.get(`/submitted-assessments/${id}`);
-      if (response.status === 200) {
-        const fetchedSubmittedAssessment = response.data.submitted_assessment;
-        setSubmittedAssessment(fetchedSubmittedAssessment);
-        initializeStudentAnswers(fetchedSubmittedAssessment.submitted_questions);
-        console.log("API Response for Submitted Quiz Details:", JSON.stringify(response.data, null, 2));
+    } catch (err: any) {
+      console.error("Error fetching quiz details:", err.response?.data || err);
+      if (isOffline === 'true') {
+        setError('Failed to load offline quiz data.');
+        Alert.alert('Error', 'Failed to load quiz from local storage.');
       } else {
-        setError(response.data?.message || 'Failed to fetch submitted quiz details.');
+        setError(err.response?.data?.message || 'An unexpected error occurred while fetching quiz details.');
       }
+    } finally {
+      setLoading(false);
     }
-  } catch (err: any) {
-    console.error("Error fetching quiz details:", err.response?.data || err);
-    if (isOffline === 'true') {
-      setError('Failed to load offline quiz data.');
-      Alert.alert('Error', 'Failed to load quiz from local storage.');
-    } else {
-      setError(err.response?.data?.message || 'An unexpected error occurred while fetching quiz details.');
-    }
-  } finally {
-    setLoading(false);
-  }
-};
+  };
 
   const initializeStudentAnswers = (questions: SubmittedQuestion[]) => {
     const initialAnswers: StudentAnswers = {};
@@ -274,6 +273,21 @@ const fetchQuizData = async (id: number) => {
     });
     setStudentAnswers(initialAnswers);
   };
+
+  // Add this useEffect hook to your component to attempt sync when connection is restored
+  useEffect(() => {
+    let mounted = true;
+    
+    // Check for connection and sync if online
+    if (isConnected && isOffline === 'true' && mounted) {
+      console.log('🔄 Connection restored, attempting to sync offline quizzes...');
+      syncCompletedOfflineQuiz();
+    }
+    
+    return () => {
+      mounted = false;
+    };
+  }, [isConnected]);
 
   const saveAnswer = async (submittedQuestionId: number) => {
     const answerData = studentAnswersRef.current[submittedQuestionId];
@@ -347,88 +361,149 @@ const fetchQuizData = async (id: number) => {
     }, 1000);
   };
 
+  // Add this function to the component to sync completed offline quizzes
+  const syncCompletedOfflineQuiz = async () => {
+    if (!isConnected || !submittedAssessment || !assessmentId) return;
+    
+    try {
+      // Check if this is an offline quiz that needs syncing
+      if (isOffline === 'true' && submittedAssessment.status === 'completed') {
+        console.log('🔄 Attempting to sync completed offline quiz...');
+        setSavingAnswers(new Set([...Array.from(savingAnswers), -1])); // Use -1 as special ID for full submission
+        
+        // Format the answers from our state
+        const answersJson = JSON.stringify(studentAnswers);
+        
+        // Get start and end times
+        const startTime = submittedAssessment.started_at;
+        const endTime = submittedAssessment.completed_at || new Date().toISOString();
+        
+        // Attempt to sync with server
+        const syncSuccess = await syncOfflineQuiz(
+          parseInt(assessmentId as string),
+          answersJson,
+          startTime,
+          endTime
+        );
+        
+        if (syncSuccess) {
+          console.log('✅ Offline quiz successfully synced with server');
+          // Update local status or navigate away
+          router.replace(`/courses/${submittedAssessment.assessment.course_id}/assessments/${assessmentId}`);
+        } else {
+          console.error('❌ Failed to sync offline quiz');
+        }
+        
+        // Remove from saving state
+        setSavingAnswers(prevState => {
+          const newSet = new Set(prevState);
+          newSet.delete(-1);
+          return newSet;
+        });
+      }
+    } catch (error) {
+      console.error('Error syncing completed offline quiz:', error);
+      setSavingAnswers(prevState => {
+        const newSet = new Set(prevState);
+        newSet.delete(-1);
+        return newSet;
+      });
+    }
+  };
+
+  // Add this effect to automatically sync when connection is restored
+  useEffect(() => {
+    if (isConnected && isOffline === 'true' && submittedAssessment?.status === 'completed') {
+      syncCompletedOfflineQuiz();
+    }
+  }, [isConnected, submittedAssessment?.status]);
 
   const handleFinalizeQuiz = async () => {
-    if (!submittedAssessment) {
-      Alert.alert('Error', 'Quiz data not loaded.');
-      return;
-    }
-    
-    Alert.alert(
-      'Confirm Submission',
-      'Are you sure you want to finalize and submit your quiz? This action cannot be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Submit',
-          onPress: async () => {
-            setLoading(true);
-            if (timerInterval) clearInterval(timerInterval);
+    try {
+      setSubmitting(true);
+      
+      if (isOffline === 'true') {
+        // OFFLINE MODE - Save to local DB
+        console.log('Submitting offline quiz...');
+        
+        const formattedAnswers: StudentAnswers = {};
+        
+        for (const questionId in studentAnswers) {
+          const answerData = studentAnswers[questionId];
+          const question = submittedAssessment?.submitted_questions?.find(
+            q => q.id.toString() === questionId
+          );
 
-            try {
-              if (isConnected && isOffline !== 'true') {
-                // ONLINE MODE - existing logic remains the same
-                const pendingAnswers = Object.keys(studentAnswers)
-                  .filter(key => studentAnswers[parseInt(key)].isDirty)
-                  .map(key => parseInt(key));
+          if (!question) continue;
 
-                for (const submittedQuestionId of pendingAnswers) {
-                  await saveAnswer(submittedQuestionId);
-                }
+          let isCorrect: boolean | null = null;
+          let scoreEarned: number | null = 0;
+          let submittedAnswerText: string | null = null;
 
-                const response = await api.post(`/submitted-assessments/${submittedAssessment.id}/finalize-quiz`);
+          if (question.question_type === 'multiple_choice' || question.question_type === 'true_false') {
+            const selectedOptionIds = new Set(Array.isArray(answerData.answer) ? answerData.answer : [answerData.answer]);
+            const correctOptionIds = new Set(question.submitted_options?.filter(o => o.is_correct_option).map(o => o.question_option_id));
+            
+            isCorrect = selectedOptionIds.size === correctOptionIds.size && [...selectedOptionIds].every(id => correctOptionIds.has(id));
+            scoreEarned = isCorrect ? question.max_points : 0;
 
-                if (response.status === 200) {
-                  Alert.alert('Success', 'Quiz submitted successfully!', [
-                    {
-                      text: 'OK',
-                      onPress: () => router.replace(`/courses/assessments/${submittedAssessment.assessment_id}`)
-                    }
-                  ]);
-                } else {
-                  Alert.alert('Submission Failed', response.data?.message || 'Could not submit quiz.');
-                }
-              } else {
-                // OFFLINE MODE - Complete the quiz attempt locally
-                const user = await getUserData();
-                if (!user || !user.email) {
-                  throw new Error('User data not available for offline submission.');
-                }
-                
-                // Save any pending answers first
-                const pendingAnswers = Object.keys(studentAnswers)
-                  .filter(key => studentAnswers[parseInt(key)].isDirty)
-                  .map(key => parseInt(key));
+            const firstSelectedOption = question.submitted_options?.find(o => selectedOptionIds.has(o.question_option_id));
+            submittedAnswerText = firstSelectedOption?.option_text || null;
 
-                for (const submittedQuestionId of pendingAnswers) {
-                  await saveAnswer(submittedQuestionId);
-                }
-                
-                // Mark the quiz as completed with final answers and completion time
-                await submitOfflineQuiz(submittedAssessment.assessment_id, user.email, studentAnswers);
-                
-                Alert.alert(
-                  'Offline Submission', 
-                  'Your quiz has been completed and saved locally. It will be synced when you are online.',
-                  [
-                    {
-                      text: 'OK',
-                      onPress: () => router.replace(`/courses/assessments/${submittedAssessment.assessment_id}`)
-                    }
-                  ]
-                );
-              }
-            } catch (err: any) {
-              console.error('Quiz submission error:', err.response?.data || err);
-              Alert.alert('Submission Failed', err.response?.data?.message || 'An error occurred during submission.');
-            } finally {
-              setLoading(false);
+          } else if (question.question_type === 'identification') {
+            const correctOption = question.submitted_options?.[0];
+            submittedAnswerText = answerData.answer as string;
+            if (correctOption) {
+              isCorrect = (submittedAnswerText || '').trim().toLowerCase() === (correctOption.option_text || '').trim().toLowerCase();
+              scoreEarned = isCorrect ? question.max_points : 0;
             }
-          },
-        },
-      ],
-      { cancelable: true }
-    );
+          } else { // Essay
+            submittedAnswerText = answerData.answer as string;
+            isCorrect = null;
+            scoreEarned = null;
+          }
+
+          formattedAnswers[questionId] = {
+            ...answerData,
+            submitted_answer: submittedAnswerText,
+            is_correct: isCorrect,
+            score_earned: scoreEarned,
+          };
+        }
+        
+        // *** FIX: Update the component's state with the formatted answers ***
+        setStudentAnswers(formattedAnswers);
+        
+        const user = await getUserData();
+        if (user?.email && assessmentId) {
+          await submitOfflineQuiz(parseInt(assessmentId as string), user.email, formattedAnswers);
+          
+          setSubmittedAssessment(prev => prev ? { ...prev, status: 'completed', completed_at: new Date().toISOString() } : null);
+          
+          Alert.alert(
+            'Quiz Submitted Offline',
+            'Your quiz has been saved locally. It will be synced with the server when you are back online.',
+            [{ text: 'OK' }]
+          );
+        }
+      } else {
+        // ONLINE MODE
+        const response = await api.post(`/submitted-assessments/${submittedAssessmentId}/finalize-quiz`);
+        if (response.status === 200) {
+          Alert.alert('Quiz Submitted!', 'Your quiz has been successfully submitted.', [
+            { text: 'OK', onPress: () => router.back() }
+          ]);
+          fetchQuizData(Number(submittedAssessmentId));
+        } else {
+          Alert.alert('Error', 'There was a problem submitting your quiz.');
+        }
+      }
+    } catch (error) {
+      console.error('Error submitting quiz:', error);
+      Alert.alert('Error', 'Failed to submit quiz. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const formatTime = (totalSeconds: number | null) => {

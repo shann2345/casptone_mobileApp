@@ -276,26 +276,72 @@ export const syncOfflineSubmission = async (assessmentId: number, fileUri: strin
   }
 };
 
-
 export const syncOfflineQuiz = async (assessmentId: number, answers: string, startTime: string, endTime: string): Promise<boolean> => {
   try {
-    console.log(`ðŸ”§ Attempting to sync offline quiz for assessment ID: ${assessmentId}`);
+    console.log(`🔄 Attempting to sync offline quiz for assessment ID: ${assessmentId}`);
+    
+    // Format the answers for sending to server
+    const formattedAnswers = formatAnswersForSync(answers);
+    
+    console.log(`📤 Sending formatted answers to server:`, formattedAnswers);
+    
     const response = await api.post(`/assessments/${assessmentId}/sync-offline-quiz`, {
-      answers,
+      answers: formattedAnswers,
       started_at: startTime,
       completed_at: endTime,
+      submitted_at: endTime, // Make sure to include this for the server
     });
-
+    
     if (response.status === 200) {
-      console.log(`âœ… Sync successful for quiz ${assessmentId}`);
+      console.log(`✅ Successfully synced offline quiz for assessment ${assessmentId}`);
+      console.log(`🏆 Score: ${response.data.score}, Passed: ${response.data.is_passed}`);
       return true;
     } else {
-      console.error(`â Œ Sync failed for quiz ${assessmentId}:`, response.data.message);
+      console.warn(`⚠️ Unexpected response when syncing quiz: ${response.status}`);
       return false;
     }
-  } catch (error) {
-    console.error(`â Œ Error syncing offline quiz for assessment ${assessmentId}:`, error);
+  } catch (error: any) {
+    console.error(`❌ Error syncing offline quiz for assessment ${assessmentId}:`, error.response?.data || error.message);
     return false;
+  }
+};
+
+const formatAnswersForSync = (answersJson: string): any[] => {
+  try {
+    const answers = typeof answersJson === 'string' 
+      ? JSON.parse(answersJson) 
+      : answersJson;
+    
+    const formattedAnswers = Object.keys(answers).map(questionId => {
+      const questionData = answers[questionId];
+
+      let selectedOptions: number[] = [];
+      if (questionData.type === 'multiple_choice' || questionData.type === 'true_false') {
+        if (Array.isArray(questionData.answer)) {
+          selectedOptions = questionData.answer.map(optId => 
+            typeof optId === 'string' ? parseInt(optId) : optId
+          );
+        } else if (questionData.answer !== undefined && questionData.answer !== null) {
+          selectedOptions = [typeof questionData.answer === 'string' 
+            ? parseInt(questionData.answer) 
+            : questionData.answer];
+        }
+      }
+
+      return {
+        question_id: parseInt(questionId),
+        question_type: questionData.type,
+        submitted_answer: questionData.submitted_answer, // Use the pre-formatted text
+        selected_options: selectedOptions,
+        is_correct: questionData.is_correct,
+        score_earned: questionData.score_earned
+      };
+    });
+    
+    return formattedAnswers;
+  } catch (e) {
+    console.error('Error formatting answers for sync:', e);
+    return [];
   }
 };
 

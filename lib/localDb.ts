@@ -5,6 +5,15 @@ import { Platform } from 'react-native';
 const DB_NAME = 'multiuser.db';
 const dbDirectory = `${FileSystem.documentDirectory}SQLite`;
 
+// Add this type definition near the top of your file
+type StudentAnswers = {
+  [questionId: number]: {
+    type: 'multiple_choice' | 'true_false' | 'essay' | 'identification';
+    answer: string | number[];
+    isDirty?: boolean;
+  };
+};
+
 // Global database instance
 let dbInstance: SQLite.SQLiteDatabase | null = null;
 let dbInitialized = false;
@@ -49,177 +58,118 @@ export const getDb = async (): Promise<SQLite.SQLiteDatabase> => {
 
 export const initDb = async (): Promise<void> => {
   if (dbInitialized && dbInstance) {
-    console.log('âœ… Database already initialized');
+    console.log('✅ Database already initialized');
     return;
   }
   if (initializationPromise) {
-    console.log('â³ Database initialization in progress, waiting...');
+    console.log('⏳ Database initialization in progress, waiting...');
     await initializationPromise;
     return;
   }
   initializationPromise = (async () => {
     try {
-      console.log('ðŸ”§ Initializing database...');
+      console.log('🚀 Initializing database...');
       const db = await getDb();
 
-      // COURSES
+      // --- Existing table creations ---
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_courses (
-          id INTEGER PRIMARY KEY NOT NULL,
-          user_email TEXT NOT NULL,
-          title TEXT NOT NULL,
-          course_code TEXT,
-          description TEXT,
-          program_id INTEGER,
-          program_name TEXT,
-          instructor_id INTEGER,
-          instructor_name TEXT,
-          status TEXT,
-          enrollment_date TEXT NOT NULL
+          id INTEGER PRIMARY KEY NOT NULL, user_email TEXT NOT NULL, title TEXT NOT NULL, course_code TEXT, description TEXT, program_id INTEGER, program_name TEXT, instructor_id INTEGER, instructor_name TEXT, status TEXT, enrollment_date TEXT NOT NULL
         );`
       );
-      // COURSES DETAILS
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_course_details (
-          course_id INTEGER NOT NULL,
-          user_email TEXT NOT NULL,
-          course_data TEXT NOT NULL,
-          PRIMARY KEY (course_id, user_email)
+          course_id INTEGER NOT NULL, user_email TEXT NOT NULL, course_data TEXT NOT NULL, PRIMARY KEY (course_id, user_email)
         );`
       );
-
-      // COURSES MATERIALS
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_materials (
-          id INTEGER PRIMARY KEY NOT NULL,
-          user_email TEXT NOT NULL,
-          course_id INTEGER NOT NULL,
-          title TEXT NOT NULL,
-          file_path TEXT,
-          content TEXT,
-          material_type TEXT,
-          created_at TEXT,
-          available_at TEXT,
-          unavailable_at TEXT,
-          material_data TEXT NOT NULL,
+          id INTEGER PRIMARY KEY NOT NULL, user_email TEXT NOT NULL, course_id INTEGER NOT NULL, title TEXT NOT NULL, file_path TEXT, content TEXT, material_type TEXT, created_at TEXT, available_at TEXT, unavailable_at TEXT, material_data TEXT NOT NULL,
           FOREIGN KEY (course_id, user_email) REFERENCES offline_course_details(course_id, user_email) ON DELETE CASCADE
         );`
       );
-
-      // COURSES ASSESSMENTS
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_assessments (
-          id INTEGER PRIMARY KEY NOT NULL,
-          user_email TEXT NOT NULL,
-          course_id INTEGER NOT NULL,
-          title TEXT NOT NULL,
-          due_date TEXT NOT NULL,
-          description TEXT,
-          type TEXT,
-          assessment_file_path TEXT,
-          assessment_file_url TEXT,
-          assessment_data TEXT NOT NULL,
+          id INTEGER PRIMARY KEY NOT NULL, user_email TEXT NOT NULL, course_id INTEGER NOT NULL, title TEXT NOT NULL, description TEXT, type TEXT, assessment_file_path TEXT, assessment_file_url TEXT, assessment_data TEXT NOT NULL,
           FOREIGN KEY (course_id, user_email) REFERENCES offline_course_details(course_id, user_email) ON DELETE CASCADE
         );`
       );
-      
-      // COURSES ASSESSMENTS OTHER DETAILS
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_assessment_data (
-          assessment_id INTEGER NOT NULL,
-          user_email TEXT NOT NULL,
-          data TEXT NOT NULL,
-          PRIMARY KEY (assessment_id, user_email)
+          assessment_id INTEGER NOT NULL, user_email TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY (assessment_id, user_email)
         );`
       );
-
-      // ASSESSMENTS TO SYNC OFFLINE
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_assessment_sync (
-          assessment_id INTEGER NOT NULL,
-          user_email TEXT NOT NULL,
-          last_sync_timestamp TEXT NOT NULL,
-          PRIMARY KEY (assessment_id, user_email)
+          assessment_id INTEGER NOT NULL, user_email TEXT NOT NULL, last_sync_timestamp TEXT NOT NULL, PRIMARY KEY (assessment_id, user_email)
         );`
       );
-      
-      // ASSIGNMENT TYPE ASSESSMENT OFFLINE SUBMISSION
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_submissions (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          user_email TEXT NOT NULL,
-          assessment_id INTEGER NOT NULL,
-          file_uri TEXT NOT NULL,
-          original_filename TEXT NOT NULL,
-          submission_status TEXT NOT NULL,
-          submitted_at TEXT NOT NULL,
+          id INTEGER PRIMARY KEY AUTOINCREMENT, user_email TEXT NOT NULL, assessment_id INTEGER NOT NULL, file_uri TEXT NOT NULL, original_filename TEXT NOT NULL, submission_status TEXT NOT NULL, submitted_at TEXT NOT NULL,
           UNIQUE(user_email, assessment_id) ON CONFLICT REPLACE
         );`
       );
-
-      // QUIZ TYPE 
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_quiz_questions (
-          id INTEGER PRIMARY KEY NOT NULL,
-          user_email TEXT NOT NULL,
-          assessment_id INTEGER NOT NULL,
-          question_text TEXT NOT NULL,
-          question_type TEXT NOT NULL,
-          options TEXT, -- JSON string for multiple choice options
-          correct_answer TEXT,
-          points INTEGER,
-          order_index INTEGER,
-          question_data TEXT NOT NULL, -- Complete question object as JSON
+          id INTEGER PRIMARY KEY NOT NULL, user_email TEXT NOT NULL, assessment_id INTEGER NOT NULL, question_text TEXT NOT NULL, question_type TEXT NOT NULL, options TEXT, correct_answer TEXT, points INTEGER, order_index INTEGER, question_data TEXT NOT NULL,
           FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessment_data(assessment_id, user_email) ON DELETE CASCADE
         );`
       );
-      try {
-        // Fix for old schema that had a 'status' column
-        await db.execAsync(`DROP TABLE IF EXISTS offline_quiz_attempts;`);
-        console.log('✅ Dropped old offline_quiz_attempts table to fix schema.');
-      } catch (e) {
-        console.log('offline_quiz_attempts table drop failed, assuming it did not exist.');
-      }
+      
+      // --- FORCE-RESET QUIZ TABLES ---
+      // This ensures the schema is always up-to-date during development.
+      console.log('🔄 Resetting offline quiz tables to ensure correct schema...');
+      await db.execAsync(`DROP TABLE IF EXISTS offline_quiz_option_selections;`);
+      await db.execAsync(`DROP TABLE IF EXISTS offline_quiz_question_submissions;`);
+      await db.execAsync(`DROP TABLE IF EXISTS offline_quiz_attempts;`);
 
+      // --- RECREATE QUIZ TABLES WITH CORRECT SCHEMA ---
       await db.execAsync(
-        `CREATE TABLE IF NOT EXISTS offline_quiz_attempts (
+        `CREATE TABLE offline_quiz_attempts (
           attempt_id INTEGER PRIMARY KEY AUTOINCREMENT,
           assessment_id INTEGER NOT NULL,
           user_email TEXT NOT NULL,
           start_time TEXT NOT NULL,
           end_time TEXT,
           is_completed INTEGER DEFAULT 0,
-          answers TEXT, -- JSON string to store user's answers
+          answers TEXT,
           FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessments(id, user_email) ON DELETE CASCADE
         );`
       );
+      await db.execAsync(
+        `CREATE TABLE offline_quiz_question_submissions (
+          submission_id INTEGER PRIMARY KEY AUTOINCREMENT,
+          attempt_id INTEGER NOT NULL,
+          question_id INTEGER NOT NULL,
+          submitted_answer TEXT,
+          max_points INTEGER NOT NULL DEFAULT 1,
+          FOREIGN KEY (attempt_id) REFERENCES offline_quiz_attempts(attempt_id) ON DELETE CASCADE
+        );`
+      );
+      await db.execAsync(
+        `CREATE TABLE offline_quiz_option_selections (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          submission_id INTEGER NOT NULL,
+          option_id INTEGER NOT NULL,
+          option_text TEXT NOT NULL,
+          is_selected INTEGER NOT NULL DEFAULT 0,
+          is_correct_option INTEGER NOT NULL DEFAULT 0,
+          FOREIGN KEY (submission_id) REFERENCES offline_quiz_question_submissions(submission_id) ON DELETE CASCADE
+        );`
+      );
+      console.log('✅ Offline quiz tables created successfully.');
 
-
-
-      
-      // SERVER TIME RESET
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS app_state (
-            user_email TEXT PRIMARY KEY NOT NULL,
-            server_time TEXT,
-            server_time_offset INTEGER,
-            last_time_check INTEGER,
-            time_check_sequence INTEGER DEFAULT 0
+            user_email TEXT PRIMARY KEY NOT NULL, server_time TEXT, server_time_offset INTEGER, last_time_check INTEGER, time_check_sequence INTEGER DEFAULT 0
         );`
       );
 
-      try {
-        await db.runAsync(`ALTER TABLE offline_quiz_attempts ADD COLUMN is_completed INTEGER DEFAULT 0;`);
-        console.log('✅ Added is_completed column to offline_quiz_attempts table.');
-      } catch (e) {
-        // This will throw an error if the column already exists, which is expected behavior
-        console.log('is_completed column already exists, no need to add.');
-      }
-      
       dbInitialized = true;
-      console.log('âœ… Database initialization complete');
+      console.log('✅ Database initialization complete');
     } catch (error) {
-      console.error('âŒ Database initialization failed:', error);
+      console.error('❌ Database initialization failed:', error);
       throw error;
     } finally {
       initializationPromise = null;
@@ -1266,44 +1216,122 @@ export const getOfflineQuizAttemptStatus = async (assessmentId: number, userEmai
   }
 };
 
-export const submitOfflineQuiz = async (assessmentId: number, userEmail: string, answers: any): Promise < void > => {
+export const submitOfflineQuiz = async (assessmentId: number, userEmail: string, answers: StudentAnswers): Promise<void> => {
   try {
-    await initDb();
+    await initDb(); // Ensure DB is initialized
     const db = await getDb();
+    const now = new Date().toISOString();
+    
+    console.log(`📝 Submitting offline quiz for assessment ${assessmentId}`);
+    
     await db.withTransactionAsync(async () => {
-      // First, update the answers
-      await updateOfflineQuizAnswers(assessmentId, userEmail, answers);
-
-      // Then, mark the attempt as completed
-      await db.runAsync(
-        `UPDATE offline_quiz_attempts SET is_completed = 1, end_time = ? WHERE assessment_id = ? AND user_email = ?;`,
-        [new Date().toISOString(), assessmentId, userEmail]
+      // 1. Get all original questions for this quiz from the local DB
+      const questions = await getQuizQuestionsFromDb(assessmentId, userEmail);
+      const questionsMap: Record<number, any> = {};
+      questions.forEach(q => {
+        // The question data is already parsed by getQuizQuestionsFromDb
+        questionsMap[q.id] = q;
+      });
+      
+      // 2. Create the main attempt record
+      const attemptResult = await db.runAsync(
+        `INSERT INTO offline_quiz_attempts (assessment_id, user_email, start_time, end_time, answers, is_completed) VALUES (?, ?, ?, ?, ?, ?);`,
+        [assessmentId, userEmail, now, now, JSON.stringify(answers), 1]
       );
+      const attemptId = attemptResult.lastInsertRowId;
+
+      if (!attemptId) {
+        throw new Error("Failed to create quiz attempt record.");
+      }
+      console.log(`Created offline attempt with ID: ${attemptId}`);
+      
+      // 3. Loop through the student's answers and save each one
+      for (const questionIdStr in answers) {
+        if (!answers.hasOwnProperty(questionIdStr)) continue;
+        
+        const questionId = Number(questionIdStr);
+        const studentAnswer = answers[questionId];
+        const originalQuestion = questionsMap[questionId];
+        
+        if (!originalQuestion) {
+          console.warn(`Original question data not found for question ID: ${questionId}. Skipping.`);
+          continue;
+        }
+        
+        // Ensure max_points has a valid value, defaulting to 1
+        const maxPoints = originalQuestion.points ?? originalQuestion.max_points ?? 1;
+        
+        // 4. Insert the submission for the question
+        const questionSubmissionResult = await db.runAsync(
+          `INSERT INTO offline_quiz_question_submissions (attempt_id, question_id, submitted_answer, max_points) VALUES (?, ?, ?, ?);`,
+          [
+            attemptId, 
+            questionId, 
+            JSON.stringify(studentAnswer.answer), // Store the raw answer
+            maxPoints
+          ]
+        );
+        const submissionId = questionSubmissionResult.lastInsertRowId;
+
+        if (!submissionId) {
+          throw new Error(`Failed to create submission record for question ${questionId}.`);
+        }
+        
+        // 5. If it's a multiple-choice or true/false, save the state of ALL options
+        if (studentAnswer.type === 'multiple_choice' || studentAnswer.type === 'true_false') {
+          const selectedOptionIds = Array.isArray(studentAnswer.answer) ? studentAnswer.answer : [studentAnswer.answer];
+          const originalOptions = originalQuestion.options || [];
+          
+          for (const option of originalOptions) {
+            const isSelected = selectedOptionIds.includes(option.id);
+            // Ensure is_correct_option has a value (0 or 1)
+            const isCorrect = option.is_correct ? 1 : 0;
+            
+            await db.runAsync(
+              `INSERT INTO offline_quiz_option_selections (submission_id, option_id, option_text, is_selected, is_correct_option) VALUES (?, ?, ?, ?, ?);`,
+              [
+                submissionId, 
+                option.id, 
+                option.option_text || '', 
+                isSelected ? 1 : 0, 
+                isCorrect
+              ]
+            );
+          }
+        }
+      }
     });
-    console.log(`✅ Submitted offline quiz for assessment ${assessmentId}.`);
+    
+    console.log(`✅ Successfully submitted offline quiz for assessment ${assessmentId}`);
   } catch (error) {
-    console.error(`❌ Failed to submit offline quiz for assessment ${assessmentId}:`, error);
+    console.error(`❌ Failed to submit offline quiz: ${error}`);
     throw error;
   }
 };
-
 
 export const getCompletedOfflineQuizzes = async (userEmail: string): Promise<any[]> => {
   try {
     await initDb();
     const db = await getDb();
-    console.log(`ðŸ”§ Fetching completed offline quizzes for user: ${userEmail}`);
-
-    const result = await db.getAllAsync(
-      `SELECT * FROM offline_quiz_attempts WHERE user_email = ? AND is_completed = 1;`,
+    
+    const quizAttempts = await db.getAllAsync(
+      `SELECT 
+        attempt_id, 
+        assessment_id, 
+        user_email, 
+        start_time, 
+        end_time, 
+        answers 
+       FROM offline_quiz_attempts 
+       WHERE user_email = ? AND is_completed = 1 AND end_time IS NOT NULL;`,
       [userEmail]
     );
-
-    console.log(`âœ… Found ${result.length} completed offline quiz attempts.`);
-    return result;
+    
+    console.log(`📊 Found ${quizAttempts.length} completed offline quizzes ready for sync`);
+    return quizAttempts;
   } catch (error) {
-    console.error('â Œ Failed to get completed offline quiz attempts:', error);
-    throw error;
+    console.error('❌ Failed to get completed offline quizzes:', error);
+    return [];
   }
 };
 
