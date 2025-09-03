@@ -280,115 +280,56 @@ export default function AssessmentDetailsScreen() {
 
   const handleStartQuizAttempt = async () => {
     if (!assessmentDetail) return;
-    
-    if (!netInfo?.isInternetReachable) {
-        console.log('Offline: Starting quiz attempt...');
-        const user = await getUserData();
-        const userEmail = user?.email;
-        
-        if (!userEmail) {
-            Alert.alert('Error', 'User not found. Cannot start quiz offline.');
-            return;
-        }
 
-        // Check if detailed data exists AND quiz questions are available locally
-        const hasQuestions = await hasQuizQuestionsSaved(assessmentDetail.id, userEmail); // A new check
-        if (!hasDetailedData || !hasQuestions) {
-            Alert.alert(
-                'Offline Mode', 
-                'Assessment questions are not available locally. Please connect to the internet to download quiz questions first.'
-            );
-            return;
-        }
+    const user = await getUserData();
+    const userEmail = user?.email;
 
-        if (attemptStatus && attemptStatus.attempts_remaining !== null && attemptStatus.attempts_remaining <= 0) {
-            Alert.alert('Attempt Limit Reached', 'You have used all attempts for this quiz.');
-            return;
-        }
-
-        console.log('Fetching questions for assessment:', assessmentDetail.id);
-        try {
-            await startOfflineQuiz(assessmentId, userEmail);
-            Alert.alert('Offline Mode', 'Your quiz has been started and saved locally. You can proceed to attempt it now.');
-            
-            router.push({
-                pathname: '/courses/assessments/[assessmentId]/attempt-quiz',
-                params: {
-                    assessmentId: assessmentDetail.id.toString(),
-                    userEmail,
-                    isOffline: 'true'
-                },
-            });
-        } catch (error) {
-            console.error('Error starting offline quiz:', error);
-            Alert.alert('Error', 'Failed to start quiz attempt offline.');
-        }
-
-        return;
+    if (!userEmail) {
+      Alert.alert('Error', 'User not found. Cannot start quiz.');
+      return;
     }
 
-    if (netInfo?.isInternetReachable) {
-        // ONLINE MODE
-        const user = await getUserData();
-        const userEmail = user?.email;
-        if (!userEmail) {
-            Alert.alert('Error', 'User not found. Cannot start quiz.');
-            setSubmissionLoading(false);
-            return;
-        }
+    if (!isAssessmentOpen(assessmentDetail)) {
+      Alert.alert(
+        'Assessment Unavailable',
+        `This assessment is not currently available. Please check the available date/time.`
+      );
+      return;
+    }
 
-        if (!isAssessmentOpen(assessmentDetail)) {
-            Alert.alert(
-                'Assessment Unavailable',
-                `This assessment is not currently available. Please check the dates.`
-            );
-            setSubmissionLoading(false);
-            return;
-        }
+    // Always check for quiz questions locally before starting
+    const hasQuestions = await hasQuizQuestionsSaved(assessmentDetail.id, userEmail);
+    if (!hasQuestions) {
+      Alert.alert(
+        'Quiz Questions Not Downloaded',
+        'Please go online once to download the quiz questions before attempting. After that, you can start the quiz in online or offline mode.'
+      );
+      return;
+    }
 
-        if (attemptStatus && !attemptStatus.has_in_progress_attempt && !attemptStatus.can_start_new_attempt) {
-            Alert.alert(
-                'Attempt Limit Reached',
-                `You have used all ${attemptStatus.max_attempts} attempts for this ${assessmentDetail.type}.`
-            );
-            setSubmissionLoading(false);
-            return;
-        }
+    if (attemptStatus && attemptStatus.attempts_remaining !== null && attemptStatus.attempts_remaining <= 0) {
+      Alert.alert('Attempt Limit Reached', 'You have used all attempts for this quiz.');
+      return;
+    }
 
-        setSubmissionLoading(true);
-        try {
+    try {
+      // This logic now runs for both online and offline
+      console.log('Starting quiz attempt and saving locally...');
+      await startOfflineQuiz(assessmentId, userEmail);
 
-            // Now, proceed with the original logic to start the quiz
-            const response = await api.post(`/assessments/${assessmentDetail.id}/start-quiz-attempt`);
-            
-            if (response.status === 200 || response.status === 201) {
-                const submittedAssessment = response.data.submitted_assessment;
-                Alert.alert('Success', response.data.message, [
-                    {
-                        text: 'Start Quiz',
-                        onPress: () => {
-                            router.push({
-                                pathname: '/courses/assessments/[assessmentId]/attempt-quiz',
-                                params: {
-                                    assessmentId: assessmentDetail.id.toString(),
-                                    submittedAssessmentId: submittedAssessment.id.toString(),
-                                    isOffline: 'false'
-                                },
-                            });
-                        },
-                    },
-                ]);
-                console.log("API Response for Quiz type attempt Submission:", JSON.stringify(response.data, null, 2));
-            } else {
-                Alert.alert('Error', response.data.message || 'Failed to start quiz attempt.');
-            }
-        } catch (err: any) {
-            console.error('Error starting quiz attempt:', err.response?.data || err.message);
-            Alert.alert('Error', err.response?.data?.message || 'Failed to start quiz attempt due to network error.');
-        } finally {
-            setSubmissionLoading(false);
-            fetchAssessmentDetailsAndAttemptStatus();
-        }
+      Alert.alert('Success', 'Your quiz has been started and saved locally. You can proceed to attempt it now.', [
+        {
+          text: 'OK',
+          onPress: () =>
+            router.push({
+              pathname: '/courses/assessments/[assessmentId]/attempt-quiz',
+              params: { assessmentId: assessmentDetail.id.toString(), userEmail, isOffline: 'true' },
+            }),
+        },
+      ]);
+    } catch (error) {
+      console.error('Error starting quiz attempt:', error);
+      Alert.alert('Error', 'Failed to start quiz attempt locally.');
     }
   };
 

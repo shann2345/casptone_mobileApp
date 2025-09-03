@@ -483,7 +483,7 @@ export default function AttemptQuizScreen() {
           Alert.alert(
             'Quiz Submitted Offline',
             'Your quiz has been saved locally. It will be synced with the server when you are back online.',
-            [{ text: 'OK' }]
+            [{ text: 'OK', onPress: () => router.back() }]
           );
         }
       } else {
