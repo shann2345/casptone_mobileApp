@@ -13,6 +13,8 @@ import {
   deleteOfflineSubmission,
   getAssessmentDetailsFromDb,
   getCurrentServerTime,
+  getOfflineAttemptCount,
+  getOfflineQuizAttempt,
   getUnsyncedSubmissions,
   hasQuizQuestionsSaved,
   saveAssessmentDetailsToDb,
@@ -32,7 +34,7 @@ interface AssessmentDetail {
   max_attempts?: number;
   duration_minutes?: number;
   assessment_file_path?: string | null;
-  assessment_file_url?: string | null; // Added this property
+  assessment_file_url?: string | null;
   points: number;
 }
 
@@ -63,114 +65,153 @@ export default function AssessmentDetailsScreen() {
   const [attemptStatus, setAttemptStatus] = useState<AttemptStatus | null>(null);
   const [latestAssignmentSubmission, setLatestAssignmentSubmission] = useState<LatestAssignmentSubmission | null>(null);
   const [loading, setLoading] = useState(true);
+  const [hasOfflineAttempt, setHasOfflineAttempt] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<DocumentPicker.DocumentPickerAsset | null>(null);
   const [submissionLoading, setSubmissionLoading] = useState(false);
   const [hasDetailedData, setHasDetailedData] = useState<boolean>(false);
   const navigation = useNavigation();
 
-
   const fetchAssessmentDetailsAndAttemptStatus = useCallback(async () => {
-    if (!assessmentId) return;
+  if (!assessmentId) return;
 
-    setLoading(true);
-    setError(null);
+  setLoading(true);
+  setError(null);
 
-    const user = await getUserData();
-    const userEmail = user?.email;
-    if (!userEmail) {
-      setError('User not logged in.');
-      setLoading(false);
-      return;
-    }
+  const user = await getUserData();
+  const userEmail = user?.email;
+  if (!userEmail) {
+    setError('User not logged in.');
+    setLoading(false);
+    return;
+  }
 
-    try {
-      if (isConnected) {
-        // ONLINE MODE - existing logic remains the same
-        console.log('✅ Online: Fetching assessment details from API.');
-        const assessmentResponse = await api.get(`/assessments/${assessmentId}`);
-        if (assessmentResponse.status === 200) {
-          console.log("API Response for Assessment Details:", JSON.stringify(assessmentResponse.data, null, 2));
-          const fetchedAssessment = assessmentResponse.data.assessment;
-          setAssessmentDetail(fetchedAssessment);
+  try {
+    if (isConnected) {
+      // ONLINE MODE
+      console.log('✅ Online: Fetching assessment details from API.');
+      const assessmentResponse = await api.get(`/assessments/${assessmentId}`);
+      if (assessmentResponse.status === 200) {
+        console.log("API Response for Assessment Details:", JSON.stringify(assessmentResponse.data, null, 2));
+        const fetchedAssessment = assessmentResponse.data.assessment;
+        setAssessmentDetail(fetchedAssessment);
 
-          let newAttemptStatus: AttemptStatus | null = null;
-          let newLatestSubmission: LatestAssignmentSubmission | null = null;
-          
-          // Fetch attempt status and latest submission only if online
-          if (fetchedAssessment.type === 'quiz' || fetchedAssessment.type === 'exam') {
-            const attemptStatusResponse = await api.get(`/assessments/${assessmentId}/attempt-status`);
-            if (attemptStatusResponse.status === 200) {
-              newAttemptStatus = attemptStatusResponse.data;
-              setAttemptStatus(newAttemptStatus);
-            } else {
-              setError('Failed to fetch attempt status.');
-            }
+        let newAttemptStatus: AttemptStatus | null = null;
+        let newLatestSubmission: LatestAssignmentSubmission | null = null;
+
+        // Fetch attempt status and latest submission only if online
+        if (fetchedAssessment.type === 'quiz' || fetchedAssessment.type === 'exam') {
+          const attemptStatusResponse = await api.get(`/assessments/${assessmentId}/attempt-status`);
+          if (attemptStatusResponse.status === 200) {
+            newAttemptStatus = attemptStatusResponse.data;
+            setAttemptStatus(newAttemptStatus);
           } else {
-            setAttemptStatus(null);
+            console.warn('Failed to fetch attempt status.');
           }
-
-          if (['assignment', 'activity', 'project'].includes(fetchedAssessment.type)) {
-            const assignmentSubmissionResponse = await api.get(`/assessments/${assessmentId}/latest-assignment-submission`);
-            if (assignmentSubmissionResponse.status === 200) {
-              newLatestSubmission = assignmentSubmissionResponse.data;
-              setLatestAssignmentSubmission(newLatestSubmission);
-            } else {
-              setError('Failed to fetch latest assignment submission.');
-            }
-          } else {
-            setLatestAssignmentSubmission(null);
-            setSelectedFile(null);
-          }
-          
-          // Save the fetched data to local DB
-          await saveAssessmentsToDb([fetchedAssessment], parseInt(courseId as string), userEmail);
-          await saveAssessmentDetailsToDb(
-            fetchedAssessment.id,
-            userEmail,
-            newAttemptStatus,
-            newLatestSubmission
-          );
-          
-          // Check if detailed data exists after saving
-          const needsDetails = await checkIfAssessmentNeedsDetails(fetchedAssessment.id, userEmail);
-          setHasDetailedData(!needsDetails);
-          
         } else {
-          setError('Failed to fetch assessment details.');
+          setAttemptStatus(null);
         }
-      } else {
-        // OFFLINE MODE
-        console.log('⚠️ Offline: Fetching assessment details from local DB.');
-        const offlineAssessment = await getAssessmentDetailsFromDb(assessmentId as string, userEmail);
-        if (offlineAssessment) {
-          // The returned object now includes the additional data
-          setAssessmentDetail(offlineAssessment as AssessmentDetail);
-          setAttemptStatus(offlineAssessment.attemptStatus);
-          setLatestAssignmentSubmission(offlineAssessment.latestSubmission);
+
+        if (['assignment', 'activity', 'project'].includes(fetchedAssessment.type)) {
+          const assignmentSubmissionResponse = await api.get(`/assessments/${assessmentId}/latest-assignment-submission`);
+          if (assignmentSubmissionResponse.status === 200) {
+            newLatestSubmission = assignmentSubmissionResponse.data;
+            setLatestAssignmentSubmission(newLatestSubmission);
+          } else {
+            console.warn('Failed to fetch latest assignment submission.');
+          }
+        } else {
+          setLatestAssignmentSubmission(null);
           setSelectedFile(null);
-          
-          // Check if we have detailed data for this assessment
-          const needsDetails = await checkIfAssessmentNeedsDetails(parseInt(assessmentId as string), userEmail);
-          setHasDetailedData(!needsDetails);
-        } else {
-          setError('Offline: Assessment details not available locally. Please connect to the internet to load.');
-          Alert.alert('Offline Mode', 'Assessment details not found in local storage. Please connect to the internet to load.');
         }
-      }
-    } catch (err: any) {
-      console.error('Failed to fetch assessment details/status/submission:', err.response?.data || err.message);
-      setError('Network error or unable to load assessment details/status/submission.');
-      if (!isConnected) {
-        Alert.alert('Error', 'Failed to load assessment details from local storage.');
-      } else {
-        Alert.alert('Error', 'Failed to fetch assessment details/status/submission.');
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, [assessmentId, isConnected]);
+        
+        // FIXED: Simplified courseId handling with proper validation
+        let validCourseId: number;
+        
+        // First try to get courseId from URL params
+        if (courseId) {
+          validCourseId = typeof courseId === 'string' ? parseInt(courseId, 10) : Number(courseId);
+        } else {
+          // If no courseId in params, get it from the fetched assessment
+          validCourseId = fetchedAssessment.course_id;
+        }
 
+        // Validate the courseId
+        if (!validCourseId || isNaN(validCourseId) || validCourseId <= 0) {
+          console.error('❌ Invalid courseId:', { 
+            fromParams: courseId, 
+            fromAssessment: fetchedAssessment.course_id, 
+            calculated: validCourseId 
+          });
+          setError('Invalid course information. Please navigate from the course page.');
+          setLoading(false);
+          return;
+        }
+
+        console.log('✅ Using valid courseId:', validCourseId);
+
+        // Save to database
+        await saveAssessmentsToDb([fetchedAssessment], validCourseId, userEmail);
+        await saveAssessmentDetailsToDb(
+          fetchedAssessment.id,
+          userEmail,
+          newAttemptStatus,
+          newLatestSubmission
+        );
+        
+        // Check if detailed data exists after saving
+        const needsDetails = await checkIfAssessmentNeedsDetails(fetchedAssessment.id, userEmail);
+        setHasDetailedData(!needsDetails);
+        
+      } else {
+        setError('Failed to fetch assessment details.');
+      }
+
+      const offlineAttempt = await getOfflineQuizAttempt(parseInt(assessmentId as string), userEmail);
+      setHasOfflineAttempt(!!offlineAttempt);
+    } else {
+      // OFFLINE MODE
+      console.log('⚠️ Offline: Fetching assessment details from local DB.');
+      const offlineAssessment = await getAssessmentDetailsFromDb(assessmentId as string, userEmail);
+      const offlineAttempt = await getOfflineQuizAttempt(parseInt(assessmentId as string), userEmail);
+      
+      if (offlineAssessment) {
+        // Get offline attempt count
+        const offlineAttemptCount = await getOfflineAttemptCount(parseInt(assessmentId as string), userEmail);
+        
+        // Create or update attempt status
+        const updatedAttemptStatus = {
+          ...offlineAssessment.attemptStatus,
+          attempts_made: offlineAttemptCount.attempts_made,
+          attempts_remaining: offlineAttemptCount.attempts_remaining,
+          has_in_progress_attempt: !!offlineAttempt,
+          can_start_new_attempt: offlineAttemptCount.attempts_remaining === null || 
+                              offlineAttemptCount.attempts_remaining > 0
+        };
+
+        setAssessmentDetail(offlineAssessment);
+        setAttemptStatus(updatedAttemptStatus);
+        setLatestAssignmentSubmission(offlineAssessment.latestSubmission);
+        setHasDetailedData(true);
+        setHasOfflineAttempt(!!offlineAttempt);
+      } else {
+        setError('Assessment details not available offline.');
+        setHasDetailedData(false);
+      }
+    }
+  } catch (err: any) {
+    console.error('Failed to fetch assessment details/status/submission:', err.response?.data || err.message);
+    setError('Network error or unable to load assessment details/status/submission.');
+    if (!isConnected) {
+      Alert.alert('Error', 'Failed to load assessment details from local storage.');
+    } else {
+      Alert.alert('Error', 'Failed to fetch assessment details/status/submission.');
+    }
+  } finally {
+    setLoading(false);
+  }
+}, [assessmentId, courseId, isConnected]);
+  // ✅ CRITICAL: This will refresh data when returning from quiz attempt
   useFocusEffect(
     useCallback(() => {
       fetchAssessmentDetailsAndAttemptStatus();
@@ -193,16 +234,14 @@ export default function AssessmentDetailsScreen() {
           );
 
           for (const submission of unsyncedSubmissions) {
-            // Pass the original submission timestamp to preserve offline submission time
             const success = await syncOfflineSubmission(
               submission.assessment_id,
               submission.file_uri,
               submission.original_filename,
-              submission.submitted_at // Pass the original timestamp
+              submission.submitted_at
             );
 
             if (success) {
-              // After successful sync, delete the local record
               await deleteOfflineSubmission(submission.id);
               console.log(`Successfully synced and deleted local record for assessment ${submission.assessment_id}`);
             } else {
@@ -210,7 +249,6 @@ export default function AssessmentDetailsScreen() {
             }
           }
           
-          // After attempting sync for all, refetch the latest status
           fetchAssessmentDetailsAndAttemptStatus();
         }
       }
@@ -219,7 +257,9 @@ export default function AssessmentDetailsScreen() {
     syncSubmissions();
   }, [isConnected]);
 
-  // Refactored function to check for full assessment availability
+  // Rest of your existing code remains the same...
+  // (keeping all other functions unchanged)
+
   const isAssessmentOpen = (assessment: AssessmentDetail) => {
     const now = new Date().getTime();
     if (assessment.available_at && now < new Date(assessment.available_at).getTime()) {
@@ -268,7 +308,6 @@ export default function AssessmentDetailsScreen() {
     }
   };
 
-  // New handler for downloading the instructor's assessment file
   const handleDownloadAssessmentFile = async (fileUrl: string) => {
     try {
       await Linking.openURL(fileUrl);
@@ -297,12 +336,36 @@ export default function AssessmentDetailsScreen() {
       return;
     }
 
-    // Always check for quiz questions locally before starting
     const hasQuestions = await hasQuizQuestionsSaved(assessmentDetail.id, userEmail);
     if (!hasQuestions) {
       Alert.alert(
         'Quiz Questions Not Downloaded',
         'Please go online once to download the quiz questions before attempting. After that, you can start the quiz in online or offline mode.'
+      );
+      return;
+    }
+
+    const existingAttempt = await getOfflineQuizAttempt(assessmentDetail.id, userEmail);
+    if (existingAttempt) {
+      Alert.alert(
+        'Resume Quiz',
+        'An in-progress quiz attempt was found in your local storage. Do you want to resume it?',
+        [
+          {
+            text: 'Cancel',
+            style: 'cancel'
+          },
+          {
+            text: 'Resume',
+            onPress: () => router.push({
+              pathname: `/courses/assessments/[assessmentId]/attempt-quiz`,
+              params: {
+                assessmentId: assessmentDetail.id,
+                isOffline: 'true'
+              }
+            })
+          },
+        ]
       );
       return;
     }
@@ -313,9 +376,8 @@ export default function AssessmentDetailsScreen() {
     }
 
     try {
-      // This logic now runs for both online and offline
       console.log('Starting quiz attempt and saving locally...');
-      await startOfflineQuiz(assessmentId, userEmail);
+      await startOfflineQuiz(parseInt(assessmentId as string), userEmail);
 
       Alert.alert('Success', 'Your quiz has been started and saved locally. You can proceed to attempt it now.', [
         {
@@ -323,7 +385,11 @@ export default function AssessmentDetailsScreen() {
           onPress: () =>
             router.push({
               pathname: '/courses/assessments/[assessmentId]/attempt-quiz',
-              params: { assessmentId: assessmentDetail.id.toString(), userEmail, isOffline: 'true' },
+              params: { 
+                assessmentId: assessmentDetail.id.toString(), 
+                userEmail, 
+                isOffline: 'true'
+              },
             }),
         },
       ]);
@@ -362,7 +428,6 @@ export default function AssessmentDetailsScreen() {
     setSubmissionLoading(true);
     try {
       if (isConnected) {
-        // ONLINE MODE - Existing logic remains the same
         const formData = new FormData();
         formData.append('assignment_file', {
           uri: selectedFile.uri,
@@ -388,33 +453,29 @@ export default function AssessmentDetailsScreen() {
           Alert.alert('Error', response.data.message || 'Failed to submit assignment.');
         }
       } else {
-        // OFFLINE MODE - Modified to use server time
         console.log('⚠️ Offline: Saving submission to local DB with server time.');
         const user = await getUserData();
         if (user && user.email) {
-          // Get current server time for the submission
           const serverSubmissionTime = await getCurrentServerTime(user.email);
           console.log('🕒 Using server time for offline submission:', serverSubmissionTime);
           
-          // Save offline submission with the calculated server time
           const actualSubmissionTime = await saveOfflineSubmission(
             user.email, 
             assessmentDetail.id, 
             selectedFile.uri, 
             selectedFile.name,
-            serverSubmissionTime // Pass the server time explicitly
+            serverSubmissionTime
           );
           
           Alert.alert('Offline Submission', 'Your assignment has been saved locally and will be submitted once you are online.');
           
-          // Manually update the state to reflect the new "to sync" status with server time
           setLatestAssignmentSubmission({
             has_submitted_file: true,
             submitted_file_path: selectedFile.uri,
             submitted_file_url: null,
             submitted_file_name: selectedFile.name,
             original_filename: selectedFile.name,
-            submitted_at: actualSubmissionTime, // Use the actual timestamp that was saved
+            submitted_at: actualSubmissionTime,
             status: 'to sync',
           });
           setSelectedFile(null);
@@ -441,21 +502,23 @@ export default function AssessmentDetailsScreen() {
     }
   };
 
-  // Use the new function for button state
   const isAssessmentCurrentlyOpen = assessmentDetail ? isAssessmentOpen(assessmentDetail) : false;
 
   let isQuizAttemptButtonDisabled = false;
   let quizButtonText = 'Start Quiz';
 
   if (assessmentDetail && (assessmentDetail.type === 'quiz' || assessmentDetail.type === 'exam')) {
-    if (!isAssessmentCurrentlyOpen) {
+    if (hasOfflineAttempt) {
+      quizButtonText = 'Resume Quiz';
+      isQuizAttemptButtonDisabled = false;
+    } else if (!isAssessmentCurrentlyOpen) {
       isQuizAttemptButtonDisabled = true;
       quizButtonText = 'Assessment Unavailable';
     } else if (attemptStatus) {
       if (attemptStatus.has_in_progress_attempt) {
         quizButtonText = 'Resume Quiz';
         isQuizAttemptButtonDisabled = submissionLoading;
-      } else if (!attemptStatus.can_start_new_attempt || (attemptStatus.attempts_remaining !== null && attemptStatus.attempts_remaining <= 0)) {
+      } else if (attemptStatus.attempts_remaining !== null && attemptStatus.attempts_remaining <= 0) {
         quizButtonText = 'Attempt Limit Reached';
         isQuizAttemptButtonDisabled = true;
       }
@@ -464,23 +527,22 @@ export default function AssessmentDetailsScreen() {
     isQuizAttemptButtonDisabled = true;
     quizButtonText = 'Assessment Unavailable';
   }
-  
-  if (!isConnected) {
+
+  if (!netInfo?.isInternetReachable) {
     if (assessmentDetail?.type === 'quiz' || assessmentDetail?.type === 'exam') {
-      if (!hasDetailedData) {
-        // No detailed data available - disable the button
+      if (hasOfflineAttempt) {
+        isQuizAttemptButtonDisabled = false;
+        quizButtonText = 'Resume Quiz (Offline)';
+      } else if (!hasDetailedData) {
         isQuizAttemptButtonDisabled = true;
         quizButtonText = 'Download Assessment Details First (Offline)';
       } else if (attemptStatus && attemptStatus.attempts_remaining !== null && attemptStatus.attempts_remaining <= 0) {
-        // Has detailed data but no attempts left
         isQuizAttemptButtonDisabled = true;
         quizButtonText = 'Attempt Limit Reached (Offline)';
       } else if (!isAssessmentCurrentlyOpen) {
-        // Has detailed data but past the deadline
         isQuizAttemptButtonDisabled = true;
         quizButtonText = 'Assessment Unavailable (Offline)';
       } else {
-        // Has detailed data and attempts available
         isQuizAttemptButtonDisabled = false;
         quizButtonText = 'Start Quiz (Offline)';
       }

@@ -93,76 +93,77 @@ export default function HomeScreen() {
     return () => { isMounted = false; };
   }, []);
 
-  // ADD THIS NEW useEffect HOOK TO HANDLE AUTOMATIC SYNC
-  useEffect(() => {
-    const syncSubmissions = async () => {
-      if (!isInitialized) return;
+  // Inside your useEffect for automatic sync
+useEffect(() => {
+  const syncSubmissions = async () => {
+    if (!isInitialized) return;
 
-      const hasRealInternet = netInfo?.isInternetReachable === true;
-      if (hasRealInternet) {
-        console.log('Network is back online. Checking for unsynced submissions...');
-        const user = await getUserData();
-        if (!user || !user.email) {
-          console.log('User not found. Cannot sync submissions.');
-          return;
-        }
-
-        // Check and sync for assignment submissions
-        const unsyncedAssignments = await getUnsyncedSubmissions(user.email);
-        if (unsyncedAssignments.length > 0) {
-          Alert.alert(
-            'Synchronization',
-            `Found ${unsyncedAssignments.length} offline assignment submission(s) to sync.`,
-            [{ text: 'OK' }]
-          );
-          for (const submission of unsyncedAssignments) {
-            console.log(`Attempting to sync assignment for assessment ID: ${submission.assessment_id}`);
-            const success = await syncOfflineSubmission(
-              submission.assessment_id,
-              submission.file_uri,
-              submission.original_filename,
-              submission.submitted_at
-            );
-            if (success) {
-              await deleteOfflineSubmission(submission.id);
-              console.log(`Successfully synced and deleted local record for assignment ${submission.assessment_id}`);
-            } else {
-              console.warn(`Failed to sync assignment for assessment ${submission.assessment_id}`);
-            }
-          }
-        }
-        
-        // NEW: Check and sync for quiz attempts
-        const completedOfflineQuizzes = await getCompletedOfflineQuizzes(user.email);
-        if (completedOfflineQuizzes.length > 0) {
-          Alert.alert(
-            'Synchronization',
-            `Found ${completedOfflineQuizzes.length} offline quiz attempt(s) to sync.`,
-            [{ text: 'OK' }]
-          );
-          for (const quizAttempt of completedOfflineQuizzes) {
-            console.log(`Attempting to sync quiz for assessment ID: ${quizAttempt.assessment_id}`);
-            const success = await syncOfflineQuiz(
-                quizAttempt.assessment_id,
-                quizAttempt.answers,
-                quizAttempt.start_time,
-                quizAttempt.end_time
-            );
-            if (success) {
-                await deleteOfflineQuizAttempt(quizAttempt.attempt_id);
-                console.log(`Successfully synced and deleted local record for quiz attempt ${quizAttempt.attempt_id}`);
-            } else {
-                console.warn(`Failed to sync quiz attempt ${quizAttempt.attempt_id}`);
-            }
-          }
-        }
-        
-        // After attempting to sync, refresh the course list to get updated submission statuses
-        fetchCourses();
+    const hasRealInternet = netInfo?.isInternetReachable === true;
+    if (hasRealInternet) {
+      console.log('Network is back online. Checking for unsynced submissions...');
+      const user = await getUserData();
+      if (!user || !user.email) {
+        console.log('User not found. Cannot sync submissions.');
+        return;
       }
-    };
-    syncSubmissions();
-  }, [netInfo?.isInternetReachable, isInitialized]);
+
+      // Check and sync for assignment submissions
+      const unsyncedAssignments = await getUnsyncedSubmissions(user.email);
+      if (unsyncedAssignments.length > 0) {
+        Alert.alert(
+          'Synchronization',
+          `Found ${unsyncedAssignments.length} offline assignment submission(s) to sync.`,
+          [{ text: 'OK' }]
+        );
+        for (const submission of unsyncedAssignments) {
+          console.log(`Attempting to sync assignment for assessment ID: ${submission.assessment_id}`);
+          const success = await syncOfflineSubmission(
+            submission.assessment_id,
+            submission.file_uri,
+            submission.original_filename,
+            submission.submitted_at
+          );
+          if (success) {
+            await deleteOfflineSubmission(submission.id);
+            console.log(`Successfully synced and deleted local record for assignment ${submission.assessment_id}`);
+          } else {
+            console.warn(`Failed to sync assignment for assessment ${submission.assessment_id}`);
+          }
+        }
+      }
+      
+      // NEW: Check and sync for quiz attempts
+      const completedOfflineQuizzes = await getCompletedOfflineQuizzes(user.email);
+      if (completedOfflineQuizzes.length > 0) {
+        Alert.alert(
+          'Synchronization',
+          `Found ${completedOfflineQuizzes.length} offline quiz attempt(s) to sync.`,
+          [{ text: 'OK' }]
+        );
+        for (const quizAttempt of completedOfflineQuizzes) {
+          console.log(`Attempting to sync quiz for assessment ID: ${quizAttempt.assessment_id}`);
+          const success = await syncOfflineQuiz(
+              quizAttempt.assessment_id,
+              quizAttempt.answers,
+              quizAttempt.start_time,
+              quizAttempt.end_time,
+              user.email  // Pass the user email
+          );
+          if (success) {
+              await deleteOfflineQuizAttempt(quizAttempt.assessment_id, user.email);
+              console.log(`Successfully synced and deleted local record for quiz attempt ${quizAttempt.assessment_id}`);
+          } else {
+              console.warn(`Failed to sync quiz attempt ${quizAttempt.assessment_id}`);
+          }
+        }
+      }
+      
+      // After attempting to sync, refresh the course list to get updated submission statuses
+      fetchCourses();
+    }
+  };
+  syncSubmissions();
+}, [netInfo?.isInternetReachable, isInitialized]);
 
   useEffect(() => {
     const checkAssessmentsNeedingDetails = async () => {
@@ -183,28 +184,57 @@ export default function HomeScreen() {
   }, [enrolledCourses, isInitialized]);
 
   const fetchAndSaveCompleteCoursesData = async (courses: EnrolledCourse[], userEmail: string) => {
-    console.log('📦 Starting to fetch complete course data for offline access...');
+  console.log('📦 Starting to fetch complete course data for offline access...');
 
-    for (const course of courses) {
-      try {
-        console.log(`🔄 Fetching complete details for course: ${course.title}`);
-
-        // Fetch complete course details including materials and assessments
-        const courseDetailResponse = await api.get(`/courses/${course.id}`);
-
-        if (courseDetailResponse.status === 200) {
-          const fullCourseData = courseDetailResponse.data.course;
-
-          // This is the call to the function we just implemented
-          await saveCourseDetailsToDb(fullCourseData, userEmail);
-          console.log(`✅ Complete course data saved for: ${course.title}`);
-        }
-      } catch (saveError) {
-        console.error(`⚠️ Failed to fetch/save complete data for course ${course.title}:`, saveError);
+  for (const course of courses) {
+    try {
+      console.log(`🔄 Fetching detailed data for course: ${course.title} (ID: ${course.id})`);
+      
+      // CRITICAL FIX: Ensure course.id is a valid number
+      const courseId = typeof course.id === 'string' ? parseInt(course.id, 10) : course.id;
+      
+      // Validate that courseId is a valid number
+      if (!courseId || isNaN(courseId) || courseId <= 0) {
+        console.error('❌ Invalid course ID detected:', {
+          originalId: course.id,
+          convertedId: courseId,
+          courseTitle: course.title
+        });
+        continue; // Skip this course
       }
+      
+      console.log(`📋 Processing course with validated ID: ${courseId} (type: ${typeof courseId})`);
+
+      // Fetch detailed course data from API
+      const courseDetailResponse = await api.get(`/courses/${courseId}`);
+      
+      if (courseDetailResponse.status === 200) {
+        const detailedCourse = courseDetailResponse.data.course;
+        
+        // ADDITIONAL FIX: Ensure the detailed course also has a valid ID
+        if (!detailedCourse.id) {
+          detailedCourse.id = courseId; // Use the validated courseId
+        }
+        
+        console.log(`📊 Fetched detailed data for course ${courseId}:`, {
+          topics: detailedCourse.topics?.length || 0,
+          assessments: detailedCourse.assessments?.length || 0,
+          materials: detailedCourse.materials?.length || 0
+        });
+        
+        // Save to local database with validated courseId
+        await saveCourseDetailsToDb(detailedCourse, userEmail);
+        console.log(`✅ Successfully saved detailed data for course: ${detailedCourse.title}`);
+      } else {
+        console.warn(`⚠️ Failed to fetch detailed data for course ${courseId}: Status ${courseDetailResponse.status}`);
+      }
+    } catch (saveError: any) {
+      console.error(`❌ Failed to fetch/save complete data for course ${course.title}:`, saveError.message || saveError);
+      // Continue with next course instead of stopping the entire process
     }
-    console.log('✅ Completed fetching and saving all course data for offline access');
-  };
+  }
+  console.log('✅ Completed fetching and saving all course data for offline access');
+};
 
   const fetchCourses = async () => {
   // Only proceed if DB is initialized

@@ -71,59 +71,130 @@ export const initDb = async (): Promise<void> => {
       console.log('🚀 Initializing database...');
       const db = await getDb();
 
+      console.log('🔄 Resetting offline quiz tables to ensure correct schema...');
+      await db.execAsync(`DROP TABLE IF EXISTS offline_courses;`);
+      await db.execAsync(`DROP TABLE IF EXISTS offline_course_details;`);
+      await db.execAsync(`DROP TABLE IF EXISTS offline_materials;`);
+      await db.execAsync(`DROP TABLE IF EXISTS offline_material_details;`);
+      await db.execAsync(`DROP TABLE IF EXISTS offline_material_question_submissions;`);
+      await db.execAsync(`DROP TABLE IF EXISTS offline_material_option_selections;`);
+      await db.execAsync(`DROP TABLE IF EXISTS offline_material_question_submissions;`);
+      await db.execAsync(`DROP TABLE IF EXISTS offline_material_option_selections;`);
+      await db.execAsync(`DROP TABLE IF EXISTS offline_quiz_option_selections;`);
+      await db.execAsync(`DROP TABLE IF EXISTS offline_quiz_question_submissions;`);
+      await db.execAsync(`DROP TABLE IF EXISTS offline_quiz_attempts;`);
+      await db.execAsync(`DROP TABLE IF EXISTS offline_assessments;`); // Add this line to drop the old table
+
       // --- Existing table creations ---
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_courses (
-          id INTEGER PRIMARY KEY NOT NULL, user_email TEXT NOT NULL, title TEXT NOT NULL, course_code TEXT, description TEXT, program_id INTEGER, program_name TEXT, instructor_id INTEGER, instructor_name TEXT, status TEXT, enrollment_date TEXT NOT NULL
+          id INTEGER PRIMARY KEY NOT NULL, 
+          user_email TEXT NOT NULL, 
+          title TEXT NOT NULL, 
+          course_code TEXT, 
+          description TEXT, 
+          program_id INTEGER, 
+          program_name TEXT, 
+          instructor_id INTEGER, 
+          instructor_name TEXT, 
+          status TEXT, 
+          enrollment_date TEXT NOT NULL
         );`
       );
+      
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_course_details (
-          course_id INTEGER NOT NULL, user_email TEXT NOT NULL, course_data TEXT NOT NULL, PRIMARY KEY (course_id, user_email)
+          course_id INTEGER NOT NULL, 
+          user_email TEXT NOT NULL, 
+          course_data TEXT NOT NULL, 
+          PRIMARY KEY (course_id, user_email)
         );`
       );
+      
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_materials (
-          id INTEGER PRIMARY KEY NOT NULL, user_email TEXT NOT NULL, course_id INTEGER NOT NULL, title TEXT NOT NULL, file_path TEXT, content TEXT, material_type TEXT, created_at TEXT, available_at TEXT, unavailable_at TEXT, material_data TEXT NOT NULL,
+          id INTEGER PRIMARY KEY NOT NULL, 
+          user_email TEXT NOT NULL, 
+          course_id INTEGER NOT NULL, 
+          title TEXT NOT NULL, 
+          file_path TEXT, 
+          content TEXT, 
+          material_type TEXT, 
+          created_at TEXT, 
+          available_at TEXT, 
+          unavailable_at TEXT,
           FOREIGN KEY (course_id, user_email) REFERENCES offline_course_details(course_id, user_email) ON DELETE CASCADE
         );`
       );
+      
+      // FIXED: Update offline_assessments table to include all required columns
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_assessments (
-          id INTEGER PRIMARY KEY NOT NULL, user_email TEXT NOT NULL, course_id INTEGER NOT NULL, title TEXT NOT NULL, description TEXT, type TEXT, assessment_file_path TEXT, assessment_file_url TEXT, assessment_data TEXT NOT NULL,
+          id INTEGER PRIMARY KEY NOT NULL, 
+          user_email TEXT NOT NULL, 
+          course_id INTEGER NOT NULL, 
+          title TEXT NOT NULL, 
+          description TEXT, 
+          type TEXT, 
+          available_at TEXT, 
+          unavailable_at TEXT, 
+          max_attempts INTEGER, 
+          duration_minutes INTEGER, 
+          points INTEGER DEFAULT 0,
+          assessment_file_path TEXT, 
+          assessment_file_url TEXT, 
+          assessment_data TEXT NOT NULL DEFAULT '{}',
           FOREIGN KEY (course_id, user_email) REFERENCES offline_course_details(course_id, user_email) ON DELETE CASCADE
         );`
       );
+
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_assessment_data (
-          assessment_id INTEGER NOT NULL, user_email TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY (assessment_id, user_email)
+          assessment_id INTEGER NOT NULL, 
+          user_email TEXT NOT NULL, 
+          data TEXT NOT NULL, 
+          PRIMARY KEY (assessment_id, user_email)
         );`
       );
+      
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_assessment_sync (
-          assessment_id INTEGER NOT NULL, user_email TEXT NOT NULL, last_sync_timestamp TEXT NOT NULL, PRIMARY KEY (assessment_id, user_email)
+          assessment_id INTEGER NOT NULL, 
+          user_email TEXT NOT NULL, 
+          last_sync_timestamp TEXT NOT NULL, 
+          PRIMARY KEY (assessment_id, user_email)
         );`
       );
+      
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_submissions (
-          id INTEGER PRIMARY KEY AUTOINCREMENT, user_email TEXT NOT NULL, assessment_id INTEGER NOT NULL, file_uri TEXT NOT NULL, original_filename TEXT NOT NULL, submission_status TEXT NOT NULL, submitted_at TEXT NOT NULL,
+          id INTEGER PRIMARY KEY AUTOINCREMENT, 
+          user_email TEXT NOT NULL, 
+          assessment_id INTEGER NOT NULL, 
+          file_uri TEXT NOT NULL, 
+          original_filename TEXT NOT NULL, 
+          submission_status TEXT NOT NULL, 
+          submitted_at TEXT NOT NULL,
           UNIQUE(user_email, assessment_id) ON CONFLICT REPLACE
         );`
       );
+      
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_quiz_questions (
-          id INTEGER PRIMARY KEY NOT NULL, user_email TEXT NOT NULL, assessment_id INTEGER NOT NULL, question_text TEXT NOT NULL, question_type TEXT NOT NULL, options TEXT, correct_answer TEXT, points INTEGER, order_index INTEGER, question_data TEXT NOT NULL,
+          id INTEGER PRIMARY KEY NOT NULL, 
+          user_email TEXT NOT NULL, 
+          assessment_id INTEGER NOT NULL, 
+          question_text TEXT NOT NULL, 
+          question_type TEXT NOT NULL, 
+          options TEXT, 
+          correct_answer TEXT, 
+          points INTEGER, 
+          order_index INTEGER, 
+          question_data TEXT NOT NULL,
           FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessment_data(assessment_id, user_email) ON DELETE CASCADE
         );`
       );
       
-      // --- FORCE-RESET QUIZ TABLES ---
-      // This ensures the schema is always up-to-date during development.
-      console.log('🔄 Resetting offline quiz tables to ensure correct schema...');
-      await db.execAsync(`DROP TABLE IF EXISTS offline_quiz_option_selections;`);
-      await db.execAsync(`DROP TABLE IF EXISTS offline_quiz_question_submissions;`);
-      await db.execAsync(`DROP TABLE IF EXISTS offline_quiz_attempts;`);
-
       // --- RECREATE QUIZ TABLES WITH CORRECT SCHEMA ---
       await db.execAsync(
         `CREATE TABLE offline_quiz_attempts (
@@ -137,6 +208,7 @@ export const initDb = async (): Promise<void> => {
           FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessments(id, user_email) ON DELETE CASCADE
         );`
       );
+      
       await db.execAsync(
         `CREATE TABLE offline_quiz_question_submissions (
           submission_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -147,6 +219,7 @@ export const initDb = async (): Promise<void> => {
           FOREIGN KEY (attempt_id) REFERENCES offline_quiz_attempts(attempt_id) ON DELETE CASCADE
         );`
       );
+      
       await db.execAsync(
         `CREATE TABLE offline_quiz_option_selections (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -158,11 +231,16 @@ export const initDb = async (): Promise<void> => {
           FOREIGN KEY (submission_id) REFERENCES offline_quiz_question_submissions(submission_id) ON DELETE CASCADE
         );`
       );
+      
       console.log('✅ Offline quiz tables created successfully.');
 
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS app_state (
-            user_email TEXT PRIMARY KEY NOT NULL, server_time TEXT, server_time_offset INTEGER, last_time_check INTEGER, time_check_sequence INTEGER DEFAULT 0
+            user_email TEXT PRIMARY KEY NOT NULL, 
+            server_time TEXT, 
+            server_time_offset INTEGER, 
+            last_time_check INTEGER, 
+            time_check_sequence INTEGER DEFAULT 0
         );`
       );
 
@@ -177,7 +255,6 @@ export const initDb = async (): Promise<void> => {
   })();
   await initializationPromise;
 };
-
 
 
 // COURSES
@@ -220,12 +297,50 @@ export const saveCourseDetailsToDb = async (course: any, userEmail: string): Pro
   try {
     await initDb();
     const db = await getDb();
-    console.log('ðŸ’¾ Saving detailed course data for user:', userEmail, ' and course:', course.id);
+    
+    // ENHANCED: Better validation with more specific error messages
+    if (!course) {
+      console.error('❌ Course parameter is null or undefined');
+      throw new Error('Course parameter is required and cannot be null');
+    }
+    
+    // CRITICAL FIX: Handle string IDs and validate properly
+    let courseId: number;
+    if (typeof course.id === 'string') {
+      courseId = parseInt(course.id, 10);
+    } else if (typeof course.id === 'number') {
+      courseId = course.id;
+    } else {
+      courseId = 0; // Will fail validation below
+    }
+    
+    if (!courseId || isNaN(courseId) || courseId <= 0) {
+      console.error('❌ Invalid course.id after conversion:', {
+        originalId: course.id,
+        originalType: typeof course.id,
+        convertedId: courseId,
+        convertedType: typeof courseId,
+        isNaN: isNaN(courseId)
+      });
+      console.error('❌ Course object:', JSON.stringify(course, null, 2));
+      throw new Error(`Invalid course.id: ${course.id} (converted to ${courseId}). Must be a positive number.`);
+    }
+    
+    // Update the course object with the validated numeric ID
+    course.id = courseId;
+    
+    if (!userEmail || userEmail.trim() === '') {
+      console.error('❌ Invalid userEmail:', userEmail);
+      throw new Error(`Invalid userEmail: ${userEmail}. Must be a non-empty string.`);
+    }
+    
+    console.log('💾 Saving detailed course data for user:', userEmail, ' and course:', courseId);
+    console.log(`📋 Validated - Course ID: ${courseId} (type: ${typeof courseId}), User: "${userEmail}"`);
 
     // Save the main course data
     await db.runAsync(
       `INSERT OR REPLACE INTO offline_course_details (course_id, user_email, course_data) VALUES (?, ?, ?);`,
-      [course.id, userEmail, JSON.stringify(course)]
+      [courseId, userEmail, JSON.stringify(course)]
     );
 
     // Separate and save materials and assessments from topics
@@ -233,29 +348,61 @@ export const saveCourseDetailsToDb = async (course: any, userEmail: string): Pro
     const assessmentsToSave = [];
 
     // Extract materials and assessments from nested topics
-    if (course.topics) {
+    if (course.topics && Array.isArray(course.topics)) {
       for (const topic of course.topics) {
-        if (topic.materials) {
+        if (topic.materials && Array.isArray(topic.materials)) {
           materialsToSave.push(...topic.materials);
         }
-        if (topic.assessments) {
+        if (topic.assessments && Array.isArray(topic.assessments)) {
           assessmentsToSave.push(...topic.assessments);
         }
       }
     }
     
     // Handle independent assessments (not in a topic)
-    if (course.assessments) {
+    if (course.assessments && Array.isArray(course.assessments)) {
       assessmentsToSave.push(...course.assessments);
     }
     
-    // Save the materials and assessments
-    await saveMaterialsToDb(materialsToSave, course.id, userEmail);
-    await saveAssessmentsToDb(assessmentsToSave, course.id, userEmail);
+    // Handle independent materials (not in a topic)
+    if (course.materials && Array.isArray(course.materials)) {
+      materialsToSave.push(...course.materials);
+    }
+    
+    // ENHANCED: Better logging and validation before calling sub-functions
+    console.log(`📊 Found ${materialsToSave.length} materials and ${assessmentsToSave.length} assessments to save for course ${courseId}`);
+    
+    // Save the materials with error handling
+    if (materialsToSave.length > 0) {
+      try {
+        console.log(`🔄 About to save ${materialsToSave.length} materials with courseId: ${courseId} (${typeof courseId}) and userEmail: "${userEmail}"`);
+        await saveMaterialsToDb(materialsToSave, courseId, userEmail);
+      } catch (materialError) {
+        console.error('❌ Failed to save materials for course', courseId, ':', materialError);
+        // Don't throw here, continue with assessments
+      }
+    }
+    
+    // Save the assessments with error handling
+    if (assessmentsToSave.length > 0) {
+      try {
+        console.log(`🔄 About to save ${assessmentsToSave.length} assessments with courseId: ${courseId} (${typeof courseId}) and userEmail: "${userEmail}"`);
+        await saveAssessmentsToDb(assessmentsToSave, courseId, userEmail);
+      } catch (assessmentError) {
+        console.error('❌ Failed to save assessments for course', courseId, ':', assessmentError);
+        // Don't throw here, the course details are already saved
+      }
+    }
 
-    console.log('âœ… Detailed course data saved successfully.');
+    console.log('✅ Detailed course data saved successfully.');
   } catch (error) {
-    console.error('âŒ Failed to save detailed course data:', error);
+    console.error('❌ Failed to save detailed course data:', error);
+    console.error('❌ Parameters received:', { 
+      courseId: course?.id, 
+      courseType: typeof course?.id,
+      userEmail: userEmail,
+      userEmailType: typeof userEmail 
+    });
     throw error;
   }
 };
@@ -330,31 +477,69 @@ export const getEnrolledCoursesFromDb = async (userEmail: string) => {
 // MATERIALS
 export const saveMaterialsToDb = async (materials: any[], courseId: number, userEmail: string): Promise<void> => {
   if (!materials || materials.length === 0) {
+    console.log('📝 No materials to save for course:', courseId);
     return;
   }
+  
+  // FIXED: More specific validation with better error messages
+  if (!courseId || courseId === 0) {
+    console.error('❌ Invalid courseId parameter for materials:', courseId);
+    console.error('❌ Called with parameters:', { materials: materials?.length, courseId, userEmail });
+    throw new Error(`Invalid courseId for materials: ${courseId}. Must be a positive number.`);
+  }
+  
+  if (!userEmail || userEmail.trim() === '') {
+    console.error('❌ Invalid userEmail parameter for materials:', userEmail);
+    console.error('❌ Called with parameters:', { materials: materials?.length, courseId, userEmail });
+    throw new Error(`Invalid userEmail for materials: ${userEmail}. Must be a non-empty string.`);
+  }
+  
   await initDb();
   const db = await getDb();
-  console.log('ðŸ’¾ Saving materials for course:', courseId);
+  console.log('💾 Saving materials for course:', courseId, 'user:', userEmail);
 
   await db.withTransactionAsync(async () => {
     for (const material of materials) {
-      await db.runAsync(
-        `INSERT OR REPLACE INTO offline_materials (id, user_email, course_id, title, file_path, content, material_type, created_at, available_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
-        [
-          material.id,
-          userEmail,
-          courseId,
-          material.title,
-          material.file_path,
-          material.content,
-          material.type,
-          material.created_at,
-          material.available_at
-        ]
-      );
+      try {
+        // FIXED: Validate material ID
+        if (!material.id || material.id === 0) {
+          console.error('❌ Invalid material ID:', material.id, 'for material:', material.title);
+          continue; // Skip this material
+        }
+
+        await db.runAsync(
+          `INSERT OR REPLACE INTO offline_materials 
+           (id, user_email, course_id, title, file_path, content, material_type, created_at, available_at, unavailable_at) 
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+          [
+            material.id,
+            userEmail,
+            courseId, // FIXED: Use the courseId parameter
+            material.title || 'Untitled Material',
+            material.file_path || '',
+            material.content || '',
+            material.type || 'document',
+            material.created_at || new Date().toISOString(),
+            material.available_at || null,
+            material.unavailable_at || null
+          ]
+        );
+        
+        console.log(`✅ Saved material: ${material.title} (ID: ${material.id}) for course: ${courseId}`);
+      } catch (materialError) {
+        console.error('❌ Failed to save individual material:', material?.id || 'unknown', materialError);
+        console.error('Material data:', {
+          id: material?.id,
+          title: material?.title,
+          courseId: courseId,
+          userEmail: userEmail
+        });
+        // Continue with other materials
+      }
     }
   });
-  console.log(`âœ… Saved ${materials.length} materials for course ${courseId}`);
+  
+  console.log(`✅ Saved ${materials.length} materials for course ${courseId}`);
 };
 
 export const getMaterialDetailsFromDb = async (materialId: number, userEmail: string): Promise<any | null> => {
@@ -376,34 +561,96 @@ export const getMaterialDetailsFromDb = async (materialId: number, userEmail: st
 
 export const saveAssessmentsToDb = async (assessments: any[], courseId: number, userEmail: string): Promise<void> => {
   if (!assessments || assessments.length === 0) {
+    console.log('📝 No assessments to save for course:', courseId);
     return;
   }
+  
+  // ENHANCED: More specific validation with proper courseId handling
+  let validCourseId: number;
+  
+  // Handle string courseId conversion
+  if (typeof courseId === 'string') {
+    validCourseId = parseInt(courseId, 10);
+  } else if (typeof courseId === 'number') {
+    validCourseId = courseId;
+  } else {
+    console.error('❌ Invalid courseId type:', typeof courseId, courseId);
+    throw new Error(`Invalid courseId type: ${typeof courseId}. Must be a number or numeric string.`);
+  }
+  
+  // Validate the parsed courseId
+  if (isNaN(validCourseId) || validCourseId <= 0) {
+    console.error('❌ Invalid courseId parameter (NaN or invalid):', {
+      originalCourseId: courseId,
+      parsedCourseId: validCourseId,
+      type: typeof courseId,
+      isNaN: isNaN(validCourseId),
+      isNumber: typeof validCourseId === 'number'
+    });
+    console.error('❌ Called with parameters:', { 
+      assessments: assessments?.length, 
+      courseId, 
+      userEmail,
+      courseIdType: typeof courseId
+    });
+    
+    // Try to extract courseId from the assessment itself as fallback
+    if (assessments.length > 0 && assessments[0].course_id) {
+      validCourseId = parseInt(assessments[0].course_id, 10);
+      console.log('🔄 Using courseId from assessment data as fallback:', validCourseId);
+      
+      if (isNaN(validCourseId) || validCourseId <= 0) {
+        throw new Error(`Invalid courseId even from assessment fallback: ${validCourseId}. Cannot save assessments.`);
+      }
+    } else {
+      throw new Error(`Invalid courseId: ${courseId} (parsed: ${validCourseId}). Must be a positive number and no fallback available.`);
+    }
+  }
+  
+  if (!userEmail || userEmail.trim() === '') {
+    console.error('❌ Invalid userEmail parameter:', userEmail);
+    console.error('❌ Called with parameters:', { assessments: assessments?.length, courseId: validCourseId, userEmail });
+    throw new Error(`Invalid userEmail: ${userEmail}. Must be a non-empty string.`);
+  }
+  
   await initDb();
   const db = await getDb();
-  console.log('ðŸ’¾ Saving assessments for course:', courseId);
+  console.log('💾 Saving assessments for course:', validCourseId, 'user:', userEmail);
+  
   await db.withTransactionAsync(async () => {
     for (const assessment of assessments) {
-      await db.runAsync(
-        `INSERT OR REPLACE INTO offline_assessments (id, user_email, course_id, title, description, type, available_at, unavailable_at, max_attempts, duration_minutes, assessment_file_path, assessment_file_url, points) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
-        [
-          assessment.id,
-          userEmail,
-          courseId,
-          assessment.title,
-          assessment.description,
-          assessment.type,
-          assessment.available_at,
-          assessment.unavailable_at,
-          assessment.max_attempts,
-          assessment.duration_minutes,
-          assessment.assessment_file_path,
-          assessment.assessment_file_url,
-          assessment.points
-        ]
-      );
+      try {
+        console.log(`💾 Saving assessment: ${assessment.title} (ID: ${assessment.id})`);
+        
+        await db.runAsync(
+          `INSERT OR REPLACE INTO offline_assessments 
+           (id, course_id, user_email, title, type, description, available_at, unavailable_at, 
+            max_attempts, duration_minutes, points, assessment_file_path, assessment_file_url) 
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+          [
+            assessment.id,
+            validCourseId,
+            userEmail,
+            assessment.title || '',
+            assessment.type || '',
+            assessment.description || '',
+            assessment.available_at || null,
+            assessment.unavailable_at || null,
+            assessment.max_attempts || null,
+            assessment.duration_minutes || null, // Make sure this is not undefined
+            assessment.points || 0,
+            assessment.assessment_file_path || null,
+            assessment.assessment_file_url || null,
+          ]
+        );
+      } catch (error) {
+        console.error(`❌ Failed to save assessment ${assessment.id}:`, error);
+        throw error;
+      }
     }
   });
-  console.log(`âœ… Saved ${assessments.length} assessments for course ${courseId}`);
+  
+  console.log(`✅ Saved ${assessments.length} assessments for course ${validCourseId}`);
 };
 
 export const hasAssessmentDetailsSaved = async (
@@ -900,7 +1147,7 @@ export const fixQuizQuestionsTable = async (): Promise<void> => {
         points INTEGER,
         order_index INTEGER,
         question_data TEXT NOT NULL,
-        FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessment_data(assessment_id, user_email) ON DELETE CASCADE
+        FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessment_data(assessment_id, userEmail) ON DELETE CASCADE
       );`
     );
     
@@ -926,6 +1173,13 @@ export const saveQuizQuestionsToDb = async (
     
     console.log(`🧠 Saving ${questions.length} quiz questions for assessment ${assessmentId}`);
     
+    // Get assessment details to include duration
+    const assessmentResult = await db.getFirstAsync(
+      `SELECT duration_minutes FROM offline_assessments WHERE id = ? AND user_email = ?;`,
+      [assessmentId, userEmail]
+    );
+    const durationMinutes = assessmentResult?.duration_minutes || null;
+    
     await db.withTransactionAsync(async () => {
       await db.runAsync(
         `DELETE FROM offline_quiz_questions WHERE assessment_id = ? AND user_email = ?;`,
@@ -934,11 +1188,16 @@ export const saveQuizQuestionsToDb = async (
       
       for (let i = 0; i < questions.length; i++) {
         const question = questions[i];
-        
         const questionId = question.id || `${assessmentId}_${i + 1}`;
         
-        let optionsToSave = null;
+        // Include duration in question data
+        const enhancedQuestionData = {
+          ...question,
+          duration_minutes: durationMinutes
+        };
+        
         // Improved options validation and sanitization
+        let optionsToSave = null;
         if (question.options) {
           if (typeof question.options === 'string') {
             try {
@@ -978,7 +1237,7 @@ export const saveQuizQuestionsToDb = async (
             question.correct_answer || null,
             question.points || question.point_value || 1,
             i + 1,
-            JSON.stringify(question)
+            JSON.stringify(enhancedQuestionData) // Use enhanced data with duration
           ]
         );
       }
@@ -1122,39 +1381,122 @@ export const downloadAllQuizQuestions = async (
   }
 };
 
-export const startOfflineQuiz = async (assessmentId: number, userEmail: string): Promise < void > => {
+export const startOfflineQuiz = async (assessmentId: number, userEmail: string): Promise<void> => {
   try {
     await initDb();
     const db = await getDb();
 
-    // Check if an attempt for this quiz already exists
-    const existingAttempt = await db.getFirstAsync(
-      `SELECT * FROM offline_quiz_attempts WHERE assessment_id = ? AND user_email = ? AND is_completed = 0;`,
+    await db.withTransactionAsync(async () => {
+      // Check if an attempt for this quiz already exists
+      const existingAttempt = await db.getFirstAsync(
+        `SELECT * FROM offline_quiz_attempts WHERE assessment_id = ? AND user_email = ? AND is_completed = 0;`,
+        [assessmentId, userEmail]
+      );
+
+      if (existingAttempt) {
+        console.log(`Quiz attempt for assessment ${assessmentId} already in progress.`);
+        return;
+      }
+
+      // Get current attempt count
+      const attemptCount = await db.getFirstAsync(
+        `SELECT COUNT(*) as count FROM offline_quiz_attempts WHERE assessment_id = ? AND user_email = ?;`,
+        [assessmentId, userEmail]
+      );
+
+      // Update the assessment data with new attempt count
+      const assessmentData = await db.getFirstAsync(
+        `SELECT data FROM offline_assessment_data WHERE assessment_id = ? AND user_email = ?;`,
+        [assessmentId, userEmail]
+      );
+
+      let updatedData = {};
+      if (assessmentData && assessmentData.data) {
+        updatedData = JSON.parse(assessmentData.data);
+        if (updatedData.attemptStatus) {
+          updatedData.attemptStatus.attempts_made = (attemptCount?.count || 0) + 1;
+          updatedData.attemptStatus.attempts_remaining = 
+            updatedData.attemptStatus.max_attempts !== null 
+              ? Math.max(0, updatedData.attemptStatus.max_attempts - ((attemptCount?.count || 0) + 1))
+              : null;
+        }
+      }
+
+      // Save updated assessment data
+      await db.runAsync(
+        `UPDATE offline_assessment_data SET data = ? WHERE assessment_id = ? AND user_email = ?;`,
+        [JSON.stringify(updatedData), assessmentId, userEmail]
+      );
+
+      // Create new attempt
+      await db.runAsync(
+        `INSERT INTO offline_quiz_attempts (assessment_id, user_email, start_time, answers, is_completed)
+         VALUES (?, ?, ?, ?, ?);`,
+        [
+          assessmentId,
+          userEmail,
+          new Date().toISOString(),
+          JSON.stringify({}),
+          0
+        ]
+      );
+    });
+
+    console.log(`✅ Started offline quiz for assessment ${assessmentId}`);
+  } catch (error) {
+    console.error(`❌ Failed to start offline quiz: ${error}`);
+    throw error;
+  }
+};
+
+export const getOfflineAttemptCount = async (assessmentId: number, userEmail: string): Promise<{
+  attempts_made: number;
+  attempts_remaining: number | null;
+}> => {
+  try {
+    const db = await getDb();
+    
+    // First get the attempt status from assessment_data
+    const assessmentData = await db.getFirstAsync(
+      `SELECT data FROM offline_assessment_data 
+       WHERE assessment_id = ? AND user_email = ?;`,
       [assessmentId, userEmail]
     );
 
-    if (existingAttempt) {
-      console.log(`Quiz attempt for assessment ${assessmentId} by ${userEmail} is already in progress.`);
-      return;
+    let storedAttemptStatus = null;
+    if (assessmentData?.data) {
+      const parsed = JSON.parse(assessmentData.data);
+      storedAttemptStatus = parsed.attemptStatus;
     }
 
-    // Create a new entry in offline_quiz_attempts table
-    await db.runAsync(
-      `INSERT INTO offline_quiz_attempts (assessment_id, user_email, start_time, answers, is_completed)
-       VALUES (?, ?, ?, ?, ?);`,
-      [
-        assessmentId,
-        userEmail,
-        new Date().toISOString(), // Store the start time
-        JSON.stringify({}), // Initialize with an empty JSON object for answers
-        0 // 0 for incomplete
-      ]
+    // Get completed attempts count from offline_quiz_attempts
+    const offlineAttempts = await db.getFirstAsync(
+      `SELECT COUNT(*) as count FROM offline_quiz_attempts 
+       WHERE assessment_id = ? AND user_email = ? AND is_completed = 1;`,
+      [assessmentId, userEmail]
     );
 
-    console.log(`✅ Started offline quiz for assessment ${assessmentId}.`);
+    const offlineCount = (offlineAttempts?.count || 0);
+    
+    // If we have stored attempt status, use it as base and add offline attempts
+    if (storedAttemptStatus) {
+      const totalAttempts = storedAttemptStatus.attempts_made + offlineCount;
+      const maxAttempts = storedAttemptStatus.max_attempts;
+      
+      return {
+        attempts_made: totalAttempts,
+        attempts_remaining: maxAttempts !== null ? Math.max(0, maxAttempts - totalAttempts) : null
+      };
+    }
+
+    // Fallback to just offline attempts if no stored status
+    return {
+      attempts_made: offlineCount,
+      attempts_remaining: null
+    };
   } catch (error) {
-    console.error(`❌ Failed to start offline quiz for assessment ${assessmentId}:`, error);
-    throw error;
+    console.error('Error getting offline attempt count:', error);
+    return { attempts_made: 0, attempts_remaining: null };
   }
 };
 
@@ -1335,20 +1677,51 @@ export const getCompletedOfflineQuizzes = async (userEmail: string): Promise<any
   }
 };
 
-export const deleteOfflineQuizAttempt = async (attemptId: number): Promise<void> => {
+export const getOfflineQuizAttempt = async (
+  assessmentId: number,
+  userEmail: string
+): Promise<any | null> => {
+  try {
+    const db = await getDb();
+    const result = await db.getFirstAsync(
+      `SELECT * FROM offline_quiz_attempts WHERE assessment_id = ? AND user_email = ? AND is_completed = 0;`,
+      [assessmentId, userEmail]
+    );
+    return result || null;
+  } catch (error) {
+    console.error('Error checking for offline quiz attempt:', error);
+    return null;
+  }
+};
+
+export const deleteOfflineQuizAttempt = async (assessmentId: number, userEmail: string): Promise<void> => {
   try {
     await initDb();
     const db = await getDb();
-    console.log(`ðŸ”§ Deleting synced offline quiz attempt with ID: ${attemptId}`);
+    console.log(`🗑️ Deleting offline quiz attempt for assessment ${assessmentId} and user ${userEmail}`);
 
-    await db.runAsync(
-      `DELETE FROM offline_quiz_attempts WHERE attempt_id = ?;`,
-      [attemptId]
-    );
+    await db.withTransactionAsync(async () => {
+      // First, get the attempt_id to delete related records
+      const attempt = await db.getFirstAsync(
+        `SELECT attempt_id FROM offline_quiz_attempts WHERE assessment_id = ? AND user_email = ?;`,
+        [assessmentId, userEmail]
+      );
 
-    console.log(`âœ… Successfully deleted offline quiz attempt with ID: ${attemptId}`);
+      if (attempt) {
+        const attemptId = (attempt as any).attempt_id;
+        // Delete related submissions and options first
+        await db.runAsync(`DELETE FROM offline_quiz_option_selections WHERE submission_id IN (SELECT submission_id FROM offline_quiz_question_submissions WHERE attempt_id = ?);`, [attemptId]);
+        await db.runAsync(`DELETE FROM offline_quiz_question_submissions WHERE attempt_id = ?;`, [attemptId]);
+        // Then, delete the attempt itself
+        await db.runAsync(`DELETE FROM offline_quiz_attempts WHERE attempt_id = ?;`, [attemptId]);
+        console.log(`✅ Deleted offline quiz attempt ${attemptId} and all related records.`);
+      } else {
+        console.log(`✅ No offline quiz attempt found for assessment ${assessmentId}. Nothing to delete.`);
+      }
+    });
+
   } catch (error) {
-    console.error(`â Œ Failed to delete offline quiz attempt with ID ${attemptId}:`, error);
+    console.error('❌ Failed to delete offline quiz attempt:', error);
     throw error;
   }
 };

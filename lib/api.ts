@@ -1,9 +1,11 @@
 import axios from 'axios';
 import { router } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
-import { detectTimeManipulation } from './localDb';
+import { detectTimeManipulation, saveAssessmentDetailsToDb } from './localDb';
 
-export const API_BASE_URL = 'http://192.168.1.4:8000/api'; // Or your actual IP/domain
+export const API_BASE_URL = __DEV__ 
+  ? 'http://192.168.1.9:8000/api'  // Development
+  : 'https://your-cloud-domain.com/api'; // Production
 
 let lastTimeCheckTimestamp = 0;
 const TIME_CHECK_THROTTLE = 60000; // Only check time manipulation every 60 seconds
@@ -276,32 +278,53 @@ export const syncOfflineSubmission = async (assessmentId: number, fileUri: strin
   }
 };
 
-export const syncOfflineQuiz = async (assessmentId: number, answers: string, startTime: string, endTime: string): Promise<boolean> => {
+export const syncOfflineQuiz = async (
+  assessmentId: number,
+  answers: string,
+  startTime: string,
+  endTime: string,
+): Promise<boolean> => {
   try {
     console.log(`🔄 Attempting to sync offline quiz for assessment ID: ${assessmentId}`);
     
-    // Format the answers for sending to server
     const formattedAnswers = formatAnswersForSync(answers);
-    
-    console.log(`📤 Sending formatted answers to server:`, formattedAnswers);
     
     const response = await api.post(`/assessments/${assessmentId}/sync-offline-quiz`, {
       answers: formattedAnswers,
       started_at: startTime,
       completed_at: endTime,
-      submitted_at: endTime, // Make sure to include this for the server
+      submitted_at: endTime,
     });
     
     if (response.status === 200) {
       console.log(`✅ Successfully synced offline quiz for assessment ${assessmentId}`);
-      console.log(`🏆 Score: ${response.data.score}, Passed: ${response.data.is_passed}`);
+      
+      // After successful sync, fetch and save the updated attempt status
+      try {
+        const attemptStatusResponse = await api.get(`/assessments/${assessmentId}/attempt-status`);
+        if (attemptStatusResponse.status === 200) {
+          const user = await getUserData();
+          if (user?.email) {
+            await saveAssessmentDetailsToDb(
+              assessmentId,
+              user.email,
+              attemptStatusResponse.data,
+              null
+            );
+            console.log('✅ Updated local attempt status after sync');
+          }
+        }
+      } catch (error) {
+        console.error('Failed to update local attempt status after sync:', error);
+      }
+      
       return true;
     } else {
       console.warn(`⚠️ Unexpected response when syncing quiz: ${response.status}`);
       return false;
     }
   } catch (error: any) {
-    console.error(`❌ Error syncing offline quiz for assessment ${assessmentId}:`, error.response?.data || error.message);
+    console.error(`❌ Error syncing offline quiz:`, error.response?.data || error.message);
     return false;
   }
 };
