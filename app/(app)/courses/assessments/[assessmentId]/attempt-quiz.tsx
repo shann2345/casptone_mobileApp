@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { useNetworkStatus } from '../../../../../context/NetworkContext';
 import api, { getUserData, syncOfflineQuiz } from '../../../../../lib/api';
-import { deleteOfflineQuizAttempt, detectTimeManipulation, getCurrentServerTime, getDb, getOfflineQuizAnswers, getOfflineQuizAttempt, getOfflineQuizAttemptStatus, getQuizQuestionsFromDb, submitOfflineQuiz, updateOfflineQuizAnswers, updateTimeSync } from '../../../../../lib/localDb';
+import { deleteOfflineQuizAttempt, detectTimeManipulation, getCompletedOfflineQuizzes, getCurrentServerTime, getDb, getOfflineQuizAnswers, getOfflineQuizAttempt, getOfflineQuizAttemptStatus, getQuizQuestionsFromDb, submitOfflineQuiz, updateOfflineQuizAnswers, updateTimeSync } from '../../../../../lib/localDb';
 
 interface SubmittedOption {
   id: number;
@@ -625,83 +625,94 @@ export default function AttemptQuizScreen() {
   };
 
   const syncCompletedOfflineQuiz = async () => {
-    if (!isConnected || !submittedAssessment || !assessmentId) return;
-    
-    setIsSyncing(true);
-    try {
-      // ✅ Only sync if this is an offline quiz that's completed and hasn't been synced yet
-      if (isOffline === 'true' && submittedAssessment.status === 'completed') {
-        console.log('🔄 Attempting to sync completed offline quiz...');
-        
-        // ✅ Check if already syncing to prevent duplicate attempts
-        if (savingAnswers.has(-1)) {
-          console.log('⏳ Sync already in progress, skipping...');
-          return;
-        }
-        
-        setSavingAnswers(new Set([...Array.from(savingAnswers), -1])); // Use -1 as special ID for full submission
-        
-        // Format the answers from our state - ensure all required fields
-        const formattedAnswersForSync = Object.keys(studentAnswers).reduce((acc, questionId) => {
-          const questionData = studentAnswers[questionId];
-          acc[questionId] = {
-            ...questionData,
-            submitted_answer: questionData.submitted_answer || questionData.answer?.toString() || '' // ✅ Ensure submitted_answer exists
-          };
-          return acc;
-        }, {} as any);
-        
-        const answersJson = JSON.stringify(formattedAnswersForSync);
-        
-        // Get start and end times
-        const startTime = submittedAssessment.started_at;
-        const endTime = submittedAssessment.completed_at || new Date().toISOString();
-        
-        // Get user email
-        const user = await getUserData();
-        const userEmail = user?.email;
-        
-        if (!userEmail) {
-          console.error('❌ User email not found for sync');
-          return;
-        }
-        
-        // Attempt to sync with server
-        const syncSuccess = await syncOfflineQuiz(
-          parseInt(assessmentId as string),
-          answersJson,
-          startTime,
-          endTime
-        );
-        
-        if (syncSuccess) {
-          console.log('✅ Offline quiz successfully synced with server');
-          // ✅ CLEAN UP LOCAL DATA AFTER SUCCESSFUL SYNC
-          await deleteOfflineQuizAttempt(parseInt(assessmentId as string), userEmail);
-          console.log('🧹 Local offline attempt data cleaned up after sync');
-          router.replace(`/courses/assessments/${assessmentId}`);
-        } else {
-          console.error('❌ Failed to sync offline quiz');
-        }
-        
-        // Remove from saving state
-        setSavingAnswers(prevState => {
-          const newSet = new Set(prevState);
-          newSet.delete(-1);
-          return newSet;
-        });
+  if (!isConnected || !submittedAssessment || !assessmentId) return;
+  
+  setIsSyncing(true);
+  try {
+    // ✅ Only sync if this is an offline quiz that's completed and hasn't been synced yet
+    if (isOffline === 'true' && submittedAssessment.status === 'completed') {
+      console.log('🔄 Attempting to sync completed offline quiz...');
+      
+      // ✅ FIRST CHECK if there's actually data to sync
+      const user = await getUserData();
+      const userEmail = user?.email;
+      
+      if (!userEmail) {
+        console.error('❌ User email not found for sync');
+        return;
       }
-    } catch (error) {
-      console.error('Error syncing completed offline quiz:', error);
+
+      // ✅ Check if there are actually completed offline quizzes to sync
+      const completedQuizzes = await getCompletedOfflineQuizzes(userEmail);
+      const hasQuizToSync = completedQuizzes.some(quiz => 
+        quiz.assessment_id === parseInt(assessmentId as string)
+      );
+
+      if (!hasQuizToSync) {
+        console.log('✅ No offline quiz data found to sync for this assessment');
+        return;
+      }
+      
+      // ✅ Check if already syncing to prevent duplicate attempts
+      if (savingAnswers.has(-1)) {
+        console.log('⏳ Sync already in progress, skipping...');
+        return;
+      }
+      
+      setSavingAnswers(new Set([...Array.from(savingAnswers), -1])); // Use -1 as special ID for full submission
+      
+      // Format the answers from our state - ensure all required fields
+      const formattedAnswersForSync = Object.keys(studentAnswers).reduce((acc, questionId) => {
+        const questionData = studentAnswers[questionId];
+        acc[questionId] = {
+          ...questionData,
+          submitted_answer: questionData.submitted_answer || questionData.answer?.toString() || '' // ✅ Ensure submitted_answer exists
+        };
+        return acc;
+      }, {} as any);
+      
+      const answersJson = JSON.stringify(formattedAnswersForSync);
+      
+      // Get start and end times
+      const startTime = submittedAssessment.started_at;
+      const endTime = submittedAssessment.completed_at || new Date().toISOString();
+      
+      // Attempt to sync with server
+      const syncSuccess = await syncOfflineQuiz(
+        parseInt(assessmentId as string),
+        answersJson,
+        startTime,
+        endTime
+      );
+      
+      if (syncSuccess) {
+        console.log('✅ Offline quiz successfully synced with server');
+        // ✅ CLEAN UP LOCAL DATA AFTER SUCCESSFUL SYNC
+        await deleteOfflineQuizAttempt(parseInt(assessmentId as string), userEmail);
+        console.log('🧹 Local offline attempt data cleaned up after sync');
+        router.replace(`/courses/assessments/${assessmentId}`);
+      } else {
+        console.error('❌ Failed to sync offline quiz');
+      }
+      
+      // Remove from saving state
       setSavingAnswers(prevState => {
         const newSet = new Set(prevState);
         newSet.delete(-1);
         return newSet;
       });
-    } finally {
-      setIsSyncing(false);
     }
-  };
+  } catch (error) {
+    console.error('Error syncing completed offline quiz:', error);
+    setSavingAnswers(prevState => {
+      const newSet = new Set(prevState);
+      newSet.delete(-1);
+      return newSet;
+    });
+  } finally {
+    setIsSyncing(false);
+  }
+};
 
   // Add this effect to automatically sync when connection is restored
   useEffect(() => {

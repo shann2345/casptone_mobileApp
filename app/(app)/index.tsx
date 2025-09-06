@@ -133,6 +133,7 @@ useEffect(() => {
       }
       
       // NEW: Check and sync for quiz attempts
+      // Check and sync for quiz attempts
       const completedOfflineQuizzes = await getCompletedOfflineQuizzes(user.email);
       if (completedOfflineQuizzes.length > 0) {
         Alert.alert(
@@ -140,20 +141,27 @@ useEffect(() => {
           `Found ${completedOfflineQuizzes.length} offline quiz attempt(s) to sync.`,
           [{ text: 'OK' }]
         );
+
         for (const quizAttempt of completedOfflineQuizzes) {
           console.log(`Attempting to sync quiz for assessment ID: ${quizAttempt.assessment_id}`);
+          
+          // ✅ Add validation to ensure required data exists
+          if (!quizAttempt.answers || !quizAttempt.start_time || !quizAttempt.end_time) {
+            console.warn(`Skipping sync for quiz ${quizAttempt.assessment_id} - missing required data`);
+            continue;
+          }
+
           const success = await syncOfflineQuiz(
-              quizAttempt.assessment_id,
-              quizAttempt.answers,
-              quizAttempt.start_time,
-              quizAttempt.end_time,
-              user.email  // Pass the user email
+            quizAttempt.assessment_id,
+            quizAttempt.answers,
+            quizAttempt.start_time,
+            quizAttempt.end_time
           );
           if (success) {
-              await deleteOfflineQuizAttempt(quizAttempt.assessment_id, user.email);
-              console.log(`Successfully synced and deleted local record for quiz attempt ${quizAttempt.assessment_id}`);
+            await deleteOfflineQuizAttempt(quizAttempt.assessment_id, user.email);
+            console.log(`Successfully synced and deleted local record for quiz attempt ${quizAttempt.assessment_id}`);
           } else {
-              console.warn(`Failed to sync quiz attempt ${quizAttempt.assessment_id}`);
+            console.warn(`Failed to sync quiz attempt ${quizAttempt.assessment_id}`);
           }
         }
       }

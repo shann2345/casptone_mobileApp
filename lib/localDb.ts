@@ -66,29 +66,45 @@ export const initDb = async (): Promise<void> => {
     await initializationPromise;
     return;
   }
+
   initializationPromise = (async () => {
     try {
       console.log('🚀 Initializing database...');
       const db = await getDb();
 
-      console.log('🔄 Resetting offline quiz tables to ensure correct schema...');
-      await db.execAsync(`DROP TABLE IF EXISTS offline_courses;`);
-      await db.execAsync(`DROP TABLE IF EXISTS offline_course_details;`);
-      await db.execAsync(`DROP TABLE IF EXISTS offline_materials;`);
-      await db.execAsync(`DROP TABLE IF EXISTS offline_material_details;`);
-      await db.execAsync(`DROP TABLE IF EXISTS offline_material_question_submissions;`);
-      await db.execAsync(`DROP TABLE IF EXISTS offline_material_option_selections;`);
-      await db.execAsync(`DROP TABLE IF EXISTS offline_material_question_submissions;`);
-      await db.execAsync(`DROP TABLE IF EXISTS offline_material_option_selections;`);
+      console.log('🔄 Resetting offline tables to ensure correct schema...');
+      
+      // Drop all tables first to ensure clean schema
       await db.execAsync(`DROP TABLE IF EXISTS offline_quiz_option_selections;`);
       await db.execAsync(`DROP TABLE IF EXISTS offline_quiz_question_submissions;`);
       await db.execAsync(`DROP TABLE IF EXISTS offline_quiz_attempts;`);
-      await db.execAsync(`DROP TABLE IF EXISTS offline_assessments;`); // Add this line to drop the old table
+      await db.execAsync(`DROP TABLE IF EXISTS offline_quiz_questions;`);
+      await db.execAsync(`DROP TABLE IF EXISTS offline_submissions;`);
+      await db.execAsync(`DROP TABLE IF EXISTS offline_assessment_sync;`);
+      await db.execAsync(`DROP TABLE IF EXISTS offline_assessment_data;`);
+      await db.execAsync(`DROP TABLE IF EXISTS offline_assessments;`);
+      await db.execAsync(`DROP TABLE IF EXISTS offline_materials;`);
+      await db.execAsync(`DROP TABLE IF EXISTS offline_course_details;`);
+      await db.execAsync(`DROP TABLE IF EXISTS offline_courses;`);
+      await db.execAsync(`DROP TABLE IF EXISTS app_state;`);
 
-      // --- Existing table creations ---
+      // Create tables in proper order (parent tables first)
+      
+      // 1. app_state (independent table)
+      await db.execAsync(
+        `CREATE TABLE IF NOT EXISTS app_state (
+          user_email TEXT PRIMARY KEY NOT NULL, 
+          server_time TEXT, 
+          server_time_offset INTEGER, 
+          last_time_check INTEGER, 
+          time_check_sequence INTEGER DEFAULT 0
+        );`
+      );
+
+      // 2. offline_courses (parent table)
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_courses (
-          id INTEGER PRIMARY KEY NOT NULL, 
+          id INTEGER NOT NULL, 
           user_email TEXT NOT NULL, 
           title TEXT NOT NULL, 
           course_code TEXT, 
@@ -98,22 +114,26 @@ export const initDb = async (): Promise<void> => {
           instructor_id INTEGER, 
           instructor_name TEXT, 
           status TEXT, 
-          enrollment_date TEXT NOT NULL
+          enrollment_date TEXT NOT NULL,
+          PRIMARY KEY (id, user_email)
         );`
       );
-      
+
+      // 3. offline_course_details (references offline_courses)
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_course_details (
           course_id INTEGER NOT NULL, 
           user_email TEXT NOT NULL, 
           course_data TEXT NOT NULL, 
-          PRIMARY KEY (course_id, user_email)
+          PRIMARY KEY (course_id, user_email),
+          FOREIGN KEY (course_id, user_email) REFERENCES offline_courses(id, user_email) ON DELETE CASCADE
         );`
       );
-      
+
+      // 4. offline_materials (references offline_courses)
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_materials (
-          id INTEGER PRIMARY KEY NOT NULL, 
+          id INTEGER NOT NULL, 
           user_email TEXT NOT NULL, 
           course_id INTEGER NOT NULL, 
           title TEXT NOT NULL, 
@@ -123,14 +143,15 @@ export const initDb = async (): Promise<void> => {
           created_at TEXT, 
           available_at TEXT, 
           unavailable_at TEXT,
-          FOREIGN KEY (course_id, user_email) REFERENCES offline_course_details(course_id, user_email) ON DELETE CASCADE
+          PRIMARY KEY (id, user_email),
+          FOREIGN KEY (course_id, user_email) REFERENCES offline_courses(id, user_email) ON DELETE CASCADE
         );`
       );
-      
-      // FIXED: Update offline_assessments table to include all required columns
+
+      // 5. offline_assessments (references offline_courses)
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_assessments (
-          id INTEGER PRIMARY KEY NOT NULL, 
+          id INTEGER NOT NULL, 
           user_email TEXT NOT NULL, 
           course_id INTEGER NOT NULL, 
           title TEXT NOT NULL, 
@@ -144,28 +165,34 @@ export const initDb = async (): Promise<void> => {
           assessment_file_path TEXT, 
           assessment_file_url TEXT, 
           assessment_data TEXT NOT NULL DEFAULT '{}',
-          FOREIGN KEY (course_id, user_email) REFERENCES offline_course_details(course_id, user_email) ON DELETE CASCADE
+          PRIMARY KEY (id, user_email),
+          FOREIGN KEY (course_id, user_email) REFERENCES offline_courses(id, user_email) ON DELETE CASCADE
         );`
       );
 
+      // 6. offline_assessment_data (references offline_assessments)
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_assessment_data (
           assessment_id INTEGER NOT NULL, 
           user_email TEXT NOT NULL, 
           data TEXT NOT NULL, 
-          PRIMARY KEY (assessment_id, user_email)
+          PRIMARY KEY (assessment_id, user_email),
+          FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessments(id, user_email) ON DELETE CASCADE
         );`
       );
-      
+
+      // 7. offline_assessment_sync (references offline_assessments)
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_assessment_sync (
           assessment_id INTEGER NOT NULL, 
           user_email TEXT NOT NULL, 
           last_sync_timestamp TEXT NOT NULL, 
-          PRIMARY KEY (assessment_id, user_email)
+          PRIMARY KEY (assessment_id, user_email),
+          FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessments(id, user_email) ON DELETE CASCADE
         );`
       );
-      
+
+      // 8. offline_submissions (references offline_assessments)
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_submissions (
           id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -175,13 +202,15 @@ export const initDb = async (): Promise<void> => {
           original_filename TEXT NOT NULL, 
           submission_status TEXT NOT NULL, 
           submitted_at TEXT NOT NULL,
-          UNIQUE(user_email, assessment_id) ON CONFLICT REPLACE
+          UNIQUE(user_email, assessment_id) ON CONFLICT REPLACE,
+          FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessments(id, user_email) ON DELETE CASCADE
         );`
       );
-      
+
+      // 9. offline_quiz_questions (references offline_assessments)
       await db.execAsync(
         `CREATE TABLE IF NOT EXISTS offline_quiz_questions (
-          id INTEGER PRIMARY KEY NOT NULL, 
+          id INTEGER NOT NULL, 
           user_email TEXT NOT NULL, 
           assessment_id INTEGER NOT NULL, 
           question_text TEXT NOT NULL, 
@@ -191,13 +220,14 @@ export const initDb = async (): Promise<void> => {
           points INTEGER, 
           order_index INTEGER, 
           question_data TEXT NOT NULL,
-          FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessment_data(assessment_id, user_email) ON DELETE CASCADE
+          PRIMARY KEY (id, user_email),
+          FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessments(id, user_email) ON DELETE CASCADE
         );`
       );
-      
-      // --- RECREATE QUIZ TABLES WITH CORRECT SCHEMA ---
+
+      // 10. offline_quiz_attempts (references offline_assessments)
       await db.execAsync(
-        `CREATE TABLE offline_quiz_attempts (
+        `CREATE TABLE IF NOT EXISTS offline_quiz_attempts (
           attempt_id INTEGER PRIMARY KEY AUTOINCREMENT,
           assessment_id INTEGER NOT NULL,
           user_email TEXT NOT NULL,
@@ -208,20 +238,22 @@ export const initDb = async (): Promise<void> => {
           FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessments(id, user_email) ON DELETE CASCADE
         );`
       );
-      
+
+      // 11. offline_quiz_question_submissions (references offline_quiz_attempts)
       await db.execAsync(
-        `CREATE TABLE offline_quiz_question_submissions (
+        `CREATE TABLE IF NOT EXISTS offline_quiz_question_submissions (
           submission_id INTEGER PRIMARY KEY AUTOINCREMENT,
           attempt_id INTEGER NOT NULL,
           question_id INTEGER NOT NULL,
-          submitted_answer TEXT,
+          submitted_answer TEXT, -- ✅ FIXED: This was missing and causing the error
           max_points INTEGER NOT NULL DEFAULT 1,
           FOREIGN KEY (attempt_id) REFERENCES offline_quiz_attempts(attempt_id) ON DELETE CASCADE
         );`
       );
-      
+
+      // 12. offline_quiz_option_selections (references offline_quiz_question_submissions)
       await db.execAsync(
-        `CREATE TABLE offline_quiz_option_selections (
+        `CREATE TABLE IF NOT EXISTS offline_quiz_option_selections (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           submission_id INTEGER NOT NULL,
           option_id INTEGER NOT NULL,
@@ -231,19 +263,10 @@ export const initDb = async (): Promise<void> => {
           FOREIGN KEY (submission_id) REFERENCES offline_quiz_question_submissions(submission_id) ON DELETE CASCADE
         );`
       );
-      
-      console.log('✅ Offline quiz tables created successfully.');
 
-      await db.execAsync(
-        `CREATE TABLE IF NOT EXISTS app_state (
-            user_email TEXT PRIMARY KEY NOT NULL, 
-            server_time TEXT, 
-            server_time_offset INTEGER, 
-            last_time_check INTEGER, 
-            time_check_sequence INTEGER DEFAULT 0
-        );`
-      );
+      console.log('✅ All tables created successfully with proper schema.');
 
+      dbInstance = db;
       dbInitialized = true;
       console.log('✅ Database initialization complete');
     } catch (error) {
@@ -1397,36 +1420,6 @@ export const startOfflineQuiz = async (assessmentId: number, userEmail: string):
         console.log(`Quiz attempt for assessment ${assessmentId} already in progress.`);
         return;
       }
-
-      // Get current attempt count
-      const attemptCount = await db.getFirstAsync(
-        `SELECT COUNT(*) as count FROM offline_quiz_attempts WHERE assessment_id = ? AND user_email = ?;`,
-        [assessmentId, userEmail]
-      );
-
-      // Update the assessment data with new attempt count
-      const assessmentData = await db.getFirstAsync(
-        `SELECT data FROM offline_assessment_data WHERE assessment_id = ? AND user_email = ?;`,
-        [assessmentId, userEmail]
-      );
-
-      let updatedData = {};
-      if (assessmentData && assessmentData.data) {
-        updatedData = JSON.parse(assessmentData.data);
-        if (updatedData.attemptStatus) {
-          updatedData.attemptStatus.attempts_made = (attemptCount?.count || 0) + 1;
-          updatedData.attemptStatus.attempts_remaining = 
-            updatedData.attemptStatus.max_attempts !== null 
-              ? Math.max(0, updatedData.attemptStatus.max_attempts - ((attemptCount?.count || 0) + 1))
-              : null;
-        }
-      }
-
-      // Save updated assessment data
-      await db.runAsync(
-        `UPDATE offline_assessment_data SET data = ? WHERE assessment_id = ? AND user_email = ?;`,
-        [JSON.stringify(updatedData), assessmentId, userEmail]
-      );
 
       // Create new attempt
       await db.runAsync(

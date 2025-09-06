@@ -87,7 +87,7 @@ export default function AssessmentDetailsScreen() {
   }
 
   try {
-    if (isConnected) {
+    if (netInfo?.isInternetReachable) {
       // ONLINE MODE
       console.log('✅ Online: Fetching assessment details from API.');
       const assessmentResponse = await api.get(`/assessments/${assessmentId}`);
@@ -176,13 +176,13 @@ export default function AssessmentDetailsScreen() {
       const offlineAttempt = await getOfflineQuizAttempt(parseInt(assessmentId as string), userEmail);
       
       if (offlineAssessment) {
-        // Get offline attempt count
+        // Get completed attempts count from offline_quiz_attempts
         const offlineAttemptCount = await getOfflineAttemptCount(parseInt(assessmentId as string), userEmail);
-        
-        // Create or update attempt status
+
+        // Use only the completed attempts for attempts_made
         const updatedAttemptStatus = {
           ...offlineAssessment.attemptStatus,
-          attempts_made: offlineAttemptCount.attempts_made,
+          attempts_made: offlineAttemptCount.attempts_made, // ← Use only completed attempts
           attempts_remaining: offlineAttemptCount.attempts_remaining,
           has_in_progress_attempt: !!offlineAttempt,
           can_start_new_attempt: offlineAttemptCount.attempts_remaining === null || 
@@ -202,7 +202,7 @@ export default function AssessmentDetailsScreen() {
   } catch (err: any) {
     console.error('Failed to fetch assessment details/status/submission:', err.response?.data || err.message);
     setError('Network error or unable to load assessment details/status/submission.');
-    if (!isConnected) {
+    if (!netInfo?.isInternetReachable) {
       Alert.alert('Error', 'Failed to load assessment details from local storage.');
     } else {
       Alert.alert('Error', 'Failed to fetch assessment details/status/submission.');
@@ -210,7 +210,7 @@ export default function AssessmentDetailsScreen() {
   } finally {
     setLoading(false);
   }
-}, [assessmentId, courseId, isConnected]);
+}, [assessmentId, courseId, netInfo?.isInternetReachable]);
   // ✅ CRITICAL: This will refresh data when returning from quiz attempt
   useFocusEffect(
     useCallback(() => {
@@ -220,7 +220,7 @@ export default function AssessmentDetailsScreen() {
 
   useEffect(() => {
     const syncSubmissions = async () => {
-      if (isConnected) {
+      if (netInfo?.isInternetReachable) {
         console.log('Network is back online. Checking for unsynced submissions...');
         const user = await getUserData();
         if (!user || !user.email) return;
@@ -255,7 +255,7 @@ export default function AssessmentDetailsScreen() {
     };
 
     syncSubmissions();
-  }, [isConnected]);
+  }, [netInfo?.isInternetReachable]);
 
   // Rest of your existing code remains the same...
   // (keeping all other functions unchanged)
@@ -357,7 +357,7 @@ export default function AssessmentDetailsScreen() {
           },
           {
             text: 'Resume',
-            onPress: () => router.push({
+            onPress: () => router.replace({
               pathname: `/courses/assessments/[assessmentId]/attempt-quiz`,
               params: {
                 assessmentId: assessmentDetail.id,
@@ -383,7 +383,7 @@ export default function AssessmentDetailsScreen() {
         {
           text: 'OK',
           onPress: () =>
-            router.push({
+            router.replace({
               pathname: '/courses/assessments/[assessmentId]/attempt-quiz',
               params: { 
                 assessmentId: assessmentDetail.id.toString(), 
@@ -427,7 +427,7 @@ export default function AssessmentDetailsScreen() {
 
     setSubmissionLoading(true);
     try {
-      if (isConnected) {
+      if (netInfo?.isInternetReachable) {
         const formData = new FormData();
         formData.append('assignment_file', {
           uri: selectedFile.uri,
