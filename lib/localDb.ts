@@ -18,21 +18,32 @@ type StudentAnswers = {
 let dbInstance: SQLite.SQLiteDatabase | null = null;
 let dbInitialized = false;
 let initializationPromise: Promise<void> | null = null;
+let dbLock = false; // Add a simple lock mechanism
 
 const openDatabase = async (): Promise<SQLite.SQLiteDatabase> => {
   try {
+    // Wait if another process is opening the database
+    while (dbLock) {
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    
+    dbLock = true;
+    
     if (Platform.OS === 'android') {
       await FileSystem.makeDirectoryAsync(dbDirectory, { intermediates: true }).catch(() => {
         // Directory might already exist, ignore error
       });
     }
     
-    console.log('ðŸ“‚ Opening database:', DB_NAME);
+    console.log('📂 Opening database:', DB_NAME);
     const db = await SQLite.openDatabaseAsync(DB_NAME);
-    console.log('âœ… Database opened successfully');
+    console.log('✅ Database opened successfully');
+    
+    dbLock = false;
     return db;
   } catch (error) {
-    console.error('âŒ Failed to open database:', error);
+    dbLock = false;
+    console.error('❌ Failed to open database:', error);
     throw error;
   }
 };
@@ -51,8 +62,11 @@ export const getDb = async (): Promise<SQLite.SQLiteDatabase> => {
     }
   }
 
-  // Open a new database instance
-  dbInstance = await openDatabase();
+  // Open a new database instance only if we don't have one
+  if (!dbInstance) {
+    dbInstance = await openDatabase();
+  }
+  
   return dbInstance;
 };
 
@@ -68,215 +82,238 @@ export const initDb = async (): Promise<void> => {
   }
 
   initializationPromise = (async () => {
-    try {
-      console.log('🚀 Initializing database...');
-      const db = await getDb();
+    let retryCount = 0;
+    const maxRetries = 3;
+    
+    while (retryCount < maxRetries) {
+      try {
+        console.log(`🚀 Initializing database... (attempt ${retryCount + 1})`);
+        
+        // Close any existing connection first
+        if (dbInstance) {
+          try {
+            await dbInstance.closeAsync();
+          } catch (closeError) {
+            console.warn('⚠️ Error closing existing database connection:', closeError);
+          }
+          dbInstance = null;
+          dbInitialized = false;
+        }
+        
+        // Wait a bit before retrying
+        if (retryCount > 0) {
+          await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
+        }
+        
+        const db = await getDb();
+        
+        console.log('🔄 Creating database schema...');
+        
+        // Use a transaction for all schema operations to prevent locks
+        await db.withTransactionAsync(async () => {
+          // Drop all tables first to ensure clean schema
+          const dropStatements = [
+            `DROP TABLE IF EXISTS offline_quiz_option_selections;`,
+            `DROP TABLE IF EXISTS offline_quiz_question_submissions;`,
+            `DROP TABLE IF EXISTS offline_quiz_attempts;`,
+            `DROP TABLE IF EXISTS offline_quiz_questions;`,
+            `DROP TABLE IF EXISTS offline_submissions;`,
+            `DROP TABLE IF EXISTS offline_assessment_sync;`,
+            `DROP TABLE IF EXISTS offline_assessment_data;`,
+            `DROP TABLE IF EXISTS offline_assessments;`,
+            `DROP TABLE IF EXISTS offline_materials;`,
+            `DROP TABLE IF EXISTS offline_course_details;`,
+            `DROP TABLE IF EXISTS offline_courses;`,
+            `DROP TABLE IF EXISTS app_state;`
+          ];
+          
+          for (const statement of dropStatements) {
+            await db.execAsync(statement);
+          }
+          
+          // Create tables in proper order
+          const createStatements = [
+            // 1. app_state (independent table)
+            `CREATE TABLE IF NOT EXISTS app_state (
+              user_email TEXT PRIMARY KEY NOT NULL, 
+              server_time TEXT, 
+              server_time_offset INTEGER, 
+              last_time_check INTEGER, 
+              time_check_sequence INTEGER DEFAULT 0
+            );`,
+            
+            // 2. offline_courses (parent table)
+            `CREATE TABLE IF NOT EXISTS offline_courses (
+              id INTEGER NOT NULL, 
+              user_email TEXT NOT NULL, 
+              title TEXT NOT NULL, 
+              course_code TEXT, 
+              description TEXT, 
+              program_id INTEGER, 
+              program_name TEXT, 
+              instructor_id INTEGER, 
+              instructor_name TEXT, 
+              status TEXT, 
+              enrollment_date TEXT NOT NULL,
+              PRIMARY KEY (id, user_email)
+            );`,
+            
+            // 3. offline_course_details (references offline_courses)
+            `CREATE TABLE IF NOT EXISTS offline_course_details (
+              course_id INTEGER NOT NULL, 
+              user_email TEXT NOT NULL, 
+              course_data TEXT NOT NULL, 
+              PRIMARY KEY (course_id, user_email),
+              FOREIGN KEY (course_id, user_email) REFERENCES offline_courses(id, user_email) ON DELETE CASCADE
+            );`,
+            
+            // 4. offline_materials (references offline_courses)
+            `CREATE TABLE IF NOT EXISTS offline_materials (
+              id INTEGER NOT NULL, 
+              user_email TEXT NOT NULL, 
+              course_id INTEGER NOT NULL, 
+              title TEXT NOT NULL, 
+              file_path TEXT, 
+              content TEXT, 
+              material_type TEXT, 
+              created_at TEXT, 
+              available_at TEXT, 
+              unavailable_at TEXT,
+              PRIMARY KEY (id, user_email),
+              FOREIGN KEY (course_id, user_email) REFERENCES offline_courses(id, user_email) ON DELETE CASCADE
+            );`,
+            
+            // 5. offline_assessments (references offline_courses)
+            `CREATE TABLE IF NOT EXISTS offline_assessments (
+              id INTEGER NOT NULL, 
+              user_email TEXT NOT NULL, 
+              course_id INTEGER NOT NULL, 
+              title TEXT NOT NULL, 
+              description TEXT, 
+              type TEXT, 
+              available_at TEXT, 
+              unavailable_at TEXT, 
+              max_attempts INTEGER, 
+              duration_minutes INTEGER, 
+              points INTEGER DEFAULT 0,
+              assessment_file_path TEXT, 
+              assessment_file_url TEXT, 
+              assessment_data TEXT NOT NULL DEFAULT '{}',
+              PRIMARY KEY (id, user_email),
+              FOREIGN KEY (course_id, user_email) REFERENCES offline_courses(id, user_email) ON DELETE CASCADE
+            );`,
+            
+            // Add remaining table creation statements...
+            `CREATE TABLE IF NOT EXISTS offline_assessment_data (
+              assessment_id INTEGER NOT NULL, 
+              user_email TEXT NOT NULL, 
+              data TEXT NOT NULL, 
+              PRIMARY KEY (assessment_id, user_email),
+              FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessments(id, user_email) ON DELETE CASCADE
+            );`,
+            
+            `CREATE TABLE IF NOT EXISTS offline_assessment_sync (
+              assessment_id INTEGER NOT NULL, 
+              user_email TEXT NOT NULL, 
+              last_sync_timestamp TEXT NOT NULL, 
+              PRIMARY KEY (assessment_id, user_email),
+              FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessments(id, user_email) ON DELETE CASCADE
+            );`,
+            
+            `CREATE TABLE IF NOT EXISTS offline_submissions (
+              id INTEGER PRIMARY KEY AUTOINCREMENT, 
+              user_email TEXT NOT NULL, 
+              assessment_id INTEGER NOT NULL, 
+              file_uri TEXT NOT NULL, 
+              original_filename TEXT NOT NULL, 
+              submission_status TEXT NOT NULL, 
+              submitted_at TEXT NOT NULL,
+              UNIQUE(user_email, assessment_id) ON CONFLICT REPLACE,
+              FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessments(id, user_email) ON DELETE CASCADE
+            );`,
+            
+            `CREATE TABLE IF NOT EXISTS offline_quiz_questions (
+              id INTEGER NOT NULL, 
+              user_email TEXT NOT NULL, 
+              assessment_id INTEGER NOT NULL, 
+              question_text TEXT NOT NULL, 
+              question_type TEXT NOT NULL, 
+              options TEXT, 
+              correct_answer TEXT, 
+              points INTEGER, 
+              order_index INTEGER, 
+              question_data TEXT NOT NULL,
+              PRIMARY KEY (id, user_email),
+              FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessments(id, user_email) ON DELETE CASCADE
+            );`,
+            
+            `CREATE TABLE IF NOT EXISTS offline_quiz_attempts (
+              attempt_id INTEGER PRIMARY KEY AUTOINCREMENT,
+              assessment_id INTEGER NOT NULL,
+              user_email TEXT NOT NULL,
+              start_time TEXT NOT NULL,
+              end_time TEXT,
+              is_completed INTEGER DEFAULT 0,
+              answers TEXT,
+              FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessments(id, user_email) ON DELETE CASCADE
+            );`,
+            
+            `CREATE TABLE IF NOT EXISTS offline_quiz_question_submissions (
+              submission_id INTEGER PRIMARY KEY AUTOINCREMENT,
+              attempt_id INTEGER NOT NULL,
+              question_id INTEGER NOT NULL,
+              submitted_answer TEXT,
+              max_points INTEGER NOT NULL DEFAULT 1,
+              FOREIGN KEY (attempt_id) REFERENCES offline_quiz_attempts(attempt_id) ON DELETE CASCADE
+            );`,
+            
+            `CREATE TABLE IF NOT EXISTS offline_quiz_option_selections (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              submission_id INTEGER NOT NULL,
+              option_id INTEGER NOT NULL,
+              option_text TEXT NOT NULL,
+              is_selected INTEGER NOT NULL DEFAULT 0,
+              is_correct_option INTEGER NOT NULL DEFAULT 0,
+              FOREIGN KEY (submission_id) REFERENCES offline_quiz_question_submissions(submission_id) ON DELETE CASCADE
+            );`
+          ];
+          
+          for (const statement of createStatements) {
+            await db.execAsync(statement);
+          }
+        });
 
-      console.log('🔄 Resetting offline tables to ensure correct schema...');
-      
-      // Drop all tables first to ensure clean schema
-      await db.execAsync(`DROP TABLE IF EXISTS offline_quiz_option_selections;`);
-      await db.execAsync(`DROP TABLE IF EXISTS offline_quiz_question_submissions;`);
-      await db.execAsync(`DROP TABLE IF EXISTS offline_quiz_attempts;`);
-      await db.execAsync(`DROP TABLE IF EXISTS offline_quiz_questions;`);
-      await db.execAsync(`DROP TABLE IF EXISTS offline_submissions;`);
-      await db.execAsync(`DROP TABLE IF EXISTS offline_assessment_sync;`);
-      await db.execAsync(`DROP TABLE IF EXISTS offline_assessment_data;`);
-      await db.execAsync(`DROP TABLE IF EXISTS offline_assessments;`);
-      await db.execAsync(`DROP TABLE IF EXISTS offline_materials;`);
-      await db.execAsync(`DROP TABLE IF EXISTS offline_course_details;`);
-      await db.execAsync(`DROP TABLE IF EXISTS offline_courses;`);
-      await db.execAsync(`DROP TABLE IF EXISTS app_state;`);
-
-      // Create tables in proper order (parent tables first)
-      
-      // 1. app_state (independent table)
-      await db.execAsync(
-        `CREATE TABLE IF NOT EXISTS app_state (
-          user_email TEXT PRIMARY KEY NOT NULL, 
-          server_time TEXT, 
-          server_time_offset INTEGER, 
-          last_time_check INTEGER, 
-          time_check_sequence INTEGER DEFAULT 0
-        );`
-      );
-
-      // 2. offline_courses (parent table)
-      await db.execAsync(
-        `CREATE TABLE IF NOT EXISTS offline_courses (
-          id INTEGER NOT NULL, 
-          user_email TEXT NOT NULL, 
-          title TEXT NOT NULL, 
-          course_code TEXT, 
-          description TEXT, 
-          program_id INTEGER, 
-          program_name TEXT, 
-          instructor_id INTEGER, 
-          instructor_name TEXT, 
-          status TEXT, 
-          enrollment_date TEXT NOT NULL,
-          PRIMARY KEY (id, user_email)
-        );`
-      );
-
-      // 3. offline_course_details (references offline_courses)
-      await db.execAsync(
-        `CREATE TABLE IF NOT EXISTS offline_course_details (
-          course_id INTEGER NOT NULL, 
-          user_email TEXT NOT NULL, 
-          course_data TEXT NOT NULL, 
-          PRIMARY KEY (course_id, user_email),
-          FOREIGN KEY (course_id, user_email) REFERENCES offline_courses(id, user_email) ON DELETE CASCADE
-        );`
-      );
-
-      // 4. offline_materials (references offline_courses)
-      await db.execAsync(
-        `CREATE TABLE IF NOT EXISTS offline_materials (
-          id INTEGER NOT NULL, 
-          user_email TEXT NOT NULL, 
-          course_id INTEGER NOT NULL, 
-          title TEXT NOT NULL, 
-          file_path TEXT, 
-          content TEXT, 
-          material_type TEXT, 
-          created_at TEXT, 
-          available_at TEXT, 
-          unavailable_at TEXT,
-          PRIMARY KEY (id, user_email),
-          FOREIGN KEY (course_id, user_email) REFERENCES offline_courses(id, user_email) ON DELETE CASCADE
-        );`
-      );
-
-      // 5. offline_assessments (references offline_courses)
-      await db.execAsync(
-        `CREATE TABLE IF NOT EXISTS offline_assessments (
-          id INTEGER NOT NULL, 
-          user_email TEXT NOT NULL, 
-          course_id INTEGER NOT NULL, 
-          title TEXT NOT NULL, 
-          description TEXT, 
-          type TEXT, 
-          available_at TEXT, 
-          unavailable_at TEXT, 
-          max_attempts INTEGER, 
-          duration_minutes INTEGER, 
-          points INTEGER DEFAULT 0,
-          assessment_file_path TEXT, 
-          assessment_file_url TEXT, 
-          assessment_data TEXT NOT NULL DEFAULT '{}',
-          PRIMARY KEY (id, user_email),
-          FOREIGN KEY (course_id, user_email) REFERENCES offline_courses(id, user_email) ON DELETE CASCADE
-        );`
-      );
-
-      // 6. offline_assessment_data (references offline_assessments)
-      await db.execAsync(
-        `CREATE TABLE IF NOT EXISTS offline_assessment_data (
-          assessment_id INTEGER NOT NULL, 
-          user_email TEXT NOT NULL, 
-          data TEXT NOT NULL, 
-          PRIMARY KEY (assessment_id, user_email),
-          FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessments(id, user_email) ON DELETE CASCADE
-        );`
-      );
-
-      // 7. offline_assessment_sync (references offline_assessments)
-      await db.execAsync(
-        `CREATE TABLE IF NOT EXISTS offline_assessment_sync (
-          assessment_id INTEGER NOT NULL, 
-          user_email TEXT NOT NULL, 
-          last_sync_timestamp TEXT NOT NULL, 
-          PRIMARY KEY (assessment_id, user_email),
-          FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessments(id, user_email) ON DELETE CASCADE
-        );`
-      );
-
-      // 8. offline_submissions (references offline_assessments)
-      await db.execAsync(
-        `CREATE TABLE IF NOT EXISTS offline_submissions (
-          id INTEGER PRIMARY KEY AUTOINCREMENT, 
-          user_email TEXT NOT NULL, 
-          assessment_id INTEGER NOT NULL, 
-          file_uri TEXT NOT NULL, 
-          original_filename TEXT NOT NULL, 
-          submission_status TEXT NOT NULL, 
-          submitted_at TEXT NOT NULL,
-          UNIQUE(user_email, assessment_id) ON CONFLICT REPLACE,
-          FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessments(id, user_email) ON DELETE CASCADE
-        );`
-      );
-
-      // 9. offline_quiz_questions (references offline_assessments)
-      await db.execAsync(
-        `CREATE TABLE IF NOT EXISTS offline_quiz_questions (
-          id INTEGER NOT NULL, 
-          user_email TEXT NOT NULL, 
-          assessment_id INTEGER NOT NULL, 
-          question_text TEXT NOT NULL, 
-          question_type TEXT NOT NULL, 
-          options TEXT, 
-          correct_answer TEXT, 
-          points INTEGER, 
-          order_index INTEGER, 
-          question_data TEXT NOT NULL,
-          PRIMARY KEY (id, user_email),
-          FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessments(id, user_email) ON DELETE CASCADE
-        );`
-      );
-
-      // 10. offline_quiz_attempts (references offline_assessments)
-      await db.execAsync(
-        `CREATE TABLE IF NOT EXISTS offline_quiz_attempts (
-          attempt_id INTEGER PRIMARY KEY AUTOINCREMENT,
-          assessment_id INTEGER NOT NULL,
-          user_email TEXT NOT NULL,
-          start_time TEXT NOT NULL,
-          end_time TEXT,
-          is_completed INTEGER DEFAULT 0,
-          answers TEXT,
-          FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessments(id, user_email) ON DELETE CASCADE
-        );`
-      );
-
-      // 11. offline_quiz_question_submissions (references offline_quiz_attempts)
-      await db.execAsync(
-        `CREATE TABLE IF NOT EXISTS offline_quiz_question_submissions (
-          submission_id INTEGER PRIMARY KEY AUTOINCREMENT,
-          attempt_id INTEGER NOT NULL,
-          question_id INTEGER NOT NULL,
-          submitted_answer TEXT, -- ✅ FIXED: This was missing and causing the error
-          max_points INTEGER NOT NULL DEFAULT 1,
-          FOREIGN KEY (attempt_id) REFERENCES offline_quiz_attempts(attempt_id) ON DELETE CASCADE
-        );`
-      );
-
-      // 12. offline_quiz_option_selections (references offline_quiz_question_submissions)
-      await db.execAsync(
-        `CREATE TABLE IF NOT EXISTS offline_quiz_option_selections (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          submission_id INTEGER NOT NULL,
-          option_id INTEGER NOT NULL,
-          option_text TEXT NOT NULL,
-          is_selected INTEGER NOT NULL DEFAULT 0,
-          is_correct_option INTEGER NOT NULL DEFAULT 0,
-          FOREIGN KEY (submission_id) REFERENCES offline_quiz_question_submissions(submission_id) ON DELETE CASCADE
-        );`
-      );
-
-      console.log('✅ All tables created successfully with proper schema.');
-
-      dbInstance = db;
-      dbInitialized = true;
-      console.log('✅ Database initialization complete');
-    } catch (error) {
-      console.error('❌ Database initialization failed:', error);
-      throw error;
-    } finally {
-      initializationPromise = null;
+        console.log('✅ All tables created successfully with proper schema.');
+        
+        dbInstance = db;
+        dbInitialized = true;
+        console.log('✅ Database initialization complete');
+        return; // Success, exit retry loop
+        
+      } catch (error) {
+        retryCount++;
+        console.error(`❌ Database initialization failed (attempt ${retryCount}):`, error);
+        
+        if (retryCount >= maxRetries) {
+          throw error;
+        }
+        
+        // Clean up on failure
+        if (dbInstance) {
+          try {
+            await dbInstance.closeAsync();
+          } catch (closeError) {
+            console.warn('⚠️ Error closing database after failed initialization:', closeError);
+          }
+          dbInstance = null;
+          dbInitialized = false;
+        }
+      }
     }
   })();
+  
   await initializationPromise;
+  initializationPromise = null;
 };
 
 
@@ -1801,18 +1838,21 @@ export const closeDatabase = async (): Promise<void> => {
       await dbInstance.closeAsync();
       dbInstance = null;
       dbInitialized = false;
-      console.log('âœ… Database closed successfully');
+      initializationPromise = null;
+      console.log('✅ Database closed successfully');
     }
   } catch (error) {
-    console.error('âŒ Failed to close database:', error);
+    console.error('❌ Failed to close database:', error);
   }
 };
+
 
 export const resetDatabaseState = (): void => {
   dbInstance = null;
   dbInitialized = false;
   initializationPromise = null;
-  console.log('ðŸ”„ Database state reset');
+  dbLock = false;
+  console.log('🔄 Database state reset');
 };
 
 
@@ -1934,20 +1974,23 @@ export const getSavedServerTime = async (userEmail: string): Promise<string | nu
 
 export const resetTimeCheckData = async (userEmail: string) => {
   try {
-    console.log('ðŸ”„ Resetting time check data for user:', userEmail);
+    console.log('🔄 Resetting time check data for user:', userEmail);
+    
+    // Ensure database is initialized
+    await initDb();
     const db = await getDb();
     
-    // Update the app_state table with fresh time data.
+    // FIXED: Use simple runAsync instead of withTransactionAsync to avoid conflicts
     await db.runAsync(
-      `INSERT OR REPLACE INTO app_state (user_email, last_time_check, server_time_offset) 
-       VALUES (?, ?, ?);`,
-      [userEmail, Date.now(), 0]
+      `INSERT OR REPLACE INTO app_state (user_email, last_time_check, server_time_offset, time_check_sequence) 
+       VALUES (?, ?, ?, ?);`,
+      [userEmail, Date.now(), 0, 1]
     );
 
-    console.log('âœ… Time check data reset successfully.');
+    console.log('✅ Time check data reset successfully.');
   } catch (error) {
-    console.error('âŒ Failed to reset time check data:', error);
-    // You might want to handle this error, but for now, just log it.
+    console.error('❌ Failed to reset time check data:', error);
+    // Don't throw the error to prevent app crashes
   }
 };
 

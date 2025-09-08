@@ -35,7 +35,7 @@ export default function CoursesLayout() {
       <Stack.Screen
         name="index"
         options={{
-          title: 'Olin',
+          title: 'My Courses',
           headerShown: true,
           headerStyle: { backgroundColor: '#007bff' },
           headerTintColor: '#fff',

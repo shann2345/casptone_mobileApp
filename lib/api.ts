@@ -7,9 +7,6 @@ export const API_BASE_URL = __DEV__
   ? 'http://192.168.1.9:8000/api'  // Development
   : 'https://your-cloud-domain.com/api'; // Production
 
-let lastTimeCheckTimestamp = 0;
-const TIME_CHECK_THROTTLE = 60000; // Only check time manipulation every 60 seconds
-
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {

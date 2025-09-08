@@ -52,7 +52,7 @@ export default function AppLayout() {
         name="index" // Dashboard
         options={{
           tabBarLabel: 'Home', // This is for the tab label at the bottom
-          headerTitle: 'Olin', // This is for the header title
+          headerTitle: 'Dashboard', // This is for the header title
           tabBarIcon: ({ color }) => <Ionicons name="home" size={24} color={color} />,
           headerShown: true, // Show header for this screen
           headerRight: () => (
@@ -74,10 +74,10 @@ export default function AppLayout() {
         }}
       />
       <Tabs.Screen
-        name="assessments"
+        name="to-do"
         options={{
-          tabBarLabel: 'Assessment', // Tab label
-          headerTitle: 'Olin', // Header title
+          tabBarLabel: 'To-do', // Tab label
+          headerTitle: 'To-do', // Header title
           tabBarIcon: ({ color }) => <Ionicons name="document-text" size={24} color={color} />,
           headerShown: true, // Show header for this screen
           headerRight: () => <HeaderRight initials={initials} />,
@@ -90,7 +90,7 @@ export default function AppLayout() {
         name="settings"
         options={{
           tabBarLabel: 'Settings', // Tab label
-          headerTitle: 'Olin', // Header title
+          headerTitle: 'Settings', // Header title
           tabBarIcon: ({ color }) => <Ionicons name="settings" size={24} color={color} />,
           headerShown: true, // Show header for this screen
           headerStyle: { backgroundColor: '#007bff' },

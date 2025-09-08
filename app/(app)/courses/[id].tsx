@@ -1,6 +1,6 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Modal, SectionList, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, Alert, Modal, RefreshControl, SectionList, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useNetworkStatus } from '../../../context/NetworkContext';
 import api, { getServerTime, getUserData } from '../../../lib/api';
 import { detectTimeManipulation, getCourseDetailsFromDb, getSavedServerTime, saveCourseDetailsToDb, saveServerTime } from '../../../lib/localDb';
@@ -66,13 +66,14 @@ export default function CourseDetailsScreen() {
   const [courseDetail, setCourseDetail] = useState<CourseDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
-  const { isConnected } = useNetworkStatus();
+  const { isConnected, netInfo } = useNetworkStatus();
   const [isAccessCodeModalVisible, setAccessCodeModalVisible] = useState(false);
   const [currentAssessment, setCurrentAssessment] = useState<Assessment | null>(null);
   const [enteredAccessCode, setEnteredAccessCode] = useState('');
   const [accessCodeError, setAccessCodeError] = useState<string | null>(null);
   const [serverTime, setServerTime] = useState<Date | null>(null);
   const [timeManipulationDetected, setTimeManipulationDetected] = useState<boolean>(false);
+  const [isRefreshing, setIsRefreshing] = useState(false); 
 
   const formatDate = (dateString?: string) => {
     if (!dateString) return 'N/A';
@@ -270,6 +271,28 @@ export default function CourseDetailsScreen() {
       setLoading(false);
     }
   };
+
+  const handleRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+
+    if (!netInfo?.isInternetReachable) {
+      Alert.alert(
+        'Offline',
+        'Please check your internet connection to refresh data.',
+        [{ text: 'OK' }]
+      );
+      setIsRefreshing(false);
+      return;
+    }
+
+    try {
+      await fetchCourseDetails();
+    } catch (error) {
+      console.error('Refresh failed:', error);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [fetchCourseDetails]);
 
   const handleAccessCodeSubmit = () => {
     if (timeManipulationDetected) {
@@ -580,6 +603,13 @@ export default function CourseDetailsScreen() {
             </Text>
           </View>
         )}
+
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+          />
+        }
         ListHeaderComponent={renderHeader()}
         contentContainerStyle={styles.sectionListContent}
       />

@@ -1,11 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { useNetworkStatus } from '../../../context/NetworkContext'; // Import this
-import api, { getUserData } from '../../../lib/api'; // Import getUserData
+import React, { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, Alert, FlatList, RefreshControl, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useNetworkStatus } from '../../../context/NetworkContext';
+import api, { getUserData } from '../../../lib/api';
 import { getEnrolledCoursesFromDb, initDb, saveCourseToDb } from '../../../lib/localDb';
-
 
 // Interface for course data (re-used from index.tsx)
 interface Course {
@@ -30,7 +29,6 @@ interface EnrolledCourse extends Course {
   pivot?: {
     status: string;
     enrollment_date: string;
-    // Add other pivot fields if you have them, e.g., grade, progress
   };
 }
 
@@ -40,9 +38,8 @@ export default function CoursesScreen() {
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
   const params = useLocalSearchParams();
-  const { isConnected } = useNetworkStatus(); // Use the custom hook
-
-  // Placeholder for user email - to be fetched from a reliable source
+  const { isConnected, netInfo } = useNetworkStatus(); 
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
 
   useEffect(() => {
@@ -53,7 +50,6 @@ export default function CoursesScreen() {
         if (userData && userData.email) {
           setCurrentUserEmail(userData.email);
         } else {
-          // Handle case where user data is missing
           console.error('User email not found. Redirecting to login.');
           router.replace('/login');
         }
@@ -65,27 +61,48 @@ export default function CoursesScreen() {
     initialize();
   }, []);
 
-
+  // UPDATED: Enhanced deep link navigation logic
   useEffect(() => {
-    // Deep Link Navigation Logic
-    if (params.courseId && !isLoading) {
+    // Deep Link Navigation Logic for courseId from to-do
+    if (params.courseId && !isLoading && enrolledCourses.length > 0) {
       const courseIdToNavigate = params.courseId;
-      router.setParams({ courseId: undefined });
-      router.push(`/courses/${courseIdToNavigate}`);
+      
+      // Find the course to ensure it exists
+      const targetCourse = enrolledCourses.find(course => 
+        course.id.toString() === courseIdToNavigate.toString()
+      );
+      
+      if (targetCourse) {
+        console.log('Navigating to course from to-do:', {
+          courseId: courseIdToNavigate,
+          courseName: targetCourse.title
+        });
+        
+        // Clear the parameter to prevent repeated navigation
+        router.setParams({ courseId: undefined });
+        
+        // Navigate to the specific course
+        router.push(`/courses/${courseIdToNavigate}`);
+      } else {
+        console.warn('Course not found in enrolled courses:', courseIdToNavigate);
+        Alert.alert(
+          'Course Not Found',
+          'The course you\'re trying to access is not in your enrolled courses.',
+          [{ text: 'OK' }]
+        );
+      }
     }
-  }, [params.courseId, isLoading]);
-
+  }, [params.courseId, isLoading, enrolledCourses]);
 
   useEffect(() => {
     const fetchCourses = async () => {
       if (!currentUserEmail) {
-        // Wait for user email to be set
         return;
       }
       setIsLoading(true);
       setError(null);
+      
       if (isConnected) {
-        // Online: Fetch from API and update local DB
         console.log('You are online. Fetching from API...');
         try {
           const response = await api.get('/my-courses');
@@ -101,25 +118,21 @@ export default function CoursesScreen() {
         } catch (err: any) {
           console.error('Failed to fetch enrolled courses from API:', err.response?.data || err.message);
           setError('Failed to load courses from the network. Displaying offline data.');
-          // On API error, fall back to offline data
           await fetchEnrolledCoursesFromDb();
         } finally {
           setIsLoading(false);
         }
       } else {
-        // Offline: Fetch from local DB
         console.log('You are offline. Fetching from local DB...');
         await fetchEnrolledCoursesFromDb();
         setIsLoading(false);
       }
     };
     
-    // Only run fetchCourses if currentUserEmail is available and the component is focused
-    // The useFocusEffect will handle the fetch when the component comes into focus
     if (currentUserEmail) {
       fetchCourses();
     }
-  }, [isConnected, currentUserEmail]); // Add currentUserEmail to the dependency array
+  }, [isConnected, currentUserEmail]);
 
   // Helper function to fetch courses from the local database
   const fetchEnrolledCoursesFromDb = async () => {
@@ -140,10 +153,34 @@ export default function CoursesScreen() {
     }
   };
 
+  const handleRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+
+    if (!netInfo?.isInternetReachable) {
+      Alert.alert(
+        'Offline',
+        'Please check your internet connection to refresh data.',
+        [{ text: 'OK' }]
+      );
+      setIsRefreshing(false);
+      return;
+    }
+    try {
+      await fetchEnrolledCoursesFromDb();
+    } catch (error) {
+      console.error('Refresh failed:', error);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [fetchEnrolledCoursesFromDb]);
+
   const renderCourseCard = ({ item }: { item: EnrolledCourse }) => (
     <TouchableOpacity
       style={styles.courseCard}
-      onPress={() => router.push(`/courses/${item.id}`)}
+      onPress={() => {
+        console.log('Navigating to course:', item.title);
+        router.push(`/courses/${item.id}`);
+      }}
     >
       <View style={styles.cardHeader}>
         <Ionicons name="book-outline" size={24} color="#007bff" style={styles.cardIcon} />
@@ -193,6 +230,12 @@ export default function CoursesScreen() {
     <View style={styles.container}>
       <Text style={styles.title}>My Enrolled Courses</Text>
       <FlatList
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+          />
+        }
         data={enrolledCourses}
         keyExtractor={(item) => item.id.toString()}
         renderItem={renderCourseCard}
