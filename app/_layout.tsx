@@ -4,26 +4,85 @@ import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native
 import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import React, { useEffect, useState } from 'react';
+import { ActivityIndicator, View } from 'react-native';
 import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/useColorScheme';
-import { NetworkProvider } from '../context/NetworkContext'; // <-- Make sure this import is correct
+import { NetworkProvider } from '../context/NetworkContext';
+import { getAuthToken, getUserData, initializeAuth } from '../lib/api';
+import { initDb } from '../lib/localDb';
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
   const [loaded] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
   });
+  
+  const [isInitializing, setIsInitializing] = useState(true);
+  const [initialRoute, setInitialRoute] = useState<string>('(auth)/login');
 
-  if (!loaded) {
-    return null;
+  useEffect(() => {
+    const initializeApp = async () => {
+      try {
+        console.log('🚀 Initializing app...');
+        
+        // Initialize database first
+        await initDb();
+        console.log('✅ Database initialized');
+        
+        // Initialize authentication
+        await initializeAuth();
+        console.log('✅ Auth initialized');
+        
+        // Check if user is already authenticated
+        const token = await getAuthToken();
+        const userData = await getUserData();
+        
+        if (token && userData) {
+          console.log('✅ Existing authentication found for user:', userData.email);
+          console.log('🎯 Redirecting to app dashboard');
+          setInitialRoute('(app)');
+        } else {
+          console.log('❌ No existing authentication found');
+          console.log('🎯 Redirecting to login');
+          setInitialRoute('(auth)/login');
+        }
+      } catch (error) {
+        console.error('❌ App initialization error:', error);
+        // On error, default to login
+        setInitialRoute('(auth)/login');
+      } finally {
+        setIsInitializing(false);
+      }
+    };
+
+    // Only initialize if fonts are loaded
+    if (loaded) {
+      initializeApp();
+    }
+  }, [loaded]);
+
+  // Show loading screen while fonts are loading or app is initializing
+  if (!loaded || isInitializing) {
+    return (
+      <NetworkProvider>
+        <View style={{ 
+          flex: 1, 
+          justifyContent: 'center', 
+          alignItems: 'center', 
+          backgroundColor: '#f0f4f7' 
+        }}>
+          <ActivityIndicator size="large" color="#007bff" />
+        </View>
+      </NetworkProvider>
+    );
   }
 
   return (
-    // The NetworkProvider must wrap all navigation components and their children.
     <NetworkProvider>
       <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-        <Stack>
+        <Stack initialRouteName={initialRoute}>
           <Stack.Screen
             name="(auth)/login"
             options={{

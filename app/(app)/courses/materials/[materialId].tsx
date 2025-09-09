@@ -166,44 +166,44 @@ export default function MaterialDetailsScreen() {
   };
 
   const getFileType = (filePath: string): FileType => {
-    if (!filePath) return 'other';
-    
-    const extension = filePath.split('.').pop()?.toLowerCase();
-    
-    // Image files
-    if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg'].includes(extension || '')) {
-      return 'image';
-    }
-    // PDF files
-    if (['pdf'].includes(extension || '')) {
-      return 'pdf';
-    }
-    // Document files
-    if (['doc', 'docx', 'txt', 'rtf', 'odt'].includes(extension || '')) {
-      return 'document';
-    }
-    // Video files
-    if (['mp4', 'mov', 'avi', 'mkv', 'webm', '3gp', 'm4v'].includes(extension || '')) {
-      return 'video';
-    }
-    // Audio files
-    if (['mp3', 'wav', 'aac', 'm4a', 'ogg', 'flac'].includes(extension || '')) {
-      return 'audio';
-    }
-    // NEW: Programming and code files
-    if ([
-      'js', 'jsx', 'ts', 'tsx', 'py', 'java', 'cpp', 'c', 'h', 'cs', 'php', 
-      'rb', 'go', 'rs', 'swift', 'kt', 'dart', 'scala', 'r', 'matlab', 'm',
-      'html', 'htm', 'css', 'scss', 'sass', 'less', 'xml', 'json', 'yaml', 'yml',
-      'sql', 'sh', 'bash', 'zsh', 'ps1', 'bat', 'cmd', 'dockerfile', 'makefile',
-      'gradle', 'cmake', 'config', 'conf', 'ini', 'env', 'gitignore', 'md',
-      'vue', 'svelte', 'elm', 'clj', 'hs', 'ml', 'fs', 'vb', 'pl', 'lua'
-    ].includes(extension || '')) {
-      return 'code';
-    }
-    
-    return 'other';
-  };
+  if (!filePath) return 'other';
+  
+  const extension = filePath.split('.').pop()?.toLowerCase();
+  
+  // Image files
+  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg'].includes(extension || '')) {
+    return 'image';
+  }
+  // PDF files (keep separate for special handling)
+  if (['pdf'].includes(extension || '')) {
+    return 'pdf';
+  }
+  // Document files (including PowerPoint)
+  if (['doc', 'docx', 'txt', 'rtf', 'odt', 'ppt', 'pptx', 'xls', 'xlsx'].includes(extension || '')) {
+    return 'document';
+  }
+  // Video files
+  if (['mp4', 'mov', 'avi', 'mkv', 'webm', '3gp', 'm4v'].includes(extension || '')) {
+    return 'video';
+  }
+  // Audio files
+  if (['mp3', 'wav', 'aac', 'm4a', 'ogg', 'flac'].includes(extension || '')) {
+    return 'audio';
+  }
+  // Programming and code files
+  if ([
+    'js', 'jsx', 'ts', 'tsx', 'py', 'java', 'cpp', 'c', 'h', 'cs', 'php', 
+    'rb', 'go', 'rs', 'swift', 'kt', 'dart', 'scala', 'r', 'matlab', 'm',
+    'html', 'htm', 'css', 'scss', 'sass', 'less', 'xml', 'json', 'yaml', 'yml',
+    'sql', 'sh', 'bash', 'zsh', 'ps1', 'bat', 'cmd', 'dockerfile', 'makefile',
+    'gradle', 'cmake', 'config', 'conf', 'ini', 'env', 'gitignore', 'md',
+    'vue', 'svelte', 'elm', 'clj', 'hs', 'ml', 'fs', 'vb', 'pl', 'lua'
+  ].includes(extension || '')) {
+    return 'code';
+  }
+  
+  return 'other';
+};
 
   const getFileIcon = (fileType: FileType) => {
     switch (fileType) {
@@ -254,139 +254,139 @@ export default function MaterialDetailsScreen() {
 
 
   // FIXED: Enhanced download function with proper progress tracking
-const handleDownload = async () => {
-  if (!materialDetail?.file_path || !materialDetail?.id) {
-    Alert.alert('No File', 'This material does not have an attached file.');
-    return;
-  }
-
-  if (!isConnected) {
-    Alert.alert('Offline Mode', 'File downloading requires an internet connection.');
-    return;
-  }
-
-  // Check if already downloaded
-  if (downloadedFileUri) {
-    console.log('📁 File already downloaded, skipping download');
-    return;
-  }
-
-  setIsDownloading(true);
-  setDownloadProgress(0);
-
-  try {
-    // Request permissions for file system access
-    const { status } = await MediaLibrary.requestPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission Required', 'Permission to access your media library is required to save files.');
-      setIsDownloading(false);
+  const handleDownload = async () => {
+    if (!materialDetail?.file_path || !materialDetail?.id) {
+      Alert.alert('No File', 'This material does not have an attached file.');
       return;
     }
 
-    const downloadUrl = `${api.defaults.baseURL}/materials/${materialDetail.id}/view`;
-    const fileExtension = materialDetail.file_path.split('.').pop();
-    const sanitizedTitle = materialDetail.title.replace(/[^a-zA-Z0-9]/g, '_');
-    const fileName = `${sanitizedTitle}_${materialDetail.id}${fileExtension ? `.${fileExtension}` : ''}`;
-    const localUri = FileSystem.documentDirectory + fileName;
+    if (!isConnected) {
+      Alert.alert('Offline Mode', 'File downloading requires an internet connection.');
+      return;
+    }
 
-    console.log('📥 Starting download:', {
-      downloadUrl,
-      fileName,
-      localUri
-    });
+    // Check if already downloaded
+    if (downloadedFileUri) {
+      console.log('📁 File already downloaded, skipping download');
+      return;
+    }
 
-    // Download with enhanced progress tracking
-    const downloadResumable = FileSystem.createDownloadResumable(
-      downloadUrl,
-      localUri,
-      {
-        headers: {
-          'Authorization': getAuthorizationHeader(),
-        }
-      },
-      (downloadProgress) => {
-        // FIXED: Proper progress calculation with validation
-        const { totalBytesWritten, totalBytesExpectedToWrite } = downloadProgress;
-        
-        console.log('📊 Raw download data:', {
-          totalBytesWritten,
-          totalBytesExpectedToWrite,
-          type: typeof totalBytesExpectedToWrite
-        });
+    setIsDownloading(true);
+    setDownloadProgress(0);
 
-        // Validate the progress data
-        if (totalBytesExpectedToWrite && totalBytesExpectedToWrite > 0 && 
-            totalBytesWritten >= 0 && totalBytesWritten <= totalBytesExpectedToWrite) {
+    try {
+      // Request permissions for file system access
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Required', 'Permission to access your media library is required to save files.');
+        setIsDownloading(false);
+        return;
+      }
+
+      const downloadUrl = `${api.defaults.baseURL}/materials/${materialDetail.id}/view`;
+      const fileExtension = materialDetail.file_path.split('.').pop();
+      const sanitizedTitle = materialDetail.title.replace(/[^a-zA-Z0-9]/g, '_');
+      const fileName = `${sanitizedTitle}_${materialDetail.id}${fileExtension ? `.${fileExtension}` : ''}`;
+      const localUri = FileSystem.documentDirectory + fileName;
+
+      console.log('📥 Starting download:', {
+        downloadUrl,
+        fileName,
+        localUri
+      });
+
+      // Download with enhanced progress tracking
+      const downloadResumable = FileSystem.createDownloadResumable(
+        downloadUrl,
+        localUri,
+        {
+          headers: {
+            'Authorization': getAuthorizationHeader(),
+          }
+        },
+        (downloadProgress) => {
+          // FIXED: Proper progress calculation with validation
+          const { totalBytesWritten, totalBytesExpectedToWrite } = downloadProgress;
           
-          const progress = totalBytesWritten / totalBytesExpectedToWrite;
-          const progressPercentage = Math.round(progress * 100);
-          
-          // Ensure progress is within valid range
-          const validProgress = Math.max(0, Math.min(100, progressPercentage));
-          
-          setDownloadProgress(validProgress);
-          console.log(`📊 Download progress: ${validProgress}% (${totalBytesWritten}/${totalBytesExpectedToWrite} bytes)`);
-          
-        } else {
-          // Fallback for invalid progress data
-          console.log('⚠️ Invalid progress data, using fallback');
-          if (totalBytesWritten > 0) {
-            // Show indeterminate progress if we're downloading but don't know total size
-            setDownloadProgress(50); // Show halfway progress as fallback
+          console.log('📊 Raw download data:', {
+            totalBytesWritten,
+            totalBytesExpectedToWrite,
+            type: typeof totalBytesExpectedToWrite
+          });
+
+          // Validate the progress data
+          if (totalBytesExpectedToWrite && totalBytesExpectedToWrite > 0 && 
+              totalBytesWritten >= 0 && totalBytesWritten <= totalBytesExpectedToWrite) {
+            
+            const progress = totalBytesWritten / totalBytesExpectedToWrite;
+            const progressPercentage = Math.round(progress * 100);
+            
+            // Ensure progress is within valid range
+            const validProgress = Math.max(0, Math.min(100, progressPercentage));
+            
+            setDownloadProgress(validProgress);
+            console.log(`📊 Download progress: ${validProgress}% (${totalBytesWritten}/${totalBytesExpectedToWrite} bytes)`);
+            
+          } else {
+            // Fallback for invalid progress data
+            console.log('⚠️ Invalid progress data, using fallback');
+            if (totalBytesWritten > 0) {
+              // Show indeterminate progress if we're downloading but don't know total size
+              setDownloadProgress(50); // Show halfway progress as fallback
+            }
           }
         }
-      }
-    );
+      );
 
-    const result = await downloadResumable.downloadAsync();
-    
-    if (result && result.uri) {
-      // Verify the downloaded file
-      const fileInfo = await FileSystem.getInfoAsync(result.uri);
-      if (fileInfo.exists && fileInfo.size && fileInfo.size > 0) {
-        setDownloadedFileUri(result.uri);
-        console.log('✅ Download completed successfully:', {
-          uri: result.uri,
-          size: fileInfo.size
-        });
-        
-        Alert.alert(
-          'Download Complete!', 
-          'File downloaded successfully and is now available for offline viewing.',
-          [{ text: 'OK' }]
-        );
+      const result = await downloadResumable.downloadAsync();
+      
+      if (result && result.uri) {
+        // Verify the downloaded file
+        const fileInfo = await FileSystem.getInfoAsync(result.uri);
+        if (fileInfo.exists && fileInfo.size && fileInfo.size > 0) {
+          setDownloadedFileUri(result.uri);
+          console.log('✅ Download completed successfully:', {
+            uri: result.uri,
+            size: fileInfo.size
+          });
+          
+          Alert.alert(
+            'Download Complete!', 
+            'File downloaded successfully and is now available for offline viewing.',
+            [{ text: 'OK' }]
+          );
+        } else {
+          throw new Error('Downloaded file is corrupted or empty');
+        }
       } else {
-        throw new Error('Downloaded file is corrupted or empty');
+        throw new Error('Download failed - no result returned');
       }
-    } else {
-      throw new Error('Download failed - no result returned');
-    }
 
-  } catch (err: any) {
-    console.error("Download failed:", err);
-    
-    // Clean up any partial download
-    const fileExtension = materialDetail.file_path.split('.').pop();
-    const sanitizedTitle = materialDetail.title.replace(/[^a-zA-Z0-9]/g, '_');
-    const fileName = `${sanitizedTitle}_${materialDetail.id}${fileExtension ? `.${fileExtension}` : ''}`;
-    const localUri = FileSystem.documentDirectory + fileName;
-    
-    try {
-      const fileInfo = await FileSystem.getInfoAsync(localUri);
-      if (fileInfo.exists) {
-        await FileSystem.deleteAsync(localUri);
-        console.log('🗑️ Cleaned up partial download');
+    } catch (err: any) {
+      console.error("Download failed:", err);
+      
+      // Clean up any partial download
+      const fileExtension = materialDetail.file_path.split('.').pop();
+      const sanitizedTitle = materialDetail.title.replace(/[^a-zA-Z0-9]/g, '_');
+      const fileName = `${sanitizedTitle}_${materialDetail.id}${fileExtension ? `.${fileExtension}` : ''}`;
+      const localUri = FileSystem.documentDirectory + fileName;
+      
+      try {
+        const fileInfo = await FileSystem.getInfoAsync(localUri);
+        if (fileInfo.exists) {
+          await FileSystem.deleteAsync(localUri);
+          console.log('🗑️ Cleaned up partial download');
+        }
+      } catch (cleanupError) {
+        console.error('Error cleaning up partial download:', cleanupError);
       }
-    } catch (cleanupError) {
-      console.error('Error cleaning up partial download:', cleanupError);
+      
+      Alert.alert('Download Failed', 'Could not download the file. Please try again.');
+    } finally {
+      setIsDownloading(false);
+      setDownloadProgress(0);
     }
-    
-    Alert.alert('Download Failed', 'Could not download the file. Please try again.');
-  } finally {
-    setIsDownloading(false);
-    setDownloadProgress(0);
-  }
-};
+  };
 
   // FIXED: Auto-download for certain file types
   const handleAutoDownload = async () => {
@@ -396,12 +396,13 @@ const handleDownload = async () => {
 
     const fileType = getFileType(materialDetail.file_path);
     
-    // Auto-download for viewable types including code files
-    if (['image', 'video', 'audio', 'code'].includes(fileType) && isConnected) {
-      console.log(`🔄 Auto-downloading ${fileType} for inline viewing...`);
+    // Auto-download for viewable types including documents and PDFs
+    if (['image', 'video', 'audio', 'code', 'pdf', 'document'].includes(fileType) && isConnected) {
+      console.log(`🔄 Auto-downloading ${fileType} for offline access...`);
       await handleDownload();
     }
   };
+
 
 
   // Update your useEffect to load code content when file is downloaded
@@ -480,88 +481,170 @@ const handleDownload = async () => {
   };
 
   const renderInlineViewer = () => {
-  if (!materialDetail?.file_path) return null;
-  
-  const fileType = getFileType(materialDetail.file_path);
-  
-  // Show download prompt if file not downloaded yet
-  if (!downloadedFileUri) {
-    return (
-      <View style={styles.downloadPromptContainer}>
-        <LinearGradient
-          colors={['#4285f4', '#34a853']}
-          style={styles.downloadPromptGradient}
-        >
-          <Ionicons name={getFileIcon(fileType)} size={48} color="#fff" />
-          <Text style={styles.downloadPromptTitle}>
-            {isDownloading ? 'Downloading...' : 'Ready to View'}
-          </Text>
-          <Text style={styles.downloadPromptText}>
-            {isDownloading 
-              ? `Downloading ${fileType} file for offline viewing...`
-              : fileType === 'code'
-                ? `Download this code file to view it with syntax highlighting`
-                : fileType === 'pdf' || fileType === 'document' 
-                  ? `Download this ${fileType} file and open with your preferred app`
-                  : `Download this ${fileType} file to view it in the app`
+    if (!materialDetail?.file_path) return null;
+    
+    const fileType = getFileType(materialDetail.file_path);
+    const fileExtension = materialDetail?.file_path?.split('.').pop()?.toLowerCase() || '';
+    
+    // Show download prompt if file not downloaded yet
+    if (!downloadedFileUri) {
+      const getDownloadMessage = () => {
+        switch (fileType) {
+          case 'pdf':
+            return 'Download this PDF to view it offline and access it anytime';
+          case 'document':
+            if (['ppt', 'pptx'].includes(fileExtension)) {
+              return 'Download this PowerPoint presentation to view it with presentation apps';
+            } else if (['xls', 'xlsx'].includes(fileExtension)) {
+              return 'Download this Excel spreadsheet to view it with spreadsheet apps';
+            } else {
+              return 'Download this document to view it with compatible apps';
             }
-          </Text>
-          
-          {isDownloading ? (
-            <View style={styles.progressContainer}>
-              <ActivityIndicator color="#fff" size="large" />
-              <Text style={styles.progressText}>{downloadProgress}%</Text>
-            </View>
-          ) : (
-            <TouchableOpacity 
-              style={styles.downloadPromptButton}
-              onPress={handleDownload}
-              disabled={isDownloading}
-            >
-              <Ionicons name="download" size={20} color="#4285f4" />
-              <Text style={styles.downloadPromptButtonText}>
-                {fileType === 'code' 
-                  ? 'Download & View Code'
-                  : fileType === 'pdf' || fileType === 'document' 
-                    ? 'Download & Open'
-                    : 'Download & View'
-                }
-              </Text>
-            </TouchableOpacity>
-          )}
-        </LinearGradient>
-      </View>
-    );
-  }
+          case 'code':
+            return 'Download this code file to view it with syntax highlighting';
+          default:
+            return `Download this ${fileType} file to view it in the app`;
+        }
+      };
 
-  // Render appropriate viewer based on file type
-  switch (fileType) {
-    case 'image':
-      return renderImageViewer();
-    case 'video':
-      return renderVideoViewer();
-    case 'audio':
-      return renderAudioViewer();
-    case 'code':
-      return renderCodeViewer(); // NEW: Code viewer
-    case 'pdf':
-    case 'document':
-      return renderDocumentViewer();
-    default:
-      return renderGenericFileViewer();
-  }
-};
+      return (
+        <View style={styles.downloadPromptContainer}>
+          <LinearGradient
+            colors={['#4285f4', '#34a853']}
+            style={styles.downloadPromptGradient}
+          >
+            <Ionicons name={getFileIcon(fileType)} size={48} color="#fff" />
+            <Text style={styles.downloadPromptTitle}>
+              {isDownloading ? 'Downloading...' : 'Ready for Offline Access'}
+            </Text>
+            <Text style={styles.downloadPromptText}>
+              {isDownloading 
+                ? `Downloading ${fileType} file for offline access...`
+                : getDownloadMessage()
+              }
+            </Text>
+            
+            {isDownloading ? (
+              <View style={styles.progressContainer}>
+                <ActivityIndicator color="#fff" size="large" />
+                <Text style={styles.progressText}>{downloadProgress}%</Text>
+              </View>
+            ) : (
+              <TouchableOpacity 
+                style={styles.downloadPromptButton}
+                onPress={handleDownload}
+                disabled={isDownloading}
+              >
+                <Ionicons name="download" size={20} color="#4285f4" />
+                <Text style={styles.downloadPromptButtonText}>
+                  Download for Offline Access
+                </Text>
+              </TouchableOpacity>
+            )}
+          </LinearGradient>
+        </View>
+      );
+    }
+
+    // Render appropriate viewer based on file type
+    switch (fileType) {
+      case 'image':
+        return renderImageViewer();
+      case 'video':
+        return renderVideoViewer();
+      case 'audio':
+        return renderAudioViewer();
+      case 'code':
+        return renderCodeViewer();
+      case 'pdf':
+      case 'document':
+        return renderDocumentViewer(); // Enhanced document viewer
+      default:
+        return renderGenericFileViewer();
+    }
+  };
 
   const renderDocumentViewer = () => {
     const fileType = getFileType(materialDetail?.file_path || '');
+    const fileExtension = materialDetail?.file_path?.split('.').pop()?.toLowerCase() || '';
+    
+    // Get specific document type info
+    const getDocumentInfo = (ext: string) => {
+      const docTypes: { [key: string]: { name: string; icon: string; apps: string; color: string } } = {
+        'pdf': {
+          name: 'PDF Document',
+          icon: 'document-text',
+          apps: 'Adobe Reader, Google Drive, Microsoft Edge',
+          color: '#ea4335'
+        },
+        'ppt': {
+          name: 'PowerPoint Presentation',
+          icon: 'easel',
+          apps: 'Microsoft PowerPoint, Google Slides, WPS Office',
+          color: '#d24726'
+        },
+        'pptx': {
+          name: 'PowerPoint Presentation',
+          icon: 'easel',
+          apps: 'Microsoft PowerPoint, Google Slides, WPS Office',
+          color: '#d24726'
+        },
+        'doc': {
+          name: 'Word Document',
+          icon: 'document',
+          apps: 'Microsoft Word, Google Docs, WPS Office',
+          color: '#2b579a'
+        },
+        'docx': {
+          name: 'Word Document',
+          icon: 'document',
+          apps: 'Microsoft Word, Google Docs, WPS Office',
+          color: '#2b579a'
+        },
+        'xls': {
+          name: 'Excel Spreadsheet',
+          icon: 'grid',
+          apps: 'Microsoft Excel, Google Sheets, WPS Office',
+          color: '#107c41'
+        },
+        'xlsx': {
+          name: 'Excel Spreadsheet',
+          icon: 'grid',
+          apps: 'Microsoft Excel, Google Sheets, WPS Office',
+          color: '#107c41'
+        },
+        'txt': {
+          name: 'Text Document',
+          icon: 'document-text',
+          apps: 'Any text editor, Google Docs',
+          color: '#5f6368'
+        }
+      };
+      
+      return docTypes[ext] || {
+        name: 'Document',
+        icon: 'document',
+        apps: 'Compatible apps',
+        color: '#4285f4'
+      };
+    };
+
+    const docInfo = getDocumentInfo(fileExtension);
     
     return (
       <View style={styles.inlineViewerContainer}>
         <View style={styles.viewerHeader}>
-          <Text style={styles.viewerTitle}>
-            {fileType === 'pdf' ? 'PDF Document' : 'Document'}
-          </Text>
+          <View style={styles.documentHeaderInfo}>
+            <Ionicons name={docInfo.icon as any} size={20} color={docInfo.color} />
+            <Text style={styles.viewerTitle}>{docInfo.name}</Text>
+          </View>
           <View style={styles.viewerActions}>
+            {/* PDF Web Viewer Option */}
+            {fileExtension === 'pdf' && isConnected && (
+              <TouchableOpacity style={styles.actionButton} onPress={handleViewPDFOnline}>
+                <Ionicons name="globe" size={20} color="#4285f4" />
+              </TouchableOpacity>
+            )}
             <TouchableOpacity style={styles.actionButton} onPress={handleViewOnline}>
               <Ionicons name="open" size={20} color="#4285f4" />
             </TouchableOpacity>
@@ -570,44 +653,95 @@ const handleDownload = async () => {
             </TouchableOpacity>
           </View>
         </View>
+        
         <View style={styles.documentContainer}>
-          <Ionicons name="document-text" size={64} color="#4285f4" />
+          <View style={[styles.documentIconContainer, { backgroundColor: `${docInfo.color}20` }]}>
+            <Ionicons name={docInfo.icon as any} size={64} color={docInfo.color} />
+          </View>
+          
           <Text style={styles.documentTitle}>{materialDetail?.title}</Text>
           <Text style={styles.documentSubtext}>
-            {fileType === 'pdf' 
-              ? 'File downloaded and ready to view with PDF apps'
-              : 'File downloaded and ready to view with document apps'
+            {fileExtension === 'pdf' 
+              ? 'PDF downloaded and ready to view. Tap "Open with App" or view online.'
+              : `${docInfo.name} downloaded and ready to view with compatible apps.`
             }
           </Text>
           
           {/* Action buttons */}
           <View style={styles.documentActions}>
-            <TouchableOpacity style={styles.primaryDocumentButton} onPress={handleShare}>
+            <TouchableOpacity 
+              style={[styles.primaryDocumentButton, { backgroundColor: docInfo.color }]} 
+              onPress={handleShare}
+            >
               <Ionicons name="open-outline" size={20} color="#fff" />
               <Text style={styles.primaryDocumentButtonText}>Open with App</Text>
             </TouchableOpacity>
             
-            {isConnected && (
-              <TouchableOpacity style={styles.secondaryDocumentButton} onPress={handleViewOnline}>
+            {/* Special PDF web viewer */}
+            {fileExtension === 'pdf' && isConnected && (
+              <TouchableOpacity style={styles.secondaryDocumentButton} onPress={handleViewPDFOnline}>
                 <Ionicons name="globe-outline" size={20} color="#4285f4" />
                 <Text style={styles.secondaryDocumentButtonText}>View in Browser</Text>
               </TouchableOpacity>
             )}
+            
+            {/* Generic online viewer for other documents */}
+            {fileExtension !== 'pdf' && isConnected && (
+              <TouchableOpacity style={styles.secondaryDocumentButton} onPress={handleViewOnline}>
+                <Ionicons name="cloud-outline" size={20} color="#4285f4" />
+                <Text style={styles.secondaryDocumentButtonText}>View Online</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          
+          {/* File info */}
+          <View style={styles.fileInfoContainer}>
+            <View style={styles.fileInfoRow}>
+              <Ionicons name="document" size={16} color="#5f6368" />
+              <Text style={styles.fileInfoText}>
+                {fileExtension.toUpperCase()} • Downloaded for offline access
+              </Text>
+            </View>
+            <View style={styles.fileInfoRow}>
+              <Ionicons name="checkmark-circle" size={16} color="#34a853" />
+              <Text style={styles.fileInfoText}>
+                ✅ Available offline • Can be opened anytime
+              </Text>
+            </View>
           </View>
           
           {/* Helpful tips */}
           <View style={styles.tipContainer}>
             <Ionicons name="information-circle-outline" size={16} color="#5f6368" />
             <Text style={styles.tipText}>
-              ✅ Downloaded • Recommended apps: {fileType === 'pdf' 
-                ? 'Adobe Reader, Google Drive, Microsoft Edge'
-                : 'Google Docs, Microsoft Word, WPS Office'
-              }
+              Recommended apps: {docInfo.apps}
             </Text>
           </View>
         </View>
       </View>
     );
+  };
+  const handleViewPDFOnline = async () => {
+    if (!isConnected) {
+      Alert.alert('Offline Mode', 'Online PDF viewing requires an internet connection.');
+      return;
+    }
+
+    try {
+      const fileUrl = await getAuthenticatedFileUrl();
+      if (fileUrl) {
+        // Use Google Docs viewer for better PDF viewing
+        const googleDocsUrl = `https://docs.google.com/viewer?url=${encodeURIComponent(fileUrl)}`;
+        WebBrowser.openBrowserAsync(googleDocsUrl);
+      } else {
+        // Fallback to direct URL
+        const directUrl = `${api.defaults.baseURL}/materials/${materialDetail?.id}/view`;
+        WebBrowser.openBrowserAsync(directUrl);
+      }
+    } catch (error) {
+      console.error('❌ Error opening PDF viewer:', error);
+      Alert.alert('Error', 'Unable to open PDF viewer. Please try again.');
+    }
   };
 
   const renderImageViewer = () => (
@@ -1271,6 +1405,35 @@ const styles = StyleSheet.create({
   errorCodeText: {
     fontSize: 14,
     color: '#ea4335',
+    textAlign: 'center',
+  },
+  documentHeaderInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  documentIconContainer: {
+    width: 100,
+    height: 100,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  fileInfoContainer: {
+    width: '100%',
+    gap: 8,
+    marginBottom: 16,
+  },
+  fileInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    justifyContent: 'center',
+  },
+  fileInfoText: {
+    fontSize: 12,
+    color: '#5f6368',
     textAlign: 'center',
   },
   retryCodeButton: {

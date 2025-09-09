@@ -4,7 +4,7 @@ import * as SecureStore from 'expo-secure-store';
 import { detectTimeManipulation, saveAssessmentDetailsToDb } from './localDb';
 
 export const API_BASE_URL = __DEV__ 
-  ? 'http://192.168.1.9:8000/api'  // Development
+  ? 'http://192.168.1.7:8000/api'  // Development
   : 'https://your-cloud-domain.com/api'; // Production
 
 const api = axios.create({
