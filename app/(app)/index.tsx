@@ -27,7 +27,7 @@ import {
   saveServerTime,
   updateTimeSync
 } from '../../lib/localDb';
-
+import { showOfflineModeWarningIfNeeded } from '../../lib/offlineWarning';
 const { width, height } = Dimensions.get('window');
 
 interface Course {
@@ -236,8 +236,6 @@ export default function HomeScreen() {
     }
   };
 
-  // ...existing code...
-
   useEffect(() => {
     const syncSubmissions = async () => {
       if (!isInitialized) return;
@@ -332,6 +330,16 @@ export default function HomeScreen() {
     
     checkAssessmentsNeedingDetails();
   }, [enrolledCourses, isInitialized]);
+
+  useEffect(() => {
+    const checkOfflineWarning = async () => {
+      if (!isConnected) {
+        await showOfflineModeWarningIfNeeded();
+      }
+    };
+    
+    checkOfflineWarning();
+  }, [isConnected]);
 
   const fetchAndSaveCompleteCoursesData = async (courses: EnrolledCourse[], userEmail: string) => {
     console.log('📦 Starting to fetch complete course data for offline access...');

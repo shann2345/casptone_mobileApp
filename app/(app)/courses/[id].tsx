@@ -1,9 +1,35 @@
+import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Modal, RefreshControl, SectionList, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  Modal,
+  RefreshControl,
+  SectionList,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { showOfflineModeWarningIfNeeded } from '../../../lib/offlineWarning';
+// Import your API and database functions
 import { useNetworkStatus } from '../../../context/NetworkContext';
-import api, { getServerTime, getUserData } from '../../../lib/api';
-import { detectTimeManipulation, getCourseDetailsFromDb, getSavedServerTime, saveCourseDetailsToDb, saveServerTime } from '../../../lib/localDb';
+import api, {
+  getServerTime,
+  getUserData,
+} from '../../../lib/api';
+import {
+  canAccessOfflineContent,
+  checkManipulationHistory,
+  clearManipulationFlag,
+  detectTimeManipulation,
+  getCourseDetailsFromDb,
+  getSavedServerTime,
+  saveCourseDetailsToDb,
+} from '../../../lib/localDb';
 
 // Define interfaces for detailed course data
 interface Material {
@@ -128,149 +154,144 @@ export default function CourseDetailsScreen() {
   }, [courseId, isConnected]);
 
   const fetchCourseDetails = async () => {
-    setLoading(true);
-    let userEmail = '';
-    try {
-      const userData = await getUserData();
-      if (userData && userData.email) {
-        userEmail = userData.email;
-      } else {
-        Alert.alert('Error', 'User data not found. Please log in again.');
-        router.replace('/login');
-        return;
-      }
-    } catch (error) {
-      console.error('❌ Error getting user data:', error);
+  setLoading(true);
+  let userEmail = '';
+  try {
+    const userData = await getUserData();
+    if (userData && userData.email) {
+      userEmail = userData.email;
+    } else {
       Alert.alert('Error', 'User data not found. Please log in again.');
       router.replace('/login');
       return;
     }
+  } catch (error) {
+    console.error('❌ Error getting user data:', error);
+    Alert.alert('Error', 'User data not found. Please log in again.');
+    router.replace('/login');
+    return;
+  }
 
-    // Check for time manipulation first
-    try {
-      const timeCheck = await detectTimeManipulation(userEmail);
-      if (!timeCheck.isValid) {
-        console.log('❌ Time manipulation detected in course details:', timeCheck.reason);
-        setTimeManipulationDetected(true);
+  try {
+    // ALWAYS check for manipulation first, regardless of connection status
+    const timeCheck = await detectTimeManipulation(userEmail);
+    if (!timeCheck.isValid) {
+      setTimeManipulationDetected(true);
+      setServerTime(null);
+      
+      if (timeCheck.requiresOnlineSync) {
         Alert.alert(
-          'Time Manipulation Detected',
-          `${timeCheck.reason}. Course content is locked until you reconnect to the internet.`,
-          [{ text: 'OK' }]
+          '🚨 Time Manipulation Detected',
+          `${timeCheck.reason}\n\n⚠️ WARNING: Any attempt to manipulate device time will lock your access. You must connect to the internet to restore access.`,
+          [
+            {
+              text: 'Understood',
+              onPress: () => {
+                setCourseDetail(null);
+              }
+            }
+          ]
         );
-      } else {
-        setTimeManipulationDetected(false);
+        setLoading(false);
+        return;
       }
-    } catch (timeError) {
-      console.error('❌ Error checking time manipulation:', timeError);
-      // Continue with normal flow if time check fails
     }
 
-    try {
-      if (isConnected && !timeManipulationDetected) {
-        // Fetch server time first
-        console.log('🕐 Fetching server time...');
-        try {
-          const apiServerTime = await getServerTime();
-          if (apiServerTime) {
-            const serverTimeDate = new Date(apiServerTime);
-            setServerTime(serverTimeDate);
-            // Save the server time and the current device time
-            await saveServerTime(userEmail, apiServerTime, new Date().toISOString());
-            console.log('✅ Server time set and synced:', serverTimeDate.toISOString());
-          } else {
-            // If online but cannot get server time, this is a network error.
-            setServerTime(null);
-            Alert.alert('Network Error', 'Could not sync server time. Some content may be unavailable.');
-          }
-        } catch (timeError) {
-          console.error('❌ Error fetching server time:', timeError);
-          if (timeError.message === 'Time manipulation detected') {
-            setTimeManipulationDetected(true);
+    if (isConnected && !timeManipulationDetected) {
+      // ONLINE MODE: Fetch fresh data and establish time baseline
+      console.log('✅ Online: Fetching course details and establishing strict time baseline');
+      
+      try {
+        const apiServerTime = await getServerTime(true);
+        if (apiServerTime) {
+          const serverTimeDate = new Date(apiServerTime);
+          setServerTime(serverTimeDate);
+          
+          // Clear any previous manipulation flags since user is now online
+          await clearManipulationFlag(userEmail);
+          setTimeManipulationDetected(false);
+          
+          console.log('✅ Server time set and strict baseline established:', serverTimeDate.toISOString());
+          
+          // Show success message if this is a recovery from manipulation
+          const manipulationHistory = await checkManipulationHistory(userEmail);
+          if (manipulationHistory) {
             Alert.alert(
-              'Time Manipulation Detected',
-              'Course content is locked. Please restart the app.',
-              [{ text: 'OK', onPress: () => router.replace('/login') }]
+              '✅ Access Restored',
+              'Your access has been restored. Remember: any time manipulation will immediately lock your access again.',
+              [{ text: 'Understood' }]
             );
-            return;
           }
-          setServerTime(null);
-        }
-
-        console.log('✅ Online: Fetching course details from API.');
-        const response = await api.get(`/courses/${courseId}`);
-        if (response.status === 200) {
-          const courseData = response.data.course;
-          setCourseDetail(courseData);
-          await saveCourseDetailsToDb(courseData, userEmail);
-          console.log('✅ Course details fetched and saved to local DB:', JSON.stringify(response.data, null, 2));
         } else {
-          Alert.alert('Error', 'Failed to fetch course details.');
-          const offlineData = await getCourseDetailsFromDb(Number(courseId), userEmail);
-          if (offlineData) {
-            setCourseDetail(offlineData);
-            Alert.alert('Network Error', 'Failed to load live data, showing offline content.');
-          } else {
-            Alert.alert('Error', 'Failed to load course details from API and no offline data is available.');
-          }
+          setServerTime(null);
+          Alert.alert('Network Error', 'Could not sync server time. Some content may be unavailable.');
         }
+      } catch (timeError) {
+        console.error('❌ Error establishing time baseline:', timeError);
+        setServerTime(null);
+      }
+
+      // Fetch course data
+      const response = await api.get(`/courses/${courseId}`);
+      if (response.status === 200) {
+        const courseData = response.data.course;
+        setCourseDetail(courseData);
+        await saveCourseDetailsToDb(courseData, userEmail);
+        console.log('✅ Course details fetched and saved for offline use');
       } else {
-        // OFFLINE MODE: Fetch from local DB for the specific user
-        console.log('⚠️ Offline: Fetching course details from local DB.');
+        // Fallback to offline data
+        const offlineData = await getCourseDetailsFromDb(Number(courseId), userEmail);
+        if (offlineData) {
+          setCourseDetail(offlineData);
+          Alert.alert('Network Error', 'Failed to load live data, showing offline content.');
+        }
+      }
+    } else {
+      // OFFLINE MODE: Show proactive warning and use cached data with STRICT time validation
+      console.log('⚠️ Offline: Entering offline mode with strict time monitoring');
 
-        if (!timeManipulationDetected) {
-          // Get the calculated, offline-adjusted server time from the updated function
-          const calculatedServerTime = await getSavedServerTime(userEmail);
-          if (calculatedServerTime) {
-            const serverTimeDate = new Date(calculatedServerTime);
-            setServerTime(serverTimeDate);
-            console.log('✅ Using trusted offline server time:', serverTimeDate.toISOString());
-          } else {
-            // If getSavedServerTime returns null, it detected time manipulation
-            setTimeManipulationDetected(true);
-            setServerTime(null);
-            Alert.alert(
-              'Time Manipulation Detected', 
-              'Course content is locked. Please connect to the internet to re-sync your time settings.',
-              [{ text: 'OK' }]
-            );
-          }
-        } else {
-          setServerTime(null);
+      // PROACTIVE WARNING: Use the imported function
+      await showOfflineModeWarningIfNeeded();
+
+      // Double-check manipulation status in offline mode
+      const canAccess = await canAccessOfflineContent(userEmail);
+      if (!canAccess) {
+        setTimeManipulationDetected(true);
+        setServerTime(null);
+        Alert.alert(
+          '🚨 Access Blocked',
+          '⚠️ Time manipulation was detected. You must connect to the internet to restore access.\n\nWARNING: Do not attempt to manipulate your device time. This will only extend the lockout period.',
+          [{ text: 'Understood' }]
+        );
+        setCourseDetail(null); // Block content
+      } else {
+        setTimeManipulationDetected(false);
+        
+        // Get calculated offline server time
+        const calculatedServerTime = await getSavedServerTime(userEmail);
+        if (calculatedServerTime) {
+          const serverTimeDate = new Date(calculatedServerTime);
+          setServerTime(serverTimeDate);
+          console.log('✅ Using calculated offline server time with strict monitoring:', serverTimeDate.toISOString());
         }
 
+        // Load offline course data
         const offlineData = await getCourseDetailsFromDb(Number(courseId), userEmail);
         if (offlineData) {
           setCourseDetail(offlineData);
         } else {
-          Alert.alert('Offline Error', 'You are offline and no course content has been saved for this course.');
+          Alert.alert('Offline Error', 'No offline content available for this course.');
         }
       }
-    } catch (error) {
-      console.error('Failed to fetch course details:', error);
-      
-      // Handle time manipulation errors specifically
-      if (error.message === 'Time manipulation detected. Please log in again.') {
-        setTimeManipulationDetected(true);
-        Alert.alert(
-          'Time Manipulation Detected',
-          'Please log in again to continue.',
-          [{ text: 'OK', onPress: () => router.replace('/login') }]
-        );
-        return;
-      }
-      
-      Alert.alert('Error', 'Network error or unable to load course details.');
-      const offlineData = await getCourseDetailsFromDb(Number(courseId), userEmail);
-      if (offlineData) {
-        setCourseDetail(offlineData);
-        Alert.alert('Network Error', 'Failed to load live data, showing offline content.');
-      } else {
-        Alert.alert('Error', 'Failed to load course details.');
-      }
-    } finally {
-      setLoading(false);
     }
-  };
+  } catch (error) {
+    console.error('Failed to fetch course details:', error);
+    Alert.alert('Error', 'Unable to load course details.');
+  } finally {
+    setLoading(false);
+  }
+};
+
 
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
@@ -297,9 +318,9 @@ export default function CourseDetailsScreen() {
   const handleAccessCodeSubmit = () => {
     if (timeManipulationDetected) {
       Alert.alert(
-        'Time Manipulation Detected',
-        'Please connect to the internet to re-sync your time settings.',
-        [{ text: 'OK' }]
+        '🚨 Access Blocked',
+        'Time manipulation was detected. Connect to the internet to restore access.\n\n⚠️ WARNING: Manipulating device time will immediately lock your access.',
+        [{ text: 'Understood' }]
       );
       return;
     }
@@ -319,11 +340,34 @@ export default function CourseDetailsScreen() {
     }
   };
 
+  const getItemIcon = (type: string) => {
+    switch (type) {
+      case 'material': return 'document-text';
+      case 'assessment': return 'school';
+      case 'topic': return 'folder';
+      default: return 'document';
+    }
+  };
+
+  const getItemColor = (type: string) => {
+    switch (type) {
+      case 'material': return '#4CAF50';
+      case 'assessment': return '#2196F3';
+      case 'topic': return '#FF9800';
+      default: return '#757575';
+    }
+  };
+
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#0000ff" />
-        <Text style={styles.loadingText}>Loading course details...</Text>
+      <View style={styles.container}>
+        <LinearGradient
+          colors={['#02135eff', '#7979f1ff']}
+          style={styles.loadingGradient}
+        >
+          <ActivityIndicator size="large" color="#fff" />
+          <Text style={styles.loadingText}>Loading course details...</Text>
+        </LinearGradient>
       </View>
     );
   }
@@ -331,36 +375,75 @@ export default function CourseDetailsScreen() {
   if (!courseDetail) {
     return (
       <View style={styles.container}>
-        <Text style={styles.errorText}>Course not found or an error occurred.</Text>
+        <LinearGradient
+          colors={['#02135eff', '#7979f1ff']}
+          style={styles.loadingGradient}
+        >
+          <Ionicons name="alert-circle" size={64} color="#fff" />
+          <Text style={styles.errorText}>Course not found or an error occurred.</Text>
+        </LinearGradient>
       </View>
     );
   }
 
   const renderHeader = () => (
     <View>
-      <View style={[styles.headerContainer, timeManipulationDetected && styles.disabledHeader]}>
-        <Text style={styles.courseTitle}>{courseDetail.title}</Text>
-        <View style={styles.detailRow}>
-          <Text style={styles.label}>{courseDetail.instructor.name} ({courseDetail.instructor.email})</Text>
+      {/* Enhanced Header with Gradient */}
+      <LinearGradient
+        colors={['#02135eff', '#7979f1ff']}
+        style={[styles.headerContainer, timeManipulationDetected && styles.disabledHeader]}
+      >
+        <View style={styles.headerContent}>
+          <Text style={styles.courseTitle}>{courseDetail?.title || 'Course Access Blocked'}</Text>
+          <Text style={styles.courseCode}>{courseDetail?.course_code}</Text>
+          
+          {!timeManipulationDetected && courseDetail && (
+            <>
+              <View style={styles.instructorInfo}>
+                <Ionicons name="person" size={16} color="rgba(255,255,255,0.8)" />
+                <Text style={styles.instructorText}>
+                  {courseDetail.instructor.name} ({courseDetail.instructor.email})
+                </Text>
+              </View>
+              
+              <View style={styles.courseStats}>
+                <View style={styles.statItem}>
+                  <Text style={styles.statValue}>{courseDetail.credits}</Text>
+                  <Text style={styles.statLabel}>Credits</Text>
+                </View>
+                <View style={styles.statItem}>
+                  <Text style={styles.statValue}>{courseDetail.sorted_content.length}</Text>
+                  <Text style={styles.statLabel}>Items</Text>
+                </View>
+                <View style={styles.statItem}>
+                  <Text style={styles.statValue}>{courseDetail.status}</Text>
+                  <Text style={styles.statLabel}>Status</Text>
+                </View>
+              </View>
+            </>
+          )}
+          
+          {timeManipulationDetected && (
+            <View style={styles.timeManipulationWarning}>
+              <Ionicons name="warning" size={24} color="#fff" />
+              <Text style={styles.warningText}>TIME MANIPULATION DETECTED</Text>
+              <Text style={styles.warningSubText}>
+                Your access has been blocked due to device time manipulation.
+              </Text>
+              <Text style={styles.warningSubText}>
+                Connect to the internet to restore access.
+              </Text>
+            </View>
+          )}
+          
+          {!isConnected && !timeManipulationDetected && (
+            <View style={styles.offlineNotice}>
+              <Ionicons name="cloud-offline" size={14} color="#fff" />
+              <Text style={styles.offlineText}>Working offline</Text>
+            </View>
+          )}
         </View>
-        
-        {timeManipulationDetected && (
-          <View style={styles.timeManipulationWarning}>
-            <Text style={styles.warningText}>
-              ⚠️ Time manipulation detected. Course content is locked until you reconnect to the internet.
-            </Text>
-          </View>
-        )}
-        
-        {/* Debug info - remove in production */}
-        {__DEV__ && serverTime && !timeManipulationDetected && (
-          <View style={styles.debugContainer}>
-            <Text style={styles.debugText}>
-              Server Time: {serverTime.toLocaleString()}
-            </Text>
-          </View>
-        )}
-      </View>
+      </LinearGradient>
     </View>
   );
 
@@ -374,19 +457,30 @@ export default function CourseDetailsScreen() {
       const topic = item as Topic;
       return (
         <View style={[styles.topicCard, timeManipulationDetected && styles.disabledCard]}>
-          <Text style={styles.topicTitle}>{topic.title}</Text>
+          <View style={styles.topicHeader}>
+            <View style={[styles.iconContainer, { backgroundColor: getItemColor('topic') + '15' }]}>
+              <Ionicons name={getItemIcon('topic')} size={24} color={getItemColor('topic')} />
+            </View>
+            <View style={styles.topicInfo}>
+              <Text style={styles.topicTitle}>{topic.title}</Text>
+              <Text style={styles.topicDescription}>{topic.description}</Text>
+            </View>
+          </View>
 
           {(topic.materials.length > 0 || topic.assessments.length > 0) && (
             <View style={styles.nestedItemsContainer}>
               {topic.materials.map(material => {
                 const available = isAvailable(material);
-                const opacityStyle = available ? {} : { opacity: 0.5 };
                 const disabled = !available || timeManipulationDetected;
 
                 return (
                   <TouchableOpacity
                     key={material.id}
-                    style={[styles.itemCardNested, opacityStyle, timeManipulationDetected && styles.disabledCard]}
+                    style={[
+                      styles.itemCardNested,
+                      !available && styles.unavailableCard,
+                      timeManipulationDetected && styles.disabledCard
+                    ]}
                     onPress={() => {
                       if (timeManipulationDetected) {
                         Alert.alert(
@@ -403,45 +497,58 @@ export default function CourseDetailsScreen() {
                       }
                     }}
                     disabled={disabled}
+                    activeOpacity={0.8}
                   >
-                    <Text style={styles.itemTitleNested}>{material.title}</Text>
-                    <Text style={styles.itemTypeNested}>
-                      Material {available ? '' : '(Not Available Yet)'}
-                      {timeManipulationDetected ? ' (Time Sync Required)' : ''}
-                    </Text>
-                    {material.content && <Text style={styles.itemDetailNested}>{material.content.substring(0, 100)}...</Text>}
-                    {material.file_path && <Text style={styles.itemDetailNested}>File: {material.file_path.split('/').pop()}</Text>}
-                    {material.available_at && !available && !timeManipulationDetected && (
-                      <Text style={styles.itemDateNested}>Available: {formatDate(material.available_at)}</Text>
+                    <View style={styles.nestedItemHeader}>
+                      <View style={[styles.iconContainerSmall, { backgroundColor: getItemColor('material') + '15' }]}>
+                        <Ionicons name={getItemIcon('material')} size={16} color={getItemColor('material')} />
+                      </View>
+                      <View style={styles.nestedItemInfo}>
+                        <Text style={styles.itemTitleNested}>{material.title}</Text>
+                        <Text style={styles.itemTypeNested}>
+                          Material {!available && '(Not Available Yet)'}
+                          {timeManipulationDetected && ' (Time Sync Required)'}
+                        </Text>
+                      </View>
+                      {!available && !timeManipulationDetected && (
+                        <View style={styles.availabilityBadge}>
+                          <Text style={styles.availabilityText}>Locked</Text>
+                        </View>
+                      )}
+                    </View>
+                    
+                    {material.content && (
+                      <Text style={styles.itemDetailNested}>
+                        {material.content.substring(0, 100)}...
+                      </Text>
                     )}
-                    <Text style={styles.itemDateNested}>Created: {formatDate(material.created_at)}</Text>
+                    
+                    <View style={styles.itemFooter}>
+                      <Text style={styles.itemDateNested}>
+                        Created: {formatDate(material.created_at)}
+                      </Text>
+                      {material.available_at && !available && !timeManipulationDetected && (
+                        <Text style={styles.availableDateText}>
+                          Available: {formatDate(material.available_at)}
+                        </Text>
+                      )}
+                    </View>
                   </TouchableOpacity>
                 );
               })}
+              
               {topic.assessments.map(assessment => {
                 const available = isAvailable(assessment);
-                const opacityStyle = available ? {} : { opacity: 0.5 };
                 const disabled = !available || timeManipulationDetected;
 
-                let availabilityText = '';
-                if (!available) {
-                  const now = serverTime ? serverTime : new Date();
-                  const availableDate = assessment.available_at ? new Date(assessment.available_at) : null;
-                  const unavailableDate = assessment.unavailable_at ? new Date(assessment.unavailable_at) : null;
-                  
-                  if (availableDate && now < availableDate) {
-                    availabilityText = `(Available: ${formatDate(assessment.available_at!)})`;
-                  } else if (unavailableDate && now >= unavailableDate) {
-                    availabilityText = `(Unavailable)`;
-                  } else {
-                    availabilityText = `(Not Available)`;
-                  }
-                }
-                
                 return (
                   <TouchableOpacity
                     key={assessment.id}
-                    style={[styles.itemCardNested, opacityStyle, timeManipulationDetected && styles.disabledCard]}
+                    style={[
+                      styles.itemCardNested,
+                      !available && styles.unavailableCard,
+                      timeManipulationDetected && styles.disabledCard
+                    ]}
                     onPress={() => {
                       if (timeManipulationDetected) {
                         Alert.alert(
@@ -459,24 +566,42 @@ export default function CourseDetailsScreen() {
                           router.push(`/courses/assessments/${assessment.id}`);
                         }
                       } else {
-                        Alert.alert('Access Denied', `This assessment is not currently available. It was available from ${formatDate(assessment.available_at!)} to ${formatDate(assessment.unavailable_at!)}.`);
+                        Alert.alert('Access Denied', `This assessment is not currently available.`);
                       }
                     }}
                     disabled={disabled}
+                    activeOpacity={0.8}
                   >
-                    <Text style={styles.itemTitleNested}>{assessment.title}</Text>
-                    <Text style={styles.itemTypeNested}>
-                      Assessment {availabilityText}
-                      {assessment.access_code ? ' (Code Required)' : ''}
-                      {timeManipulationDetected ? ' (Time Sync Required)' : ''}
-                    </Text>
-                    {(assessment.available_at && !available) || (assessment.unavailable_at && !available) && !timeManipulationDetected && (
+                    <View style={styles.nestedItemHeader}>
+                      <View style={[styles.iconContainerSmall, { backgroundColor: getItemColor('assessment') + '15' }]}>
+                        <Ionicons name={getItemIcon('assessment')} size={16} color={getItemColor('assessment')} />
+                      </View>
+                      <View style={styles.nestedItemInfo}>
+                        <Text style={styles.itemTitleNested}>{assessment.title}</Text>
+                        <Text style={styles.itemTypeNested}>
+                          Assessment
+                          {assessment.access_code && ' (Code Required)'}
+                          {!available && ' (Not Available)'}
+                          {timeManipulationDetected && ' (Time Sync Required)'}
+                        </Text>
+                      </View>
+                      {assessment.access_code && (
+                        <View style={styles.codeRequiredBadge}>
+                          <Ionicons name="key" size={12} color="#fff" />
+                        </View>
+                      )}
+                    </View>
+                    
+                    <View style={styles.itemFooter}>
                       <Text style={styles.itemDateNested}>
-                        {assessment.available_at && !available ? `Available: ${formatDate(assessment.available_at)}` : ''}
-                        {assessment.unavailable_at && !available ? ` to ${formatDate(assessment.unavailable_at)}` : ''}
+                        Created: {formatDate(assessment.created_at)}
                       </Text>
-                    )}
-                    <Text style={styles.itemDateNested}>Created: {formatDate(assessment.created_at)}</Text>
+                      {assessment.available_at && !available && !timeManipulationDetected && (
+                        <Text style={styles.availableDateText}>
+                          Available: {formatDate(assessment.available_at)}
+                        </Text>
+                      )}
+                    </View>
                   </TouchableOpacity>
                 );
               })}
@@ -487,12 +612,15 @@ export default function CourseDetailsScreen() {
     } else if (item.type === 'material') {
       const material = item as Material;
       const available = isAvailable(material);
-      const opacityStyle = available ? {} : { opacity: 0.5 };
       const disabled = !available || timeManipulationDetected;
 
       return (
         <TouchableOpacity
-          style={[styles.itemCard, opacityStyle, timeManipulationDetected && styles.disabledCard]}
+          style={[
+            styles.itemCard,
+            !available && styles.unavailableCard,
+            timeManipulationDetected && styles.disabledCard
+          ]}
           onPress={() => {
             if (timeManipulationDetected) {
               Alert.alert(
@@ -509,44 +637,53 @@ export default function CourseDetailsScreen() {
             }
           }}
           disabled={disabled}
+          activeOpacity={0.8}
         >
-          <Text style={styles.itemTitle}>{material.title}</Text>
-          <Text style={styles.itemType}>
-            Material (Independent) {available ? '' : '(Not Available Yet)'}
-            {timeManipulationDetected ? ' (Time Sync Required)' : ''}
-          </Text>
-          {material.content && <Text style={styles.itemDetail}>{material.content.substring(0, 150)}...</Text>}
-          {material.file_path && <Text style={styles.itemDetailNested}>File: {material.file_path.split('/').pop()}</Text>}
-          {material.available_at && !available && !timeManipulationDetected && (
-            <Text style={styles.itemDate}>Available: {formatDate(material.available_at)}</Text>
+          <View style={styles.itemHeader}>
+            <View style={[styles.iconContainer, { backgroundColor: getItemColor('material') + '15' }]}>
+              <Ionicons name={getItemIcon('material')} size={24} color={getItemColor('material')} />
+            </View>
+            <View style={styles.itemInfo}>
+              <Text style={styles.itemTitle}>{material.title}</Text>
+              <Text style={styles.itemType}>
+                Independent Material
+                {!available && ' (Not Available Yet)'}
+                {timeManipulationDetected && ' (Time Sync Required)'}
+              </Text>
+            </View>
+            {!available && !timeManipulationDetected && (
+              <View style={styles.availabilityBadge}>
+                <Text style={styles.availabilityText}>Locked</Text>
+              </View>
+            )}
+          </View>
+          
+          {material.content && (
+            <Text style={styles.itemDetail}>{material.content.substring(0, 150)}...</Text>
           )}
-          <Text style={styles.itemDate}>Created: {formatDate(material.created_at)}</Text>
+          
+          <View style={styles.itemFooter}>
+            <Text style={styles.itemDate}>Created: {formatDate(material.created_at)}</Text>
+            {material.available_at && !available && !timeManipulationDetected && (
+              <Text style={styles.availableDateText}>
+                Available: {formatDate(material.available_at)}
+              </Text>
+            )}
+          </View>
         </TouchableOpacity>
       );
     } else if (item.type === 'assessment') {
       const assessment = item as Assessment;
       const available = isAvailable(assessment);
-      const opacityStyle = available ? {} : { opacity: 0.5 };
       const disabled = !available || timeManipulationDetected;
-
-      let availabilityText = '';
-      if (!available) {
-        const now = serverTime ? serverTime : new Date();
-        const availableDate = assessment.available_at ? new Date(assessment.available_at) : null;
-        const unavailableDate = assessment.unavailable_at ? new Date(assessment.unavailable_at) : null;
-        
-        if (availableDate && now < availableDate) {
-          availabilityText = `(Available: ${formatDate(assessment.available_at!)})`;
-        } else if (unavailableDate && now >= unavailableDate) {
-          availabilityText = `(Unavailable)`;
-        } else {
-          availabilityText = `(Not Available)`;
-        }
-      }
 
       return (
         <TouchableOpacity
-          style={[styles.itemCard, opacityStyle, timeManipulationDetected && styles.disabledCard]}
+          style={[
+            styles.itemCard,
+            !available && styles.unavailableCard,
+            timeManipulationDetected && styles.disabledCard
+          ]}
           onPress={() => {
             if (timeManipulationDetected) {
               Alert.alert(
@@ -564,24 +701,47 @@ export default function CourseDetailsScreen() {
                 router.push(`/courses/assessments/${assessment.id}`);
               }
             } else {
-              Alert.alert('Access Denied', `This assessment is not currently available. It was available from ${formatDate(assessment.available_at!)} to ${formatDate(assessment.unavailable_at!)}.`);
+              Alert.alert('Access Denied', `This assessment is not currently available.`);
             }
           }}
           disabled={disabled}
+          activeOpacity={0.8}
         >
-          <Text style={styles.itemTitle}>{assessment.title}</Text>
-          <Text style={styles.itemType}>
-            Assessment (Independent) {availabilityText}
-            {assessment.access_code ? ' (Code Required)' : ''}
-            {timeManipulationDetected ? ' (Time Sync Required)' : ''}
-          </Text>
-          {(assessment.available_at && !available) || (assessment.unavailable_at && !available) && !timeManipulationDetected && (
-            <Text style={styles.itemDate}>
-              {assessment.available_at && !available ? `Available: ${formatDate(assessment.available_at)}` : ''}
-              {assessment.unavailable_at && !available ? ` to ${formatDate(assessment.unavailable_at)}` : ''}
-            </Text>
-          )}
-          <Text style={styles.itemDate}>Created: {formatDate(assessment.created_at)}</Text>
+          <View style={styles.itemHeader}>
+            <View style={[styles.iconContainer, { backgroundColor: getItemColor('assessment') + '15' }]}>
+              <Ionicons name={getItemIcon('assessment')} size={24} color={getItemColor('assessment')} />
+            </View>
+            <View style={styles.itemInfo}>
+              <Text style={styles.itemTitle}>{assessment.title}</Text>
+              <Text style={styles.itemType}>
+                Independent Assessment
+                {assessment.access_code && ' (Code Required)'}
+                {!available && ' (Not Available)'}
+                {timeManipulationDetected && ' (Time Sync Required)'}
+              </Text>
+            </View>
+            <View style={styles.itemBadges}>
+              {assessment.access_code && (
+                <View style={styles.codeRequiredBadge}>
+                  <Ionicons name="key" size={12} color="#fff" />
+                </View>
+              )}
+              {!available && !timeManipulationDetected && (
+                <View style={styles.availabilityBadge}>
+                  <Text style={styles.availabilityText}>Locked</Text>
+                </View>
+              )}
+            </View>
+          </View>
+          
+          <View style={styles.itemFooter}>
+            <Text style={styles.itemDate}>Created: {formatDate(assessment.created_at)}</Text>
+            {assessment.available_at && !available && !timeManipulationDetected && (
+              <Text style={styles.availableDateText}>
+                Available: {formatDate(assessment.available_at)}
+              </Text>
+            )}
+          </View>
         </TouchableOpacity>
       );
     }
@@ -591,7 +751,7 @@ export default function CourseDetailsScreen() {
   return (
     <View style={styles.container}>
       <Stack.Screen options={{ title: courseDetail.title }} />
-      {/* Replaced ScrollView with a header prop for SectionList */}
+      
       <SectionList
         sections={sectionsData}
         keyExtractor={(item, index) => `${item.type}-${item.id}-${index}`}
@@ -603,19 +763,22 @@ export default function CourseDetailsScreen() {
             </Text>
           </View>
         )}
-
         refreshControl={
           <RefreshControl
             refreshing={isRefreshing}
             onRefresh={handleRefresh}
+            tintColor="#667eea"
+            colors={['#667eea', '#764ba2']}
           />
         }
         ListHeaderComponent={renderHeader()}
         contentContainerStyle={styles.sectionListContent}
+        showsVerticalScrollIndicator={false}
       />
 
+      {/* Enhanced Modal */}
       <Modal
-        animationType="slide"
+        animationType="fade"
         transparent={true}
         visible={isAccessCodeModalVisible}
         onRequestClose={() => {
@@ -626,47 +789,73 @@ export default function CourseDetailsScreen() {
       >
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, timeManipulationDetected && styles.disabledCard]}>
-            <Text style={styles.modalTitle}>Enter Access Code</Text>
-            {currentAssessment && (
-              <Text style={styles.modalAssessmentTitle}>for "{currentAssessment.title}"</Text>
-            )}
-            {timeManipulationDetected && (
-              <Text style={styles.timeManipulationModalText}>
-                Time synchronization required to access assessments.
-              </Text>
-            )}
-            <TextInput
-              style={[styles.input, timeManipulationDetected && styles.disabledInput]}
-              placeholder="Access Code"
-              value={enteredAccessCode}
-              onChangeText={setEnteredAccessCode}
-              secureTextEntry
-              autoCapitalize="none"
-              editable={!timeManipulationDetected}
-            />
-            {accessCodeError && <Text style={styles.errorTextModal}>{accessCodeError}</Text>}
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={[styles.button, styles.cancelButton]}
-                onPress={() => {
-                  setAccessCodeModalVisible(false);
-                  setEnteredAccessCode('');
-                  setAccessCodeError(null);
-                }}
-              >
-                <Text style={styles.buttonText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.button, 
-                  styles.submitButton,
-                  timeManipulationDetected && styles.disabledButton
-                ]}
-                onPress={handleAccessCodeSubmit}
-                disabled={timeManipulationDetected}
-              >
-                <Text style={styles.buttonText}>Submit</Text>
-              </TouchableOpacity>
+            <LinearGradient
+              colors={['#02135eff', '#7979f1ff']}
+              style={styles.modalHeader}
+            >
+              <Ionicons name="key" size={32} color="#fff" />
+              <Text style={styles.modalTitle}>Access Code Required</Text>
+            </LinearGradient>
+            
+            <View style={styles.modalBody}>
+              {currentAssessment && (
+                <Text style={styles.modalAssessmentTitle}>
+                  "{currentAssessment.title}"
+                </Text>
+              )}
+              
+              {timeManipulationDetected ? (
+                <Text style={styles.timeManipulationModalText}>
+                  Time synchronization required to access assessments.
+                </Text>
+              ) : (
+                <Text style={styles.modalSubtitle}>
+                  Please enter the access code to continue with this assessment.
+                </Text>
+              )}
+              
+              <TextInput
+                style={[styles.input, timeManipulationDetected && styles.disabledInput]}
+                placeholder="Enter access code"
+                value={enteredAccessCode}
+                onChangeText={setEnteredAccessCode}
+                secureTextEntry
+                autoCapitalize="none"
+                editable={!timeManipulationDetected}
+              />
+              
+              {accessCodeError && (
+                <Text style={styles.errorTextModal}>{accessCodeError}</Text>
+              )}
+              
+              <View style={styles.modalButtons}>
+                <TouchableOpacity
+                  style={[styles.button, styles.cancelButton]}
+                  onPress={() => {
+                    setAccessCodeModalVisible(false);
+                    setEnteredAccessCode('');
+                    setAccessCodeError(null);
+                  }}
+                >
+                  <Text style={styles.buttonText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.button, 
+                    styles.submitButton,
+                    timeManipulationDetected && styles.disabledButton
+                  ]}
+                  onPress={handleAccessCodeSubmit}
+                  disabled={timeManipulationDetected}
+                >
+                  <LinearGradient
+                    colors={timeManipulationDetected ? ['#ccc', '#ccc'] : ['#02135eff', '#7979f1ff']}
+                    style={styles.submitButtonGradient}
+                  >
+                    <Text style={styles.buttonText}>Submit</Text>
+                  </LinearGradient>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         </View>
@@ -675,267 +864,396 @@ export default function CourseDetailsScreen() {
   );
 }
 
-// Enhanced styles with time manipulation states
+// Enhanced styles matching index.tsx design
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#f8f9fa',
   },
-  // Removed scrollViewContent style
-  loadingContainer: {
+  
+  // Loading State (matching index.tsx)
+  loadingGradient: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    paddingHorizontal: 40,
   },
   loadingText: {
-    marginTop: 10,
-    fontSize: 16,
-    color: '#333',
+    marginTop: 20,
+    fontSize: 18,
+    color: '#fff',
+    fontWeight: '500',
+    textAlign: 'center',
   },
   errorText: {
+    marginTop: 20,
     fontSize: 18,
-    color: 'red',
+    color: '#fff',
+    fontWeight: '500',
     textAlign: 'center',
-    marginTop: 50,
   },
+
+  // Enhanced Header (matching index.tsx gradient)
   headerContainer: {
-    backgroundColor: '#ffffff',
-    borderRadius: 2,
-    padding: 20,
-    marginBottom: 20,
+    paddingTop: 20,
+    paddingBottom: 30,
+    paddingHorizontal: 20,
+    borderBottomLeftRadius: 30,
+    borderBottomRightRadius: 30,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 6,
-    elevation: 6,
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+    marginBottom: 20,
   },
   disabledHeader: {
-    backgroundColor: '#f8f8f8',
-    borderColor: '#e74c3c',
-    borderWidth: 2,
+    opacity: 0.7,
+  },
+  headerContent: {
+    alignItems: 'center',
   },
   courseTitle: {
     fontSize: 28,
     fontWeight: 'bold',
-    color: '#007bff',
-    marginBottom: 5,
+    color: '#fff',
+    textAlign: 'center',
+    marginBottom: 8,
   },
   courseCode: {
-    fontSize: 18,
-    color: '#555',
-    marginBottom: 10,
-  },
-  description: {
     fontSize: 16,
-    color: '#333',
+    color: 'rgba(255,255,255,0.8)',
     marginBottom: 15,
   },
-  credits: {
-    fontSize: 16,
-    color: '#333',
-    marginBottom: 5,
-  },
-  status: {
-    fontSize: 16,
-    color: '#333',
-    marginBottom: 15,
-  },
-  detailRow: {
+  instructorInfo: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 5,
+    marginBottom: 20,
   },
-  label: {
+  instructorText: {
+    fontSize: 14,
+    color: 'rgba(255,255,255,0.9)',
+    marginLeft: 8,
+  },
+  courseStats: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    width: '100%',
+  },
+  statItem: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: 15,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    minWidth: 80,
+  },
+  statValue: {
+    fontSize: 20,
     fontWeight: 'bold',
-    color: '#2c3e50',
-    marginRight: 5,
+    color: '#fff',
   },
-  value: {
-    fontSize: 16,
-    color: '#333',
+  statLabel: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.8)',
+    marginTop: 4,
   },
-  timeManipulationWarning: {
-    backgroundColor: '#ffe6e6',
-    borderColor: '#e74c3c',
-    borderWidth: 1,
-    borderRadius: 8,
-    padding: 15,
+  offlineNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderRadius: 20,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
     marginTop: 15,
   },
-  warningText: {
-    color: '#e74c3c',
+  offlineText: {
+    color: '#fff',
     fontSize: 14,
+    fontWeight: '600',
+    marginLeft: 5,
+  },
+  timeManipulationWarning: {
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderRadius: 20,
+    padding: 20,
+    marginTop: 15,
+    alignItems: 'center',
+  },
+  warningText: {
+    color: '#fff',
+    fontSize: 16,
     fontWeight: 'bold',
     textAlign: 'center',
-  },
-  // Debug styles - remove in production
-  debugContainer: {
-    backgroundColor: '#f0f0f0',
-    padding: 10,
-    borderRadius: 2,
     marginTop: 10,
-    borderWidth: 1,
-    borderColor: '#ddd',
+    marginBottom: 8,
   },
-  debugText: {
-    fontSize: 12,
-    color: '#666',
-    fontFamily: 'monospace',
+  warningSubText: {
+    color: '#fff',
+    fontSize: 14,
+    textAlign: 'center',
+    opacity: 0.9,
+    lineHeight: 18,
+    marginBottom: 4,
   },
+
+  // Section Header
   sectionHeader: {
-    backgroundColor: '#e0e6eb',
-    paddingVertical: 10,
-    paddingHorizontal: 15,
-    marginTop: 20,
-    borderRadius: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#c0c6cb',
-  },
-  sectionTitle: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#34495e',
-  },
-  topicCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 2,
-    padding: 15,
-    marginBottom: 15,
-    marginTop: 5,
+    backgroundColor: '#fff',
+    paddingVertical: 15,
+    paddingHorizontal: 20,
+    marginTop: 10,
+    marginHorizontal: 20,
+    borderRadius: 15,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 3,
-    elevation: 2,
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#2c3e50',
+  },
+
+  // Enhanced Cards (matching index.tsx)
+  topicCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    padding: 20,
+    marginHorizontal: 20,
+    marginBottom: 15,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  itemCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    padding: 20,
+    marginHorizontal: 20,
+    marginBottom: 15,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
   },
   disabledCard: {
     backgroundColor: '#f5f5f5',
-    borderColor: '#e74c3c',
-    borderWidth: 1,
     opacity: 0.7,
+  },
+  unavailableCard: {
+    backgroundColor: '#f8f9fa',
+    borderColor: '#dee2e6',
+    borderWidth: 1,
+  },
+
+  // Item Headers and Content
+  topicHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 15,
+  },
+  itemHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+  },
+  nestedItemHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 8,
+  },
+  iconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 15,
+  },
+  iconContainerSmall: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  topicInfo: {
+    flex: 1,
+  },
+  itemInfo: {
+    flex: 1,
+  },
+  nestedItemInfo: {
+    flex: 1,
   },
   topicTitle: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#007bff',
-    marginBottom: 5,
+    color: '#2c3e50',
+    marginBottom: 4,
   },
   topicDescription: {
-    fontSize: 15,
-    color: '#555',
-    marginBottom: 10,
-  },
-  itemCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 2,
-    padding: 15,
-    marginBottom: 10,
-    marginTop: 5,
-    borderColor: '#696868ff',
-    borderWidth: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1.5,
+    fontSize: 14,
+    color: '#7f8c8d',
+    lineHeight: 20,
   },
   itemTitle: {
     fontSize: 18,
     fontWeight: 'bold',
     color: '#2c3e50',
-    marginBottom: 5,
-  },
-  itemType: {
-    fontSize: 15,
-    color: '#7f8c8d',
-    fontStyle: 'italic',
-    marginBottom: 5,
-  },
-  itemDetail: {
-    fontSize: 14,
-    color: '#555',
-  },
-  itemDate: {
-    fontSize: 13,
-    color: '#95a5a6',
-    marginTop: 5,
-    textAlign: 'right',
-  },
-  nestedItemsContainer: {
-    marginTop: 15,
-    paddingLeft: 10,
-    borderLeftWidth: 3,
-    borderLeftColor: '#d1e0f0',
-  },
-  itemCardNested: {
-    backgroundColor: '#f8f8f8',
-    borderRadius: 2,
-    paddingVertical: 12,
-    paddingHorizontal: 15,
-    marginBottom: 8,
-    marginTop: 4,
-    borderColor: '#696868ff',
-    borderWidth: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 1,
-    elevation: 1,
+    marginBottom: 4,
   },
   itemTitleNested: {
     fontSize: 16,
     fontWeight: '600',
     color: '#34495e',
-    marginBottom: 3,
+    marginBottom: 2,
+  },
+  itemType: {
+    fontSize: 14,
+    color: '#7f8c8d',
+    fontStyle: 'italic',
   },
   itemTypeNested: {
     fontSize: 13,
     color: '#6c7a89',
     fontStyle: 'italic',
-    marginBottom: 3,
+  },
+  itemDetail: {
+    fontSize: 14,
+    color: '#555',
+    lineHeight: 20,
+    marginBottom: 12,
   },
   itemDetailNested: {
     fontSize: 13,
     color: '#555',
+    lineHeight: 18,
+    marginBottom: 8,
+  },
+
+  // Badges and Status
+  itemBadges: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  availabilityBadge: {
+    backgroundColor: '#e74c3c',
+    borderRadius: 12,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  availabilityText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  codeRequiredBadge: {
+    backgroundColor: '#f39c12',
+    borderRadius: 12,
+    padding: 6,
+  },
+
+  // Footer and Dates
+  itemFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#f1f3f4',
+  },
+  itemDate: {
+    fontSize: 13,
+    color: '#95a5a6',
   },
   itemDateNested: {
     fontSize: 12,
     color: '#95a5a6',
-    marginTop: 3,
-    textAlign: 'right',
   },
+  availableDateText: {
+    fontSize: 12,
+    color: '#e74c3c',
+    fontWeight: '500',
+  },
+
+  // Nested Items
+  nestedItemsContainer: {
+    marginTop: 15,
+    paddingLeft: 15,
+    borderLeftWidth: 3,
+    borderLeftColor: '#e8f0fe',
+  },
+  itemCardNested: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 15,
+    padding: 15,
+    marginBottom: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+
   sectionListContent: {
-    paddingBottom: 20,
+    paddingBottom: 30,
   },
+
+  // Enhanced Modal (matching index.tsx style)
   modalOverlay: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
   },
   modalContent: {
+    width: '90%',
     backgroundColor: '#fff',
-    borderRadius: 2,
-    padding: 25,
-    width: '80%',
-    alignItems: 'center',
+    borderRadius: 20,
+    overflow: 'hidden',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 5,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 10,
+  },
+  modalHeader: {
+    padding: 25,
+    alignItems: 'center',
   },
   modalTitle: {
     fontSize: 22,
     fontWeight: 'bold',
-    marginBottom: 10,
-    color: '#333',
+    color: '#fff',
+    marginTop: 10,
+  },
+  modalBody: {
+    padding: 25,
   },
   modalAssessmentTitle: {
-    fontSize: 16,
-    color: '#555',
-    marginBottom: 20,
+    fontSize: 18,
+    color: '#2c3e50',
     textAlign: 'center',
+    marginBottom: 15,
+    fontWeight: '600',
+  },
+  modalSubtitle: {
+    fontSize: 14,
+    color: '#7f8c8d',
+    textAlign: 'center',
+    marginBottom: 20,
+    lineHeight: 20,
   },
   timeManipulationModalText: {
     fontSize: 14,
@@ -945,14 +1263,14 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   input: {
-    width: '100%',
-    borderWidth: 1,
-    borderColor: '#ccc',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 15,
+    borderWidth: 2,
+    borderColor: '#e9ecef',
+    backgroundColor: '#f8f9fa',
+    borderRadius: 12,
+    padding: 15,
     fontSize: 16,
-    color: '#333',
+    marginBottom: 15,
+    color: '#343a40',
   },
   disabledInput: {
     backgroundColor: '#f5f5f5',
@@ -961,25 +1279,35 @@ const styles = StyleSheet.create({
   },
   modalButtons: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
-    width: '100%',
+    justifyContent: 'space-between',
+    gap: 15,
     marginTop: 10,
   },
   button: {
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 8,
-    minWidth: 100,
-    alignItems: 'center',
+    flex: 1,
+    borderRadius: 12,
+    overflow: 'hidden',
   },
   submitButton: {
-    backgroundColor: '#007bff',
+    shadowColor: '#667eea',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  submitButtonGradient: {
+    paddingVertical: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   disabledButton: {
-    backgroundColor: '#ccc',
+    opacity: 0.5,
   },
   cancelButton: {
     backgroundColor: '#6c757d',
+    paddingVertical: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   buttonText: {
     color: '#fff',
@@ -987,9 +1315,10 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   errorTextModal: {
-    color: 'red',
+    color: '#e74c3c',
     fontSize: 14,
     marginBottom: 10,
     textAlign: 'center',
+    fontWeight: '500',
   },
 });

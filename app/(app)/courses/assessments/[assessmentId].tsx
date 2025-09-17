@@ -2,6 +2,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
@@ -257,9 +258,6 @@ export default function AssessmentDetailsScreen() {
     syncSubmissions();
   }, [netInfo?.isInternetReachable]);
 
-  // Rest of your existing code remains the same...
-  // (keeping all other functions unchanged)
-
   const isAssessmentOpen = (assessment: AssessmentDetail) => {
     const now = new Date().getTime();
     if (assessment.available_at && now < new Date(assessment.available_at).getTime()) {
@@ -502,6 +500,28 @@ export default function AssessmentDetailsScreen() {
     }
   };
 
+  const getAssessmentIcon = (type: string) => {
+    switch (type) {
+      case 'quiz': return 'help-circle';
+      case 'exam': return 'school';
+      case 'assignment': return 'document-text';
+      case 'project': return 'folder';
+      case 'activity': return 'play-circle';
+      default: return 'clipboard';
+    }
+  };
+
+  const getAssessmentColor = (type: string) => {
+    switch (type) {
+      case 'quiz': return '#8e24aa';
+      case 'exam': return '#d32f2f';
+      case 'assignment': return '#1976d2';
+      case 'project': return '#388e3c';
+      case 'activity': return '#f57c00';
+      default: return '#616161';
+    }
+  };
+
   const isAssessmentCurrentlyOpen = assessmentDetail ? isAssessmentOpen(assessmentDetail) : false;
 
   let isQuizAttemptButtonDisabled = false;
@@ -551,31 +571,47 @@ export default function AssessmentDetailsScreen() {
     }
   }
 
-
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#007bff" />
-        <Text style={styles.loadingText}>Loading assessment...</Text>
+      <View style={styles.container}>
+        <LinearGradient
+          colors={['#02135eff', '#7979f1ff']}
+          style={styles.loadingGradient}
+        >
+          <ActivityIndicator size="large" color="#fff" />
+          <Text style={styles.loadingText}>Loading assessment...</Text>
+        </LinearGradient>
       </View>
     );
   }
 
   if (error) {
     return (
-      <View style={styles.centeredContainer}>
-        <Text style={styles.errorText}>{error}</Text>
-        <TouchableOpacity style={styles.retryButton} onPress={fetchAssessmentDetailsAndAttemptStatus}>
-          <Text style={styles.retryButtonText}>Retry</Text>
-        </TouchableOpacity>
+      <View style={styles.container}>
+        <LinearGradient
+          colors={['#02135eff', '#7979f1ff']}
+          style={styles.loadingGradient}
+        >
+          <Ionicons name="alert-circle" size={64} color="#fff" />
+          <Text style={styles.errorText}>{error}</Text>
+          <TouchableOpacity style={styles.retryButton} onPress={fetchAssessmentDetailsAndAttemptStatus}>
+            <Text style={styles.retryButtonText}>Retry</Text>
+          </TouchableOpacity>
+        </LinearGradient>
       </View>
     );
   }
 
   if (!assessmentDetail) {
     return (
-      <View style={styles.centeredContainer}>
-        <Text style={styles.errorText}>Assessment not found.</Text>
+      <View style={styles.container}>
+        <LinearGradient
+          colors={['#02135eff', '#7979f1ff']}
+          style={styles.loadingGradient}
+        >
+          <Ionicons name="document" size={64} color="#fff" />
+          <Text style={styles.errorText}>Assessment not found.</Text>
+        </LinearGradient>
       </View>
     );
   }
@@ -586,186 +622,301 @@ export default function AssessmentDetailsScreen() {
   return (
     <View style={styles.container}>
       <Stack.Screen options={{ title: assessmentDetail.title || 'Assessment Details' }} />
-      <ScrollView contentContainerStyle={styles.scrollViewContent}>
-
-        <View style={styles.sectionContainer}>
-          <Text style={styles.assessmentTitle}>{assessmentDetail.title}</Text>
-          {assessmentDetail.description && (
-            <Text style={styles.assessmentDescription}>{assessmentDetail.description}</Text>
+      
+      <ScrollView contentContainerStyle={styles.scrollViewContent} showsVerticalScrollIndicator={false}>
+        {/* Enhanced Header with Gradient */}
+        <LinearGradient
+          colors={['#02135eff', '#7979f1ff']}
+          style={styles.headerContainer}
+        >
+          <View style={styles.headerContent}>
+            <View style={[
+              styles.assessmentIconContainer,
+              { backgroundColor: getAssessmentColor(assessmentDetail.type) + '20' }
+            ]}>
+              <Ionicons 
+                name={getAssessmentIcon(assessmentDetail.type)} 
+                size={32} 
+                color="#fff" 
+              />
+            </View>
+            <Text style={styles.assessmentTitle}>{assessmentDetail.title}</Text>
+            <View style={styles.assessmentTypeBadge}>
+              <Text style={styles.assessmentTypeText}>
+                {assessmentDetail.type?.toUpperCase() || 'ASSESSMENT'}
+              </Text>
+            </View>
+            {assessmentDetail.description && (
+              <Text style={styles.assessmentDescription}>{assessmentDetail.description}</Text>
+            )}
+          </View>
+          
+          {!isConnected && (
+            <View style={styles.offlineNotice}>
+              <Ionicons name="cloud-offline" size={14} color="#fff" />
+              <Text style={styles.offlineText}>Working offline</Text>
+            </View>
           )}
-          <View style={styles.typeContainer}>
-            <Ionicons name="clipboard-outline" size={18} color="#666" style={styles.icon} />
-            <Text style={styles.assessmentType}>{assessmentDetail.type || 'N/A'}</Text>
+        </LinearGradient>
+
+        {/* Enhanced Details Section */}
+        <View style={styles.sectionContainer}>
+          <Text style={styles.sectionHeader}>Assessment Details</Text>
+          
+          <View style={styles.detailsGrid}>
+            {/* Points */}
+            <View style={styles.detailCard}>
+              <View style={styles.detailIconContainer}>
+                <Ionicons name="trophy" size={20} color="#f39c12" />
+              </View>
+              <Text style={styles.detailLabel}>Points</Text>
+              <Text style={styles.detailValue}>{assessmentDetail.points}</Text>
+            </View>
+
+            {/* Duration (for quizzes/exams) */}
+            {isQuizOrExamType && (
+              <View style={styles.detailCard}>
+                <View style={styles.detailIconContainer}>
+                  <Ionicons name="timer" size={20} color="#3498db" />
+                </View>
+                <Text style={styles.detailLabel}>Duration</Text>
+                <Text style={styles.detailValue}>
+                  {assessmentDetail.duration_minutes ? `${assessmentDetail.duration_minutes} min` : 'N/A'}
+                </Text>
+              </View>
+            )}
+
+            {/* Max Attempts (for quizzes/exams) */}
+            {isQuizOrExamType && (
+              <View style={styles.detailCard}>
+                <View style={styles.detailIconContainer}>
+                  <Ionicons name="repeat" size={20} color="#9b59b6" />
+                </View>
+                <Text style={styles.detailLabel}>Max Attempts</Text>
+                <Text style={styles.detailValue}>
+                  {assessmentDetail.max_attempts ?? 'Unlimited'}
+                </Text>
+              </View>
+            )}
+
+            {/* Attempts Made (for quizzes/exams) */}
+            {isQuizOrExamType && attemptStatus && (
+              <View style={styles.detailCard}>
+                <View style={styles.detailIconContainer}>
+                  <Ionicons name="checkmark-done" size={20} color="#27ae60" />
+                </View>
+                <Text style={styles.detailLabel}>Attempts Made</Text>
+                <Text style={styles.detailValue}>{attemptStatus.attempts_made}</Text>
+              </View>
+            )}
+          </View>
+
+          {/* Availability Information */}
+          <View style={styles.availabilityContainer}>
+            <View style={styles.availabilityItem}>
+              <Ionicons name="calendar" size={16} color="#7f8c8d" />
+              <Text style={styles.availabilityLabel}>Available From:</Text>
+              <Text style={styles.availabilityValue}>{formatDate(assessmentDetail.available_at)}</Text>
+            </View>
+            {assessmentDetail.unavailable_at && (
+              <View style={styles.availabilityItem}>
+                <Ionicons name="calendar-outline" size={16} color="#e74c3c" />
+                <Text style={styles.availabilityLabel}>Available Until:</Text>
+                <Text style={styles.availabilityValue}>{formatDate(assessmentDetail.unavailable_at)}</Text>
+              </View>
+            )}
           </View>
         </View>
 
-        {/* Details Section */}
-        <View style={styles.sectionContainer}>
-          <Text style={styles.sectionHeader}>Details</Text>
-          {isQuizOrExamType && (
-            <View style={styles.detailRow}>
-              <Ionicons name="timer-outline" size={18} color="#666" style={styles.icon} />
-              <Text style={styles.detailText}>
-                <Text style={styles.detailLabel}>Duration:</Text> {assessmentDetail.duration_minutes ? `${assessmentDetail.duration_minutes} minutes` : 'N/A'}
-              </Text>
-            </View>
-          )}
-          <View style={styles.detailRow}>
-            <Ionicons name="calendar-outline" size={18} color="#666" style={styles.icon} />
-            <Text style={styles.detailText}>
-              <Text style={styles.detailLabel}>Available From:</Text> {formatDate(assessmentDetail.available_at)}
-            </Text>
+        {/* Assessment File Section (for assignments) */}
+        {isAssignmentType && assessmentDetail.assessment_file_url && (
+          <View style={styles.sectionContainer}>
+            <Text style={styles.sectionHeader}>Assignment Instructions</Text>
+            <TouchableOpacity 
+              onPress={() => assessmentDetail.assessment_file_url && handleDownloadAssessmentFile(assessmentDetail.assessment_file_url)}
+              style={[styles.actionCard, !isConnected && styles.actionCardDisabled]}
+              disabled={!isConnected}
+              activeOpacity={0.8}
+            >
+              <View style={styles.actionCardContent}>
+                <View style={styles.actionCardIcon}>
+                  <Ionicons 
+                    name="download" 
+                    size={24} 
+                    color={isConnected ? "#fff" : "#ccc"} 
+                  />
+                </View>
+                <View style={styles.actionCardText}>
+                  <Text style={[styles.actionCardTitle, !isConnected && styles.disabledText]}>
+                    Download Instructions
+                  </Text>
+                  <Text style={[styles.actionCardSubtitle, !isConnected && styles.disabledText]}>
+                    Get the assignment file from your instructor
+                  </Text>
+                </View>
+              </View>
+              {!isConnected && (
+                <Text style={styles.offlineWarning}>Must be online to download</Text>
+              )}
+            </TouchableOpacity>
           </View>
-          {assessmentDetail.unavailable_at && (
-            <View style={styles.detailRow}>
-              <Ionicons name="close-circle-outline" size={18} color="#666" style={styles.icon} />
-              <Text style={styles.detailText}>
-                <Text style={styles.detailLabel}>Available Until:</Text> {formatDate(assessmentDetail.unavailable_at)}
-              </Text>
-            </View>
-          )}
+        )}
 
-          {/* Conditional rendering for Quiz/Exam specific details */}
-          {isQuizOrExamType && (
-            <>
-              <View style={styles.detailRow}>
-                <Ionicons name="checkbox-outline" size={18} color="#666" style={styles.icon} />
-                <Text style={styles.detailText}>
-                  <Text style={styles.detailLabel}>Points:</Text> {assessmentDetail.points}
-                </Text>
-              </View>
-              <View style={styles.detailRow}>
-                <Ionicons name="repeat-outline" size={18} color="#666" style={styles.icon} />
-                <Text style={styles.detailText}>
-                  <Text style={styles.detailLabel}>Max Attempts:</Text> {assessmentDetail.max_attempts ?? 'Unlimited'}
-                </Text>
-              </View>
-              {attemptStatus && (
-                <>
-                  <View style={styles.detailRow}>
-                    <Ionicons name="checkmark-done-circle-outline" size={18} color="#666" style={styles.icon} />
-                    <Text style={styles.detailText}>
-                      <Text style={styles.detailLabel}>Attempts Made:</Text> {attemptStatus.attempts_made}
-                    </Text>
-                  </View>
-                  {attemptStatus.max_attempts !== null && (
-                    <View style={styles.detailRow}>
-                      <Ionicons name="hourglass-outline" size={18} color="#666" style={styles.icon} />
-                      <Text style={styles.detailText}>
-                        <Text style={styles.detailLabel}>Attempts Remaining:</Text> {attemptStatus.attempts_remaining}
+        {/* Previous Submission Section (for assignments) */}
+        {isAssignmentType && latestAssignmentSubmission?.has_submitted_file && (
+          <View style={styles.sectionContainer}>
+            <Text style={styles.sectionHeader}>Previous Submission</Text>
+            <View style={styles.submissionCard}>
+              <View style={styles.submissionHeader}>
+                <View style={styles.submissionIconContainer}>
+                  <Ionicons name="document-text" size={20} color="#27ae60" />
+                </View>
+                <View style={styles.submissionInfo}>
+                  <Text style={styles.submissionFileName}>
+                    {latestAssignmentSubmission.original_filename || 
+                     latestAssignmentSubmission.submitted_file_name || 
+                     'Unknown File'}
+                  </Text>
+                  {latestAssignmentSubmission.status && (
+                    <View style={[
+                      styles.statusBadge,
+                      latestAssignmentSubmission.status === 'to sync' 
+                        ? { backgroundColor: '#f39c12' }
+                        : { backgroundColor: '#27ae60' }
+                    ]}>
+                      <Text style={styles.statusText}>
+                        {latestAssignmentSubmission.status.replace('_', ' ').toUpperCase()}
                       </Text>
                     </View>
                   )}
-                </>
+                </View>
+              </View>
+              
+              {latestAssignmentSubmission.submitted_at && (
+                <Text style={styles.submissionDate}>
+                  Submitted: {formatDate(latestAssignmentSubmission.submitted_at)}
+                </Text>
               )}
-            </>
-          )}
-        </View>
-
-        {/* Instructor's Assessment File Section (for Assignment types) */}
-        {isAssignmentType && assessmentDetail.assessment_file_url && (
-            <View style={styles.sectionContainer}>
-                <Text style={styles.sectionHeader}>Assessment File</Text>
+              
+              {latestAssignmentSubmission.submitted_file_url && (
                 <TouchableOpacity 
-                    onPress={() => assessmentDetail.assessment_file_url && handleDownloadAssessmentFile(assessmentDetail.assessment_file_url)}
-                    style={styles.downloadFileButton}
-                    disabled={!isConnected}
+                  onPress={() => latestAssignmentSubmission.submitted_file_url && handleDownloadSubmittedFile(latestAssignmentSubmission.submitted_file_url)}
+                  style={[styles.downloadButton, !isConnected && styles.downloadButtonDisabled]}
+                  disabled={!isConnected}
+                  activeOpacity={0.8}
                 >
-                    <Ionicons name="download-outline" size={20} color={isConnected ? "#007bff" : "#666"} />
-                    <Text style={[styles.downloadFileButtonText, !isConnected && { color: '#666' }]}>
-                        Download Assignment Instructions
-                    </Text>
+                  <Ionicons name="cloud-download" size={16} color={isConnected ? "#2196F3" : "#ccc"} />
+                  <Text style={[styles.downloadButtonText, !isConnected && { color: '#ccc' }]}>
+                    Download Submission
+                  </Text>
                 </TouchableOpacity>
-                {!isConnected && <Text style={styles.offlineWarning}>Must be online to download file.</Text>}
+              )}
+              
+              {!isConnected && (
+                <Text style={styles.offlineWarning}>Must be online to download submission</Text>
+              )}
             </View>
+          </View>
         )}
 
-        {/* Action Section based on Assessment Type */}
+        {/* Action Section */}
         <View style={styles.sectionContainer}>
           {isAssignmentType ? (
-            // Assignment, Activity, Project Types
+            // Assignment Upload Section
             <View>
-                <Text style={styles.sectionHeader}>Submit Assessment</Text>
-                {latestAssignmentSubmission?.has_submitted_file && (
-                    <View style={styles.submittedFileContainer}>
-                        <Text style={styles.submittedFileLabel}>Previously Submitted File:</Text>
-                        <TouchableOpacity 
-                            onPress={() => latestAssignmentSubmission.submitted_file_url && handleDownloadSubmittedFile(latestAssignmentSubmission.submitted_file_url)}
-                            style={styles.downloadFileButton}
-                            disabled={!isConnected}
-                        >
-                            <Ionicons name="document-text-outline" size={20} color={isConnected ? "#007bff" : "#666"} />
-                            <Text style={[styles.downloadFileButtonText, !isConnected && { color: '#666' }]}>
-                                {latestAssignmentSubmission.original_filename || 
-                                latestAssignmentSubmission.submitted_file_name || 
-                                'Unknown File'}
-                            </Text>
-                        </TouchableOpacity>
-                        {latestAssignmentSubmission.submitted_at && (
-                            <Text style={styles.submittedAtText}>
-                                Submitted on: {formatDate(latestAssignmentSubmission.submitted_at)}
-                            </Text>
-                        )}
-                        {latestAssignmentSubmission.status && (
-                            <Text style={styles.submittedStatusText}>
-                                Status: {latestAssignmentSubmission.status.replace('_', ' ')}
-                            </Text>
-                        )}
-                        {!isConnected && <Text style={styles.offlineWarning}>Must be online to view/download submission.</Text>}
-                    </View>
-                )}
-
-                <TouchableOpacity
-                    style={styles.pickFileButton}
-                    onPress={handlePickDocument}
-                    disabled={!isAssessmentCurrentlyOpen || submissionLoading}
-                >
-                    <Ionicons name="folder-open-outline" size={20} color={!isAssessmentCurrentlyOpen || !isConnected ? "#666" : "#007bff"} />
-                    <Text style={[styles.pickFileButtonText, (!isAssessmentCurrentlyOpen || !isConnected) && { color: '#007bff' }]}>
-                        {selectedFile ? selectedFile.name : `Select ${assessmentDetail.type || 'assessment'} File`}
+              <Text style={styles.sectionHeader}>Submit Your Work</Text>
+              
+              {/* File Selection */}
+              <TouchableOpacity
+                style={styles.filePickerCard}
+                onPress={handlePickDocument}
+                disabled={!isAssessmentCurrentlyOpen || submissionLoading}
+                activeOpacity={0.8}
+              >
+                <View style={styles.filePickerContent}>
+                  <View style={styles.filePickerIcon}>
+                    <Ionicons 
+                      name={selectedFile ? "document" : "folder-open"} 
+                      size={24} 
+                      color={selectedFile ? "#27ae60" : "#7f8c8d"} 
+                    />
+                  </View>
+                  <View style={styles.filePickerText}>
+                    <Text style={styles.filePickerTitle}>
+                      {selectedFile ? selectedFile.name : `Select ${assessmentDetail.type} File`}
                     </Text>
-                </TouchableOpacity>
-                {selectedFile && (
-                    <Text style={styles.selectedFileName}>Selected: {selectedFile.name}</Text>
-                )}
-                <TouchableOpacity
-                    style={[
-                        styles.actionButton,
-                        (!isAssessmentCurrentlyOpen || !selectedFile || submissionLoading) && styles.actionButtonDisabled,
-                    ]}
-                    onPress={handleSubmitAssignment}
-                    disabled={!isAssessmentCurrentlyOpen || !selectedFile || submissionLoading}
+                    <Text style={styles.filePickerSubtitle}>
+                      {selectedFile ? 'Tap to change file' : 'Choose a file to upload'}
+                    </Text>
+                  </View>
+                </View>
+              </TouchableOpacity>
+
+              {/* Submit Button */}
+              <TouchableOpacity
+                style={[
+                  styles.submitButton,
+                  (!isAssessmentCurrentlyOpen || !selectedFile || submissionLoading) && styles.submitButtonDisabled,
+                ]}
+                onPress={handleSubmitAssignment}
+                disabled={!isAssessmentCurrentlyOpen || !selectedFile || submissionLoading}
+                activeOpacity={0.8}
+              >
+                <LinearGradient
+                  colors={
+                    (!isAssessmentCurrentlyOpen || !selectedFile || submissionLoading)
+                      ? ['#ccc', '#ccc']
+                      : ['#02135eff', '#7979f1ff']
+                  }
+                  style={styles.submitButtonGradient}
                 >
-                    {submissionLoading ? (
-                        <ActivityIndicator color="#fff" />
-                    ) : (
-                        <>
-                            <Ionicons name="cloud-upload-outline" size={24} color="#007bff" style={styles.icon} />
-                            <Text style={styles.actionButtonText}>
-                                {isAssessmentCurrentlyOpen ? `Submit ${assessmentDetail.type || 'assessment'}` : `${assessmentDetail.type || 'assessment'} Unavailable`}
-                            </Text>
-                        </>
-                    )}
-                </TouchableOpacity>
+                  {submissionLoading ? (
+                    <ActivityIndicator color="#fff" size="small" />
+                  ) : (
+                    <>
+                      <Ionicons name="cloud-upload" size={24} color="#fff" style={{ marginRight: 8 }} />
+                      <Text style={styles.submitButtonText}>
+                        {isAssessmentCurrentlyOpen ? `Submit ${assessmentDetail.type}` : 'Assessment Unavailable'}
+                      </Text>
+                    </>
+                  )}
+                </LinearGradient>
+              </TouchableOpacity>
             </View>
           ) : (
-            // Quiz/Exam Type
-            <TouchableOpacity
-              style={[styles.actionButton, isQuizAttemptButtonDisabled && styles.actionButtonDisabled]}
-              onPress={handleStartQuizAttempt}
-              disabled={isQuizAttemptButtonDisabled}
-            >
-              {submissionLoading ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <>
-                  <Ionicons name="play-circle-outline" size={24} color="#fff" style={styles.icon} />
-                  <Text style={styles.actionButtonText}>
-                    {quizButtonText}
-                  </Text>
-                </>
-              )}
-            </TouchableOpacity>
+            // Quiz/Exam Start Section
+            <View>
+              <Text style={styles.sectionHeader}>Take Assessment</Text>
+              <TouchableOpacity
+                style={[styles.submitButton, isQuizAttemptButtonDisabled && styles.submitButtonDisabled]}
+                onPress={handleStartQuizAttempt}
+                disabled={isQuizAttemptButtonDisabled}
+                activeOpacity={0.8}
+              >
+                <LinearGradient
+                  colors={
+                    isQuizAttemptButtonDisabled
+                      ? ['#ccc', '#ccc']
+                      : ['#02135eff', '#7979f1ff']
+                  }
+                  style={styles.submitButtonGradient}
+                >
+                  {submissionLoading ? (
+                    <ActivityIndicator color="#fff" size="small" />
+                  ) : (
+                    <>
+                      <Ionicons 
+                        name={hasOfflineAttempt ? "play" : "play-circle"} 
+                        size={24} 
+                        color="#fff" 
+                        style={{ marginRight: 8 }} 
+                      />
+                      <Text style={styles.submitButtonText}>{quizButtonText}</Text>
+                    </>
+                  )}
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
           )}
         </View>
       </ScrollView>
@@ -773,197 +924,387 @@ export default function AssessmentDetailsScreen() {
   );
 }
 
+// Enhanced styles matching index.tsx design
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f0f2f5',
+    backgroundColor: '#f8f9fa',
   },
-  centeredContainer: {
+  
+  // Loading and Error States
+  loadingGradient: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#f0f2f5',
-    padding: 20,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
+    paddingHorizontal: 40,
   },
   loadingText: {
-    marginTop: 10,
-    fontSize: 16,
-    color: '#555',
+    marginTop: 20,
+    fontSize: 18,
+    color: '#fff',
+    fontWeight: '500',
+    textAlign: 'center',
   },
   errorText: {
-    fontSize: 16,
-    color: '#dc3545',
+    marginTop: 20,
+    fontSize: 18,
+    color: '#fff',
+    fontWeight: '500',
     textAlign: 'center',
-    marginTop: 10,
-    marginBottom: 15,
+    lineHeight: 24,
   },
   retryButton: {
-    backgroundColor: '#007bff',
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderRadius: 20,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    marginTop: 20,
   },
   retryButtonText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
   },
+
   scrollViewContent: {
-    padding: 15,
     paddingBottom: 30,
   },
-  sectionContainer: {
-    backgroundColor: '#ffffff',
-    borderRadius: 8,
-    padding: 15,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
+
+  // Enhanced Header (matching index.tsx)
+  headerContainer: {
+    paddingTop: 20,
+    paddingBottom: 30,
+    paddingHorizontal: 20,
+    borderBottomLeftRadius: 30,
+    borderBottomRightRadius: 30,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+    marginBottom: 20,
+  },
+  headerContent: {
+    alignItems: 'center',
+  },
+  assessmentIconContainer: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 15,
   },
   assessmentTitle: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#007bff',
-    marginBottom: 5,
-    textAlign: 'center',
-  },
-  assessmentDescription: {
-    fontSize: 15,
-    color: '#555',
-    lineHeight: 22,
+    color: '#fff',
     textAlign: 'center',
     marginBottom: 10,
+    lineHeight: 28,
   },
-  typeContainer: {
+  assessmentTypeBadge: {
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderRadius: 20,
+    paddingVertical: 6,
+    paddingHorizontal: 16,
+    marginBottom: 15,
+  },
+  assessmentTypeText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold',
+    letterSpacing: 1,
+  },
+  assessmentDescription: {
+    fontSize: 16,
+    color: 'rgba(255, 255, 255, 0.9)',
+    textAlign: 'center',
+    lineHeight: 22,
+    paddingHorizontal: 20,
+  },
+  offlineNotice: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderRadius: 20,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    marginTop: 15,
   },
-  assessmentType: {
-    fontSize: 15,
-    color: '#666',
+  offlineText: {
+    color: '#fff',
+    fontSize: 14,
     fontWeight: '600',
-    textTransform: 'uppercase',
     marginLeft: 5,
+  },
+
+  // Enhanced Sections
+  sectionContainer: {
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    padding: 20,
+    marginHorizontal: 20,
+    marginBottom: 15,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
   },
   sectionHeader: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
-    paddingBottom: 5,
+    color: '#2c3e50',
+    marginBottom: 15,
   },
-  detailRow: {
+
+  // Details Grid
+  detailsGrid: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    marginBottom: 20,
+  },
+  detailCard: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 15,
+    padding: 15,
     alignItems: 'center',
-    marginBottom: 6,
+    width: '48%',
+    marginBottom: 10,
   },
-  icon: {
-    marginRight: 8,
-  },
-  detailText: {
-    fontSize: 14,
-    color: '#666',
+  detailIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#fff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
   },
   detailLabel: {
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  actionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#28a745',
-    borderRadius: 8,
-    padding: 15,
-    justifyContent: 'center',
-    marginTop: 10,
-  },
-  actionButtonDisabled: {
-    backgroundColor: '#cccccc',
-    opacity: 0.7,
-  },
-  actionButtonText: {
-    fontSize: 17,
-    fontWeight: 'bold',
-    color: '#007bff',
-    marginLeft: 5,
-  },
-  pickFileButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#e9ecef',
-    borderRadius: 8,
-    padding: 12,
-    marginTop: 10,
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#ced4da',
-  },
-  pickFileButtonText: {
-    fontSize: 15,
-    color: '#007bff',
-    marginLeft: 10,
-  },
-  selectedFileName: {
-    fontSize: 13,
-    color: '#555',
-    marginTop: 8,
+    fontSize: 12,
+    color: '#7f8c8d',
+    marginBottom: 4,
     textAlign: 'center',
   },
-  submittedFileContainer: {
-    backgroundColor: '#f8f9fa',
-    borderRadius: 8,
-    padding: 15,
-    marginBottom: 15,
-    borderWidth: 1,
-    borderColor: '#d1e7dd',
-    alignItems: 'center',
-  },
-  submittedFileLabel: {
+  detailValue: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#28a745',
-    marginBottom: 8,
+    color: '#2c3e50',
+    textAlign: 'center',
   },
-  downloadFileButton: {
+
+  // Availability Information
+  availabilityContainer: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 15,
+    padding: 15,
+  },
+  availabilityItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#e0f7fa',
-    borderRadius: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 15,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: '#00bcd4',
+    marginBottom: 8,
   },
-  downloadFileButtonText: {
-    fontSize: 15,
-    color: '#007bff',
-    marginLeft: 10,
-    textDecorationLine: 'underline',
-  },
-  submittedAtText: {
-    fontSize: 13,
-    color: '#6c757d',
-    marginTop: 5,
-  },
-  submittedStatusText: {
+  availabilityLabel: {
     fontSize: 14,
-    fontWeight: 'bold',
-    color: '#6c757d',
-    marginTop: 5,
+    color: '#7f8c8d',
+    marginLeft: 8,
+    marginRight: 8,
+    fontWeight: '500',
   },
+  availabilityValue: {
+    fontSize: 14,
+    color: '#2c3e50',
+    flex: 1,
+  },
+
+  // Action Cards
+  actionCard: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 15,
+    padding: 15,
+    marginBottom: 10,
+  },
+  actionCardDisabled: {
+    opacity: 0.6,
+  },
+  actionCardContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  actionCardIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#2196F3',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 15,
+  },
+  actionCardText: {
+    flex: 1,
+  },
+  actionCardTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#2c3e50',
+    marginBottom: 4,
+  },
+  actionCardSubtitle: {
+    fontSize: 14,
+    color: '#7f8c8d',
+  },
+  disabledText: {
+    color: '#ccc',
+  },
+
+  // Submission Card
+  submissionCard: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 15,
+    padding: 15,
+    borderLeftWidth: 4,
+    borderLeftColor: '#27ae60',
+  },
+  submissionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  submissionIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#27ae60',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  submissionInfo: {
+    flex: 1,
+  },
+  submissionFileName: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#2c3e50',
+    marginBottom: 4,
+  },
+  statusBadge: {
+    borderRadius: 12,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    alignSelf: 'flex-start',
+  },
+  statusText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  submissionDate: {
+    fontSize: 14,
+    color: '#7f8c8d',
+    marginBottom: 10,
+  },
+  downloadButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#e3f2fd',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 5,
+  },
+  downloadButtonDisabled: {
+    backgroundColor: '#f5f5f5',
+  },
+  downloadButtonText: {
+    fontSize: 14,
+    color: '#2196F3',
+    marginLeft: 8,
+    fontWeight: '500',
+  },
+
+  // File Picker
+  filePickerCard: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 15,
+    padding: 15,
+    marginBottom: 15,
+    borderWidth: 2,
+    borderColor: '#e9ecef',
+    borderStyle: 'dashed',
+  },
+  filePickerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  filePickerIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#fff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 15,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  filePickerText: {
+    flex: 1,
+  },
+  filePickerTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#2c3e50',
+    marginBottom: 4,
+  },
+  filePickerSubtitle: {
+    fontSize: 14,
+    color: '#7f8c8d',
+  },
+
+  // Submit Button
+  submitButton: {
+    borderRadius: 15,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  submitButtonDisabled: {
+    shadowOpacity: 0.1,
+    elevation: 2,
+  },
+  submitButtonGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+  },
+  submitButtonText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+
+  // Warnings
   offlineWarning: {
-    color: '#ff6347',
+    color: '#e74c3c',
     fontSize: 12,
     marginTop: 5,
+    fontStyle: 'italic',
   },
 });

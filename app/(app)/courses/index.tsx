@@ -1,12 +1,27 @@
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, RefreshControl, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { showOfflineModeWarningIfNeeded } from '../../../lib/offlineWarning';
+
+import {
+  ActivityIndicator,
+  Alert,
+  Dimensions,
+  FlatList,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
+} from 'react-native';
 import { useNetworkStatus } from '../../../context/NetworkContext';
 import api, { getUserData } from '../../../lib/api';
 import { getEnrolledCoursesFromDb, initDb, saveCourseToDb } from '../../../lib/localDb';
 
-// Interface for course data (re-used from index.tsx)
+const { width } = Dimensions.get('window');
+
+// Interface for course data
 interface Course {
   id: number;
   title: string;
@@ -31,6 +46,17 @@ interface EnrolledCourse extends Course {
     enrollment_date: string;
   };
 }
+
+const courseColors = [
+  ['#667eea', '#764ba2'],
+  ['#4facfe', '#00f2fe'],
+  ['#43e97b', '#38f9d7'],
+  ['#fa709a', '#fee140'],
+  ['#a8edea', '#fed6e3'],
+  ['#ffecd2', '#fcb69f'],
+  ['#667eea', '#764ba2'],
+  ['#f093fb', '#f5576c'],
+];
 
 export default function CoursesScreen() {
   const [enrolledCourses, setEnrolledCourses] = useState<EnrolledCourse[]>([]);
@@ -61,13 +87,11 @@ export default function CoursesScreen() {
     initialize();
   }, []);
 
-  // UPDATED: Enhanced deep link navigation logic
+  // Enhanced deep link navigation logic
   useEffect(() => {
-    // Deep Link Navigation Logic for courseId from to-do
     if (params.courseId && !isLoading && enrolledCourses.length > 0) {
       const courseIdToNavigate = params.courseId;
       
-      // Find the course to ensure it exists
       const targetCourse = enrolledCourses.find(course => 
         course.id.toString() === courseIdToNavigate.toString()
       );
@@ -78,10 +102,7 @@ export default function CoursesScreen() {
           courseName: targetCourse.title
         });
         
-        // Clear the parameter to prevent repeated navigation
         router.setParams({ courseId: undefined });
-        
-        // Navigate to the specific course
         router.push(`/courses/${courseIdToNavigate}`);
       } else {
         console.warn('Course not found in enrolled courses:', courseIdToNavigate);
@@ -174,73 +195,156 @@ export default function CoursesScreen() {
     }
   }, [fetchEnrolledCoursesFromDb]);
 
-  const renderCourseCard = ({ item }: { item: EnrolledCourse }) => (
+  useEffect(() => {
+      const checkOfflineWarning = async () => {
+        if (!isConnected) {
+          await showOfflineModeWarningIfNeeded();
+        }
+      };
+      
+      checkOfflineWarning();
+    }, [isConnected]);
+
+  const renderCourseCard = ({ item, index }: { item: EnrolledCourse; index: number }) => (
     <TouchableOpacity
       style={styles.courseCard}
       onPress={() => {
         console.log('Navigating to course:', item.title);
         router.push(`/courses/${item.id}`);
       }}
+      activeOpacity={0.8}
     >
-      <View style={styles.cardHeader}>
-        <Ionicons name="book-outline" size={24} color="#007bff" style={styles.cardIcon} />
-        <Text style={styles.cardTitle} numberOfLines={2}>{item.title}</Text>
-      </View>
-      <Text style={styles.cardInstructor}>{item.instructor?.name || 'N/A'}</Text>
+      <LinearGradient
+        colors={courseColors[index % courseColors.length]}
+        style={styles.courseCardGradient}
+      >
+        <View style={styles.courseCardHeader}>
+          <Ionicons name="book" size={24} color="#fff" />
+          <View style={styles.statusBadge}>
+            <Text style={styles.statusText}>Enrolled</Text>
+          </View>
+        </View>
+        <View style={styles.courseCardContent}>
+          <Text style={styles.courseCardTitle} numberOfLines={2}>
+            {item.title}
+          </Text>
+          <Text style={styles.courseCardCode} numberOfLines={1}>
+            {item.course_code}
+          </Text>
+        </View>
+        <View style={styles.courseCardFooter}>
+          <View style={styles.instructorInfo}>
+            <Ionicons name="person" size={14} color="rgba(255,255,255,0.8)" />
+            <Text style={styles.instructorName} numberOfLines={1}>
+              {item.instructor?.name || 'N/A'}
+            </Text>
+          </View>
+          <View style={styles.creditsInfo}>
+            <Text style={styles.creditsText}>{item.credits} credits</Text>
+          </View>
+        </View>
+      </LinearGradient>
     </TouchableOpacity>
   );
 
   if (isLoading) {
     return (
-      <View style={styles.centeredContainer}>
-        <ActivityIndicator size="large" color="#007bff" />
-        <Text style={styles.loadingText}>Loading your courses...</Text>
+      <View style={styles.container}>
+        <LinearGradient
+          colors={['#667eea', '#764ba2']}
+          style={styles.loadingContainer}
+        >
+          <ActivityIndicator size="large" color="#fff" />
+          <Text style={styles.loadingText}>Loading your courses...</Text>
+        </LinearGradient>
       </View>
     );
   }
 
   if (error) {
     return (
-      <View style={styles.centeredContainer}>
-        <Ionicons name="alert-circle-outline" size={50} color="#dc3545" />
-        <Text style={styles.errorText}>{error}</Text>
-        <TouchableOpacity style={styles.retryButton} onPress={() => { /* re-fetch logic could go here */ }}>
-          <Text style={styles.retryButtonText}>Retry</Text>
-        </TouchableOpacity>
+      <View style={styles.container}>
+        <LinearGradient
+          colors={['#f093fb', '#f5576c']}
+          style={styles.centeredContainer}
+        >
+          <View style={styles.errorContainer}>
+            <Ionicons name="alert-circle-outline" size={60} color="#fff" />
+            <Text style={styles.errorText}>{error}</Text>
+            <TouchableOpacity style={styles.retryButton} onPress={() => {
+              setError(null);
+              setIsLoading(true);
+              if (currentUserEmail) {
+                fetchEnrolledCoursesFromDb();
+              }
+            }}>
+              <Text style={styles.retryButtonText}>Retry</Text>
+            </TouchableOpacity>
+          </View>
+        </LinearGradient>
       </View>
     );
   }
 
   if (enrolledCourses.length === 0) {
     return (
-      <View style={styles.centeredContainer}>
-        <Ionicons name="school-outline" size={60} color="#6c757d" />
-        <Text style={styles.noCoursesText}>No Courses Enrolled</Text>
-        <Text style={styles.noCoursesSubText}>
-          It looks like you haven't enrolled in any courses yet.
-        </Text>
-        <Text style={styles.noCoursesSubText}>
-          Head back to the home screen to find courses to join!
-        </Text>
+      <View style={styles.container}>
+        <LinearGradient
+          colors={['#a8edea', '#fed6e3']}
+          style={styles.centeredContainer}
+        >
+          <View style={styles.emptyStateContainer}>
+            <Ionicons name="school-outline" size={80} color="#fff" />
+            <Text style={styles.emptyStateTitle}>No Courses Enrolled</Text>
+            <Text style={styles.emptyStateText}>
+              It looks like you haven't enrolled in any courses yet.
+            </Text>
+            <Text style={styles.emptyStateText}>
+              Head back to the home screen to find courses to join!
+            </Text>
+          </View>
+        </LinearGradient>
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>My Enrolled Courses</Text>
+      {/* Beautiful Header */}
+      <LinearGradient
+        colors={['#667eea', '#764ba2']}
+        style={styles.headerContainer}
+      >
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>My Courses</Text>
+          <Text style={styles.headerSubtitle}>
+            {enrolledCourses.length} {enrolledCourses.length === 1 ? 'course' : 'courses'} enrolled
+          </Text>
+          {!isConnected && (
+            <View style={styles.offlineNotice}>
+              <Ionicons name="wifi-outline" size={14} color="#d93025" />
+              <Text style={styles.offlineText}>Offline mode</Text>
+            </View>
+          )}
+        </View>
+      </LinearGradient>
+
+      {/* Courses Grid */}
       <FlatList
+        data={enrolledCourses}
+        keyExtractor={(item) => item.id.toString()}
+        renderItem={renderCourseCard}
+        numColumns={2}
+        contentContainerStyle={styles.flatListContent}
+        columnWrapperStyle={styles.row}
+        showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
             refreshing={isRefreshing}
             onRefresh={handleRefresh}
+            colors={['#667eea']}
           />
         }
-        data={enrolledCourses}
-        keyExtractor={(item) => item.id.toString()}
-        renderItem={renderCourseCard}
-        contentContainerStyle={styles.flatListContent}
-        showsVerticalScrollIndicator={false}
       />
     </View>
   );
@@ -249,114 +353,191 @@ export default function CoursesScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f0f2f5',
-    paddingHorizontal: 20,
+    backgroundColor: '#f8f9fa',
+  },
+  headerContainer: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  header: {
     paddingTop: 40,
+    paddingBottom: 30,
+    paddingHorizontal: 24,
+    borderBottomLeftRadius: 30,
+    borderBottomRightRadius: 30,
+  },
+  headerTitle: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginBottom: 4,
+    letterSpacing: -0.5,
+  },
+  headerSubtitle: {
+    fontSize: 16,
+    color: 'rgba(255, 255, 255, 0.8)',
+    fontWeight: '400',
+  },
+  offlineNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderRadius: 16,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    marginTop: 12,
+    alignSelf: 'flex-start',
+  },
+  offlineText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '500',
+    marginLeft: 6,
   },
   centeredContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#f0f2f5',
     padding: 20,
   },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#2c3e50',
-    marginBottom: 25,
-    textAlign: 'center',
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   loadingText: {
-    marginTop: 10,
-    fontSize: 16,
-    color: '#555',
+    marginTop: 16,
+    fontSize: 18,
+    color: '#fff',
+    fontWeight: '500',
+  },
+  errorContainer: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 20,
+    padding: 30,
   },
   errorText: {
     fontSize: 16,
-    color: '#dc3545',
+    color: '#fff',
     textAlign: 'center',
-    marginTop: 10,
-    marginBottom: 15,
+    marginTop: 16,
+    marginBottom: 20,
+    lineHeight: 22,
   },
   retryButton: {
-    backgroundColor: '#007bff',
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 25,
   },
   retryButtonText: {
     color: '#fff',
     fontSize: 16,
-    fontWeight: 'bold',
+    fontWeight: '600',
   },
-  noCoursesText: {
-    fontSize: 22,
+  emptyStateContainer: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 20,
+    padding: 40,
+  },
+  emptyStateTitle: {
+    fontSize: 24,
     fontWeight: 'bold',
-    color: '#6c757d',
+    color: '#fff',
     marginTop: 20,
     marginBottom: 10,
     textAlign: 'center',
   },
-  noCoursesSubText: {
+  emptyStateText: {
     fontSize: 16,
-    color: '#7f8c8d',
+    color: 'rgba(255, 255, 255, 0.9)',
     textAlign: 'center',
-    paddingHorizontal: 20,
     lineHeight: 24,
-  },
-  flatListContent: {
-    paddingBottom: 20,
-  },
-  courseCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 15,
-    padding: 20,
-    marginBottom: 15,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 6,
-    elevation: 6,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  cardIcon: {
-    marginRight: 10,
-  },
-  cardTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#007bff',
-    flexShrink: 1,
-  },
-  cardCode: {
-    fontSize: 15,
-    color: '#555',
     marginBottom: 5,
   },
-  cardProgram: {
-    fontSize: 14,
-    color: '#777',
-    marginBottom: 3,
+  flatListContent: {
+    padding: 20,
+    paddingTop: 30,
   },
-  cardInstructor: {
-    fontSize: 14,
-    color: '#777',
-    marginBottom: 10,
+  row: {
+    justifyContent: 'space-between',
   },
-  cardFooter: {
-    borderTopWidth: 1,
-    borderTopColor: '#f0f2f5',
-    paddingTop: 10,
-    marginTop: 10,
+  courseCard: {
+    width: (width - 60) / 2,
+    marginBottom: 20,
+    borderRadius: 20,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
   },
-  cardStatus: {
-    fontSize: 13,
+  courseCardGradient: {
+    padding: 20,
+    height: 180,
+    justifyContent: 'space-between',
+  },
+  courseCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  statusBadge: {
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderRadius: 12,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  statusText: {
+    fontSize: 10,
+    color: '#fff',
     fontWeight: '600',
-    color: '#28a745',
+  },
+  courseCardContent: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  courseCardTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#fff',
+    lineHeight: 20,
+    marginBottom: 4,
+  },
+  courseCardCode: {
+    fontSize: 12,
+    color: 'rgba(255, 255, 255, 0.8)',
+  },
+  courseCardFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  instructorInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  instructorName: {
+    fontSize: 11,
+    color: 'rgba(255, 255, 255, 0.8)',
+    marginLeft: 4,
+  },
+  creditsInfo: {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 8,
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+  },
+  creditsText: {
+    fontSize: 10,
+    color: '#fff',
+    fontWeight: '500',
   },
 });

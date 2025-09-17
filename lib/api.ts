@@ -1,10 +1,10 @@
 import axios from 'axios';
 import { router } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
-import { detectTimeManipulation, saveAssessmentDetailsToDb } from './localDb';
+import { establishTimeBaseline, getSavedServerTime, saveAssessmentDetailsToDb, saveServerTime, updateOnlineSync } from './localDb';
 
 export const API_BASE_URL = __DEV__ 
-  ? 'http://192.168.1.7:8000/api'  // Development
+  ? 'http://192.168.1.10:8000/api'  // Development
   : 'https://your-cloud-domain.com/api'; // Production
 
 const api = axios.create({
@@ -24,18 +24,18 @@ api.interceptors.request.use(
         config.headers.Authorization = `Bearer ${token}`;
         // Also set it in defaults for WebView access
         api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-        console.log('ðŸ”‘ API Request: Token attached');
+        console.log('🔐 API Request: Token attached');
       } else {
-        console.log('âš ï¸  API Request: No token found');
+        console.log('⚠️  API Request: No token found');
       }
     } catch (error) {
-      console.error('âŒ Error in request interceptor:', error);
-      console.log('âš ï¸ Non-critical error in request interceptor, continuing...');
+      console.error('❌ Error in request interceptor:', error);
+      console.log('⚠️ Non-critical error in request interceptor, continuing...');
     }
     return config;
   },
   (error) => {
-    console.error('âŒ Request interceptor error:', error);
+    console.error('❌ Request interceptor error:', error);
     return Promise.reject(error);
   }
 );
@@ -47,7 +47,7 @@ api.interceptors.response.use(
     const originalRequest = error.config;
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
-      console.log('âŒ 401 Unauthenticated error caught. Clearing token and redirecting to login.');
+      console.log('❌ 401 Unauthenticated error caught. Clearing token and redirecting to login.');
       await clearAuthData();
       router.replace('/login');
       return Promise.reject(error);
@@ -59,23 +59,23 @@ api.interceptors.response.use(
 // Function to store the token and set up authorization
 export const storeAuthToken = async (token: string) => {
   try {
-    console.log('ðŸ’¾ Attempting to store auth token...');
+    console.log('💾 Attempting to store auth token...');
     await SecureStore.setItemAsync('user_token', token);
     
     // Set the authorization header in axios defaults
     api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
     
-    console.log('âœ… Auth token stored successfully in SecureStore');
+    console.log('✅ Auth token stored successfully in SecureStore');
     
     // Verify it was stored
     const storedToken = await SecureStore.getItemAsync('user_token');
     if (storedToken === token) {
-      console.log('âœ… Token verification: PASSED');
+      console.log('✅ Token verification: PASSED');
     } else {
-      console.log('âŒ Token verification: FAILED');
+      console.log('❌ Token verification: FAILED');
     }
   } catch (error) {
-    console.error('âŒ Failed to store auth token:', error);
+    console.error('❌ Failed to store auth token:', error);
     throw error;
   }
 };
@@ -90,7 +90,7 @@ export const getAuthToken = async () => {
     }
     return token;
   } catch (error) {
-    console.error('âŒ Failed to get auth token:', error);
+    console.error('❌ Failed to get auth token:', error);
     return null;
   }
 };
@@ -106,21 +106,21 @@ export const initializeAuth = async () => {
     const token = await SecureStore.getItemAsync('user_token');
     if (token) {
       api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-      console.log('âœ… Authorization header initialized from stored token');
+      console.log('✅ Authorization header initialized from stored token');
     }
   } catch (error) {
-    console.error('âŒ Failed to initialize auth:', error);
+    console.error('❌ Failed to initialize auth:', error);
   }
 };
 
 // Function to store user data
 export const storeUserData = async (userData: any) => {
   try {
-      console.log('ðŸ’¾ Storing user data...');
+      console.log('💾 Storing user data...');
       await SecureStore.setItemAsync('user_data', JSON.stringify(userData));
-      console.log('âœ… User data stored successfully');
+      console.log('✅ User data stored successfully');
   } catch (error) {
-    console.error('âŒ Failed to store user data:', error);
+    console.error('❌ Failed to store user data:', error);
     throw error;
   }
 };
@@ -131,7 +131,7 @@ export const getUserData = async () => {
     const userDataString = await SecureStore.getItemAsync('user_data');
     return userDataString ? JSON.parse(userDataString) : null;
   } catch (error) {
-    console.error('âŒ Failed to get user data:', error);
+    console.error('❌ Failed to get user data:', error);
     return null;
   }
 };
@@ -139,32 +139,32 @@ export const getUserData = async () => {
 // UPDATED: More flexible clear functions
 export const clearAuthToken = async () => {
   try {
-    console.log('ðŸ—‘ï¸  Clearing auth token...');
+    console.log('🗑️  Clearing auth token...');
     await SecureStore.deleteItemAsync('user_token');
     // Clear from axios defaults
     delete api.defaults.headers.common['Authorization'];
-    console.log('âœ… Auth token cleared');
+    console.log('✅ Auth token cleared');
   } catch (error) {
-    console.error('âŒ Failed to clear auth token:', error);
+    console.error('❌ Failed to clear auth token:', error);
   }
 };
 
 export const clearUserData = async () => {
   try {
-    console.log('ðŸ—‘ï¸  Clearing user data...');
+    console.log('🗑️  Clearing user data...');
     await SecureStore.deleteItemAsync('user_data');
-    console.log('âœ… User data cleared');
+    console.log('✅ User data cleared');
   } catch (error) {
-    console.error('âŒ Failed to clear user data:', error);
+    console.error('❌ Failed to clear user data:', error);
   }
 };
 
 // NEW: Clear everything and redirect
 export const clearAuthData = async () => {
-  console.log('ðŸ—‘ï¸  Clearing ALL authentication data...');
+  console.log('🗑️  Clearing ALL authentication data...');
   await clearAuthToken();
   await clearUserData();
-  console.log('âœ… All authentication data cleared.');
+  console.log('✅ All authentication data cleared.');
 };
 
 // NEW: Function to check if user was previously logged in (for offline access)
@@ -183,10 +183,10 @@ export const createOfflineSession = async (email: string) => {
     // Create a simple offline token (just for local identification)
     const offlineToken = `offline_${email}_${Date.now()}`;
     await SecureStore.setItemAsync('offline_token', offlineToken);
-    console.log('âœ… Offline session created');
+    console.log('✅ Offline session created');
     return offlineToken;
   } catch (error) {
-    console.error('âŒ Failed to create offline session:', error);
+    console.error('❌ Failed to create offline session:', error);
     return null;
   }
 };
@@ -207,39 +207,226 @@ export const clearOfflineToken = async () => {
   }
 };
 
-// Enhanced getServerTime function with time manipulation check
-export const getServerTime = async (): Promise<string | null> => {
+export const getServerTime = async (isConnected: boolean = true): Promise<string | null> => {
   try {
-    console.log('ðŸ“ž Calling API to get server time...');
-    
-    // Check for time manipulation before making the server time call
     const userData = await getUserData();
-    if (userData && userData.email) {
-      const timeCheck = await detectTimeManipulation(userData.email);
-      if (!timeCheck.isValid) {
-        console.log('âŒ Time manipulation detected before server time fetch:', timeCheck.reason);
-        throw new Error('Time manipulation detected');
-      }
+    if (!userData?.email) {
+      return null;
+    }
+
+    if (!isConnected) {
+      // Offline mode - use calculated time
+      const calculatedTime = await getSavedServerTime(userData.email);
+      return calculatedTime;
+    }
+
+    // Online mode - fetch and update baseline
+    const response = await api.get('/time');
+    
+    if (response.status === 200 && response.data.server_time) {
+      const serverTime = response.data.server_time;
+      
+      // Save time baseline AND update online sync timestamp
+      await saveServerTime(userData.email, serverTime, new Date().toISOString());
+      await updateOnlineSync(userData.email); // NEW: Track when user was last online
+      
+      return serverTime;
     }
     
-    const response = await api.get('/time');
-    if (response.status === 200 && response.data.server_time) {
-      console.log('âœ… Server time fetched:', response.data.server_time);
-      return response.data.server_time;
-    }
-    console.warn('âš ï¸ Server time endpoint did not return a valid time.');
     return null;
   } catch (error) {
-    console.error('âŒ Error fetching server time:', error);
+    console.error('❌ Error in getServerTime:', error);
     return null;
   }
 };
 
+export const prepareOfflineMode = async (): Promise<boolean> => {
+  try {
+    const userData = await getUserData();
+    if (!userData?.email) {
+      console.log('❌ No user data for offline preparation');
+      return false;
+    }
 
+    // Establish time baseline if online
+    const serverTime = await getServerTime(true);
+    if (serverTime) {
+      await establishTimeBaseline(userData.email, serverTime);
+      console.log('✅ App prepared for offline usage');
+      return true;
+    }
+    
+    return false;
+  } catch (error) {
+    console.error('❌ Failed to prepare offline mode:', error);
+    return false;
+  }
+};
 
+export const getProfile = async () => {
+  try {
+    console.log('📋 Fetching user profile...');
+    const response = await api.get('/profile');
+    
+    if (response.status === 200 && response.data.success) {
+      console.log('✅ Profile fetched successfully');
+      return response.data.profile;
+    } else {
+      console.error('❌ Failed to fetch profile:', response.data.message);
+      return null;
+    }
+  } catch (error: any) {
+    console.error('❌ Error fetching profile:', error.response?.data || error.message);
+    throw error; // Re-throw to handle in UI
+  }
+};
 
+export const updateProfile = async (profileData: any, profileImage?: any) => {
+  try {
+    console.log('💾 Updating user profile...');
+    console.log('Profile data:', profileData);
+    console.log('Profile image:', profileImage ? 'Present' : 'None');
+    
+    // Check if we have an auth token
+    const token = await getAuthToken();
+    if (!token) {
+      throw new Error('No authentication token found. Please log in again.');
+    }
+    
+    const formData = new FormData();
+    
+    // Add text fields to FormData (only non-empty values)
+    Object.keys(profileData).forEach(key => {
+      const value = profileData[key];
+      if (value !== null && value !== undefined && value !== '') {
+        formData.append(key, String(value));
+        console.log(`Added field: ${key} = ${value}`);
+      }
+    });
+    
+    // Add profile image if provided
+    if (profileImage && profileImage.uri) {
+      // Get file extension from uri or type
+      let extension = 'jpeg';
+      let mimeType = 'image/jpeg';
+      
+      if (profileImage.type && profileImage.type.includes('/')) {
+        // Already has proper mime type
+        mimeType = profileImage.type;
+        extension = profileImage.type.split('/')[1] || 'jpeg';
+      } else if (profileImage.uri) {
+        // Extract extension from URI
+        const uriParts = profileImage.uri.split('.');
+        const fileExt = uriParts[uriParts.length - 1]?.toLowerCase();
+        if (fileExt && ['jpg', 'jpeg', 'png', 'gif'].includes(fileExt)) {
+          extension = fileExt === 'jpg' ? 'jpeg' : fileExt;
+          mimeType = `image/${extension}`;
+        }
+      }
+      
+      const imageFile = {
+        uri: profileImage.uri,
+        name: profileImage.fileName || `profile_${Date.now()}.${extension}`,
+        type: mimeType,
+      } as any;
+      
+      formData.append('profile_image', imageFile);
+      console.log('Added profile image:', {
+        name: imageFile.name,
+        type: imageFile.type,
+        uri: imageFile.uri.substring(0, 50) + '...',
+        originalType: profileImage.type,
+        detectedExtension: extension
+      });
+    }
+    
+    console.log('Making API call to /profile...');
+    console.log('API Base URL:', API_BASE_URL);
+    
+    const response = await api.post('/profile', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+        'Accept': 'application/json',
+      },
+      timeout: 60000, // Increase timeout to 60 seconds for image uploads
+    });
+    
+    console.log('API Response status:', response.status);
+    console.log('API Response data:', response.data);
+    
+    if (response.status === 200 && response.data.success) {
+      console.log('✅ Profile updated successfully');
+      return {
+        success: true,
+        profile: response.data.profile,
+        message: response.data.message
+      };
+    } else {
+      console.error('❌ Failed to update profile:', response.data.message);
+      return {
+        success: false,
+        message: response.data.message || 'Failed to update profile',
+        errors: response.data.errors
+      };
+    }
+  } catch (error: any) {
+    console.error('❌ Error updating profile:', error);
+    console.error('Error details:', {
+      message: error.message,
+      response: error.response?.data,
+      status: error.response?.status,
+      config: {
+        url: error.config?.url,
+        method: error.config?.method,
+        baseURL: error.config?.baseURL,
+      }
+    });
+    
+    // Provide more specific error messages
+    let errorMessage = 'Network error occurred';
+    if (error.code === 'NETWORK_ERROR' || error.message === 'Network Error') {
+      errorMessage = 'Cannot connect to server. Please check your internet connection and try again.';
+    } else if (error.response?.status === 413) {
+      errorMessage = 'Image file is too large. Please select a smaller image.';
+    } else if (error.response?.status === 422) {
+      errorMessage = 'Validation error. Please check your input.';
+    } else if (error.response?.data?.message) {
+      errorMessage = error.response.data.message;
+    }
+    
+    return {
+      success: false,
+      message: errorMessage,
+      errors: error.response?.data?.errors
+    };
+  }
+};
 
-
+export const deleteProfileImage = async () => {
+  try {
+    console.log('🗑️ Deleting profile image...');
+    const response = await api.delete('/profile/image');
+    
+    if (response.status === 200 && response.data.success) {
+      console.log('✅ Profile image deleted successfully');
+      return {
+        success: true,
+        message: response.data.message
+      };
+    } else {
+      return {
+        success: false,
+        message: response.data.message || 'Failed to delete profile image'
+      };
+    }
+  } catch (error: any) {
+    console.error('❌ Error deleting profile image:', error.response?.data || error.message);
+    return {
+      success: false,
+      message: error.response?.data?.message || 'Network error occurred'
+    };
+  }
+};
 
 
 export const syncOfflineSubmission = async (assessmentId: number, fileUri: string, originalFilename: string, submittedAt: string) => {
@@ -254,7 +441,7 @@ export const syncOfflineSubmission = async (assessmentId: number, fileUri: strin
     // Add the original submission timestamp to preserve offline submission time
     formData.append('submitted_at', submittedAt);
 
-    console.log(`🔡 Attempting to sync offline submission for assessment ${assessmentId} with original timestamp: ${submittedAt}`);
+    console.log(`🔄 Attempting to sync offline submission for assessment ${assessmentId} with original timestamp: ${submittedAt}`);
 
     const response = await api.post(`/assessments/${assessmentId}/submit-assignment`, formData, {
       headers: {

@@ -1,4 +1,4 @@
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as SQLite from 'expo-sqlite';
 import { Platform } from 'react-native';
 
@@ -139,7 +139,9 @@ export const initDb = async (): Promise<void> => {
               server_time TEXT, 
               server_time_offset INTEGER, 
               last_time_check INTEGER, 
-              time_check_sequence INTEGER DEFAULT 0
+              time_check_sequence INTEGER DEFAULT 0,
+              last_online_sync INTEGER,
+              manipulation_detected INTEGER DEFAULT 0
             );`,
             
             // 2. offline_courses (parent table)
@@ -1900,37 +1902,33 @@ export const deleteAssessmentDetails = async (assessmentId: number, userEmail: s
 
 {/* SERVER ONLY FOR OFFLINE USE */}
 
-export const saveServerTime = async (userEmail: string, apiServerTime: string, currentDeviceTime: string): Promise<void> => {
+export const saveServerTime = async (
+  userEmail: string, 
+  apiServerTime: string, 
+  currentDeviceTime: string
+): Promise<void> => {
   try {
     await initDb();
     const db = await getDb();
     
-    // Calculate the time offset
     const serverTimeMs = new Date(apiServerTime).getTime();
     const deviceTimeMs = new Date(currentDeviceTime).getTime();
-    const serverTimeOffset = serverTimeMs - deviceTimeMs;
+    const offset = serverTimeMs - deviceTimeMs;
+    const currentSequence = Date.now();
+    
+    console.log('💾 Saving server time baseline with online sync timestamp');
 
-    console.log('ðŸ’¾ Saving server time, device time, and offset to local DB.');
-    // Correctly update the `app_state` table, not `offline_users`
+    // Update the schema to include manipulation_detected flag
     await db.runAsync(
-      `INSERT OR REPLACE INTO app_state (
-         user_email, 
-         server_time, 
-         server_time_offset, 
-         last_time_check, 
-         time_check_sequence
-       ) VALUES (?, ?, ?, ?, ?);`,
-      [
-        userEmail, 
-        apiServerTime, 
-        serverTimeOffset, 
-        deviceTimeMs, // Store the device time at the point of sync
-        1, // Reset sequence on every new login
-      ]
+      `INSERT OR REPLACE INTO app_state 
+       (user_email, server_time, server_time_offset, last_time_check, time_check_sequence, last_online_sync, manipulation_detected) 
+       VALUES (?, ?, ?, ?, ?, ?, ?);`,
+      [userEmail, apiServerTime, offset, deviceTimeMs, currentSequence, deviceTimeMs, 0]
     );
-    console.log('âœ… Server time and offset saved successfully.');
+    
+    console.log('✅ Server time baseline saved with strict monitoring enabled');
   } catch (error) {
-    console.error('âŒ Failed to save server time and offset:', error);
+    console.error('❌ Failed to save server time:', error);
     throw error;
   }
 };
@@ -1940,128 +1938,372 @@ export const getSavedServerTime = async (userEmail: string): Promise<string | nu
     await initDb();
     const db = await getDb();
     
-    console.log('ðŸ” Retrieving server time and offset from local DB...');
-    
     const result = await db.getAllAsync(
-      `SELECT last_time_check, server_time_offset FROM app_state WHERE user_email = ?;`,
+      `SELECT * FROM app_state WHERE user_email = ?;`,
       [userEmail]
     );
     
-    if (!result || result.length === 0 || result[0].last_time_check === null) {
-        console.log('â³ No prior time check data found for offset calculation, assuming valid.');
-        return null;
+    if (!result || result.length === 0) {
+      console.log('⚠️ No saved server time found for user');
+      return null;
     }
     
-    // Check for time manipulation before proceeding
-    const timeCheck = await detectTimeManipulation(userEmail);
-    if (!timeCheck.isValid) {
-        console.warn('âš ï¸ Time manipulation detected. Returning null.');
-        return null;
+    const record = result[0] as any;
+    
+    // Check if manipulation was previously detected
+    if (record.manipulation_detected === 1) {
+      console.log('❌ Previous time manipulation detected - requiring online re-sync');
+      return null;
     }
     
-    // Calculate the simulated server time
-    const serverTimeOffset = result[0].server_time_offset;
-    const currentDeviceTimeMs = Date.now();
-    const simulatedServerTimeMs = currentDeviceTimeMs + serverTimeOffset;
-
-    // Return the calculated time in a readable format
-    return new Date(simulatedServerTimeMs).toISOString();
+    const currentDeviceTime = Date.now();
+    const lastCheckTime = record.last_time_check;
+    const lastOnlineSync = record.last_online_sync || lastCheckTime;
+    const serverTimeOffset = record.server_time_offset;
+    
+    const timeSinceLastCheck = currentDeviceTime - lastCheckTime;
+    const timeSinceLastOnlineSync = currentDeviceTime - lastOnlineSync;
+    
+    // STRICT LIMITS: Much tighter tolerances
+    const MAX_APP_INACTIVITY = 90 * 24 * 60 * 60 * 1000; // 90 days
+    const MAX_OFFLINE_USAGE = 30 * 24 * 60 * 60 * 1000;   // 30 days
+    const BACKWARD_TIME_LIMIT = 30 * 1000; // 30 SECONDS - Very strict!
+    const FORWARD_TIME_LIMIT = 10 * 60 * 1000; // 10 MINUTES - Much stricter!
+    const SUSPICIOUS_FORWARD_JUMP = 30 * 60 * 1000; // 30 minutes - Suspicious
+    
+    console.log('🔍 STRICT time analysis:', {
+      timeSinceLastCheck: Math.round(timeSinceLastCheck / 1000), // seconds
+      backwardLimit: BACKWARD_TIME_LIMIT / 1000, // seconds
+      forwardLimit: FORWARD_TIME_LIMIT / 1000 / 60, // minutes
+      timeSinceLastOnlineSync: Math.round(timeSinceLastOnlineSync / 1000 / 60 / 60), // hours
+    });
+    
+    // Check 1: App inactivity too long
+    if (timeSinceLastCheck > MAX_APP_INACTIVITY) {
+      console.log('⚠️ App inactive for too long, require fresh login');
+      return null;
+    }
+    
+    // Check 2: STRICT backward time detection (30 seconds)
+    if (timeSinceLastCheck < -BACKWARD_TIME_LIMIT) {
+      console.log('❌ STRICT: Backward time manipulation detected (>30 seconds)');
+      await flagTimeManipulation(userEmail, 'Backward time jump detected');
+      return null;
+    }
+    
+    // Check 3: STRICT forward time detection (10-30 minutes)
+    if (timeSinceLastCheck > FORWARD_TIME_LIMIT && timeSinceLastCheck < SUSPICIOUS_FORWARD_JUMP) {
+      // Between 10-30 minutes forward - suspicious but might be normal
+      console.log('⚠️ SUSPICIOUS: Forward time jump detected (10-30 minutes)');
+      
+      // More strict validation for this range
+      const calculatedServerTime = currentDeviceTime + serverTimeOffset;
+      const baselineServerTime = new Date(record.server_time).getTime();
+      const expectedServerTime = baselineServerTime + timeSinceLastCheck;
+      const timeDifference = Math.abs(expectedServerTime - calculatedServerTime);
+      
+      // Very tight tolerance for suspicious periods
+      const STRICT_TOLERANCE = 1 * 60 * 1000; // 1 minute tolerance
+      
+      if (timeDifference > STRICT_TOLERANCE) {
+        console.log('❌ STRICT: Forward time manipulation confirmed');
+        await flagTimeManipulation(userEmail, 'Forward time jump detected');
+        return null;
+      }
+    } else if (timeSinceLastCheck > SUSPICIOUS_FORWARD_JUMP) {
+      // More than 30 minutes forward - very suspicious unless it's extended offline
+      if (timeSinceLastOnlineSync < MAX_OFFLINE_USAGE) {
+        console.log('❌ STRICT: Large forward time jump detected');
+        await flagTimeManipulation(userEmail, 'Large forward time jump detected');
+        return null;
+      }
+    }
+    
+    // Check 4: Extended offline validation with strict limits
+    if (timeSinceLastOnlineSync > MAX_OFFLINE_USAGE) {
+      console.log('⚠️ Extended offline period, using strict validation');
+      
+      const calculatedServerTime = currentDeviceTime + serverTimeOffset;
+      const baselineServerTime = new Date(record.server_time).getTime();
+      const expectedServerTime = baselineServerTime + timeSinceLastCheck;
+      const timeDifference = Math.abs(expectedServerTime - calculatedServerTime);
+      
+      // Even for extended periods, be strict
+      const EXTENDED_STRICT_TOLERANCE = 5 * 60 * 1000; // 5 minutes max tolerance
+      
+      if (timeDifference > EXTENDED_STRICT_TOLERANCE) {
+        console.log('❌ STRICT: Time discrepancy in extended offline period');
+        await flagTimeManipulation(userEmail, 'Time discrepancy during extended offline usage');
+        return null;
+      }
+    }
+    
+    // Update the last check time
+    await db.runAsync(
+      `UPDATE app_state SET last_time_check = ? WHERE user_email = ?;`,
+      [currentDeviceTime, userEmail]
+    );
+    
+    const calculatedServerTime = currentDeviceTime + serverTimeOffset;
+    console.log('✅ STRICT validation passed - using calculated offline server time');
+    return new Date(calculatedServerTime).toISOString();
+    
   } catch (error) {
-    console.error('âŒ Failed to retrieve and calculate server time:', error);
+    console.error('❌ Failed to get saved server time:', error);
     return null;
   }
 };
 
-export const resetTimeCheckData = async (userEmail: string) => {
+export const resetTimeCheckData = async (userEmail: string): Promise<void> => {
   try {
-    console.log('🔄 Resetting time check data for user:', userEmail);
-    
-    // Ensure database is initialized
     await initDb();
     const db = await getDb();
     
-    // FIXED: Use simple runAsync instead of withTransactionAsync to avoid conflicts
+    console.log('🔄 Resetting time check data for user:', userEmail);
+    
     await db.runAsync(
-      `INSERT OR REPLACE INTO app_state (user_email, last_time_check, server_time_offset, time_check_sequence) 
-       VALUES (?, ?, ?, ?);`,
-      [userEmail, Date.now(), 0, 1]
+      `DELETE FROM app_state WHERE user_email = ?;`,
+      [userEmail]
     );
-
-    console.log('✅ Time check data reset successfully.');
+    
+    console.log('✅ Time check data reset successfully');
   } catch (error) {
     console.error('❌ Failed to reset time check data:', error);
-    // Don't throw the error to prevent app crashes
+    throw error;
   }
 };
 
-export const detectTimeManipulation = async (userEmail: string): Promise<{ isValid: boolean, reason?: string }> => {
+export const detectTimeManipulation = async (
+  userEmail: string
+): Promise<{ isValid: boolean, reason?: string, requiresOnlineSync?: boolean }> => {
   try {
     await initDb();
     const db = await getDb();
+    
     const result = await db.getAllAsync(
-      `SELECT last_time_check, server_time_offset FROM app_state WHERE user_email = ?;`,
+      `SELECT * FROM app_state WHERE user_email = ?;`,
       [userEmail]
     );
-
-    // This is the crucial part that ensures a fresh start.
-    if (!result || result.length === 0 || !result[0].last_time_check) {
-      console.log('â³ No prior time check data found, assuming valid.');
+    
+    if (!result || result.length === 0) {
+      console.log('📊 No time baseline found - allowing access');
       return { isValid: true };
     }
     
-    const lastDeviceTimeMs = result[0].last_time_check;
-    const serverTimeOffset = result[0].server_time_offset;
-    const currentDeviceTimeMs = Date.now();
+    const record = result[0] as any;
     
-    const expectedServerTimeMs = currentDeviceTimeMs + serverTimeOffset;
-    
-    if (currentDeviceTimeMs < lastDeviceTimeMs) {
-      return { isValid: false, reason: 'Device time moved backward.' };
+    // Check if manipulation was previously flagged
+    if (record.manipulation_detected === 1) {
+      console.log('❌ STRICT: Previous manipulation detected - blocking access');
+      return { 
+        isValid: false, 
+        reason: 'Time manipulation was previously detected. Please connect to the internet to restore access.',
+        requiresOnlineSync: true
+      };
     }
     
-    // Calculate the elapsed time in milliseconds on the device
-    const timeElapsed = currentDeviceTimeMs - lastDeviceTimeMs;
+    const currentDeviceTime = Date.now();
+    const lastCheckTime = record.last_time_check;
+    const lastOnlineSync = record.last_online_sync || lastCheckTime;
     
-    if (timeElapsed > (5 * 60 * 1000) && lastDeviceTimeMs !== 0) { // 5 minutes tolerance
-      return { isValid: false, reason: 'Device time jumped forward excessively.' };
+    const timeSinceLastCheck = currentDeviceTime - lastCheckTime;
+    const timeSinceLastOnlineSync = currentDeviceTime - lastOnlineSync;
+    
+    // STRICT LIMITS
+    const MAX_APP_INACTIVITY = 90 * 24 * 60 * 60 * 1000; // 90 days
+    const BACKWARD_TIME_LIMIT = 30 * 1000; // 30 seconds
+    const FORWARD_TIME_LIMIT = 10 * 60 * 1000; // 10 minutes
+    const SUSPICIOUS_FORWARD_JUMP = 30 * 60 * 1000; // 30 minutes
+    
+    console.log('🔍 STRICT time manipulation check:', {
+      timeSinceLastCheck: Math.round(timeSinceLastCheck / 1000), // seconds
+      timeSinceLastOnlineSync: Math.round(timeSinceLastOnlineSync / 1000 / 60 / 60), // hours
+      backwardLimit: BACKWARD_TIME_LIMIT / 1000,
+      forwardLimit: FORWARD_TIME_LIMIT / 1000 / 60,
+      isLongInactivity: timeSinceLastCheck > MAX_APP_INACTIVITY
+    });
+    
+    // Check 1: App inactivity too long
+    if (timeSinceLastCheck > MAX_APP_INACTIVITY) {
+      return { 
+        isValid: false, 
+        reason: 'App has been inactive for too long. Please log in again to refresh your session.',
+        requiresOnlineSync: true
+      };
     }
     
-    console.log(`âœ… Time check successful for ${userEmail}.`);
+    // Check 2: STRICT backward time detection
+    if (timeSinceLastCheck < -BACKWARD_TIME_LIMIT) {
+      await flagTimeManipulation(userEmail, 'Backward time manipulation');
+      return { 
+        isValid: false, 
+        reason: 'Backward time manipulation detected. Device time was moved backward by more than 30 seconds.',
+        requiresOnlineSync: true
+      };
+    }
+    
+    // Check 3: STRICT forward time detection
+    if (timeSinceLastCheck > FORWARD_TIME_LIMIT && timeSinceLastCheck < SUSPICIOUS_FORWARD_JUMP) {
+      await flagTimeManipulation(userEmail, 'Forward time manipulation');
+      return { 
+        isValid: false, 
+        reason: 'Forward time manipulation detected. Device time was moved forward suspiciously.',
+        requiresOnlineSync: true
+      };
+    }
+    
+    // Check 4: Large forward jumps
+    if (timeSinceLastCheck > SUSPICIOUS_FORWARD_JUMP && timeSinceLastOnlineSync < (7 * 24 * 60 * 60 * 1000)) {
+      await flagTimeManipulation(userEmail, 'Large forward time jump');
+      return { 
+        isValid: false, 
+        reason: 'Large forward time jump detected. This appears to be time manipulation.',
+        requiresOnlineSync: true
+      };
+    }
+    
+    // Check 5: Sequence validation
+    const currentSequence = Date.now();
+    const lastSequence = record.time_check_sequence || 0;
+    if (currentSequence < lastSequence) {
+      await flagTimeManipulation(userEmail, 'Time sequence violation');
+      return { 
+        isValid: false, 
+        reason: 'Time sequence violation detected.',
+        requiresOnlineSync: true
+      };
+    }
+    
+    console.log('✅ STRICT time validation passed');
     return { isValid: true };
     
   } catch (error) {
-    console.error('âŒ Error in time manipulation detection:', error);
-    // If the check itself fails, we must assume a malicious attempt or a critical error
-    return { isValid: false, reason: 'System error during time check. Please reconnect to the internet.' };
+    console.error('❌ Error in strict time manipulation detection:', error);
+    return { isValid: true };
+  }
+};
+
+export const flagTimeManipulation = async (
+  userEmail: string,
+  reason: string
+): Promise<void> => {
+  try {
+    await initDb();
+    const db = await getDb();
+    
+    console.log(`🚨 FLAGGING time manipulation for user ${userEmail}: ${reason}`);
+    
+    await db.runAsync(
+      `UPDATE app_state SET manipulation_detected = 1 WHERE user_email = ?;`,
+      [userEmail]
+    );
+    
+    console.log('🚨 Time manipulation flagged - user must go online to restore access');
+  } catch (error) {
+    console.error('❌ Failed to flag time manipulation:', error);
+  }
+};
+
+export const clearManipulationFlag = async (userEmail: string): Promise<void> => {
+  try {
+    await initDb();
+    const db = await getDb();
+    
+    console.log(`✅ Clearing manipulation flag for user: ${userEmail}`);
+    
+    await db.runAsync(
+      `UPDATE app_state SET manipulation_detected = 0 WHERE user_email = ?;`,
+      [userEmail]
+    );
+    
+    console.log('✅ Manipulation flag cleared - access restored');
+  } catch (error) {
+    console.error('❌ Failed to clear manipulation flag:', error);
+  }
+};
+
+export const updateOnlineSync = async (userEmail: string): Promise<void> => {
+  try {
+    await initDb();
+    const db = await getDb();
+    
+    const currentTime = Date.now();
+    
+    // Update online sync AND clear any manipulation flags
+    await db.runAsync(
+      `UPDATE app_state SET 
+        last_time_check = ?,
+        last_online_sync = ?,
+        time_check_sequence = ?,
+        manipulation_detected = 0
+       WHERE user_email = ?;`,
+      [currentTime, currentTime, currentTime, userEmail]
+    );
+    
+    console.log('✅ Online sync updated and manipulation flag cleared');
+  } catch (error) {
+    console.error('❌ Failed to update online sync:', error);
   }
 };
 
 export const updateTimeSync = async (userEmail: string): Promise<void> => {
-    try {
-        await initDb();
-        const db = await getDb();
+  try {
+    await initDb();
+    const db = await getDb();
+    
+    const currentTime = Date.now();
+    
+    await db.runAsync(
+      `UPDATE app_state SET 
+        last_time_check = ?,
+        time_check_sequence = ?
+       WHERE user_email = ?;`,
+      [currentTime, currentTime, userEmail]
+    );
+    
+    console.log('✅ Time sync updated');
+  } catch (error) {
+    console.error('❌ Failed to update time sync:', error);
+  }
+};
 
-        const timeCheck = await detectTimeManipulation(userEmail);
-        if (!timeCheck.isValid) {
-            console.warn('âš ï¸ Cannot update time sync due to detected manipulation.');
-            return;
-        }
+export const establishTimeBaseline = async (
+  userEmail: string,
+  serverTime: string
+): Promise<void> => {
+  try {
+    const currentDeviceTime = new Date().toISOString();
+    await saveServerTime(userEmail, serverTime, currentDeviceTime);
+    console.log('✅ Time baseline established for offline usage');
+  } catch (error) {
+    console.error('❌ Failed to establish time baseline:', error);
+    throw error;
+  }
+};
 
-        // Correctly query the `app_state` table
-        const result = await db.getAllAsync(
-            `SELECT time_check_sequence FROM app_state WHERE user_email = ?;`,
-            [userEmail]
-        );
-        const currentSequence = result[0]?.time_check_sequence || 0;
-        const newSequence = currentSequence + 1;
-        
-        // Correctly update the `app_state` table
-        await db.runAsync(
-            `UPDATE app_state SET last_time_check = ?, time_check_sequence = ? WHERE user_email = ?;`,
-            [Date.now(), newSequence, userEmail]
-        );
-        console.log(`âœ… Time sync updated for ${userEmail}. Sequence: ${newSequence}`);
-    } catch (error) {
-        console.error('âŒ Error updating time sync:', error);
-    }
+export const canAccessOfflineContent = async (userEmail: string): Promise<boolean> => {
+  try {
+    const timeCheck = await detectTimeManipulation(userEmail);
+    return timeCheck.isValid;
+  } catch (error) {
+    console.error('❌ Error checking offline content access:', error);
+    return false;
+  }
+};
+
+export const checkManipulationHistory = async (userEmail: string): Promise<boolean> => {
+  try {
+    await initDb();
+    const db = await getDb();
+    
+    const result = await db.getAllAsync(
+      `SELECT manipulation_detected FROM app_state WHERE user_email = ?;`,
+      [userEmail]
+    );
+    
+    return result.length > 0 && result[0].manipulation_detected === 1;
+  } catch (error) {
+    console.error('❌ Failed to check manipulation history:', error);
+    return false;
+  }
 };

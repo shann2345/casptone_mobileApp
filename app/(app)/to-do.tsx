@@ -4,10 +4,10 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Animated, Dimensions, FlatList, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-
 import { useNetworkStatus } from '../../context/NetworkContext';
 import { getUserData } from '../../lib/api';
 import { getCompletedOfflineQuizzes, getDb, getOfflineAttemptCount, getUnsyncedSubmissions, initDb } from '../../lib/localDb';
+import { showOfflineModeWarningIfNeeded } from '../../lib/offlineWarning';
 
 const { width, height } = Dimensions.get('window');
 
@@ -95,6 +95,16 @@ export default function TodoScreen() {
       }),
     ]).start();
   }, [selectedCategory]);
+
+  useEffect(() => {
+      const checkOfflineWarning = async () => {
+        if (!isConnected) {
+          await showOfflineModeWarningIfNeeded();
+        }
+      };
+      
+      checkOfflineWarning();
+    }, [isConnected]);
 
   const loadTodoItems = async (forceRefresh = false) => {
     try {
@@ -640,7 +650,7 @@ export default function TodoScreen() {
       {/* Modern Header */}
       <View style={styles.headerContainer}>
         <LinearGradient 
-          colors={['#ffffff', '#f8f9fa']} 
+          colors={['#02135eff', '#7979f1ff']} 
           style={styles.header}
         >
           <View style={styles.headerContent}>
@@ -801,13 +811,13 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 32,
     fontWeight: '700',
-    color: '#202124',
+    color: '#ffffffff',
     marginBottom: 4,
     letterSpacing: -0.5,
   },
   headerSubtitle: {
     fontSize: 14,
-    color: '#5f6368',
+    color: '#efededff',
     fontWeight: '400',
   },
   offlineNotice: {
