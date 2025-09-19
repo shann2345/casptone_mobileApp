@@ -139,6 +139,23 @@ export default function LoginScreen() {
             )}
           </TouchableOpacity>
           
+          <View style={styles.dividerContainer}>
+            <View style={styles.dividerLine} />
+            <Text style={styles.dividerText}>OR</Text>
+            <View style={styles.dividerLine} />
+          </View>
+          
+          <TouchableOpacity
+            style={[styles.googleButton, !isConnected && styles.buttonDisabled]}
+            onPress={() => Alert.alert('Google Sign-In', 'Google Sign-In functionality not implemented yet.')}
+            disabled={!isConnected}
+          >
+            <View style={styles.googleButtonContent}>
+              <Ionicons name="logo-google" size={22} color="#fff" style={styles.googleIcon} />
+              <Text style={styles.googleButtonText}>Sign In with Google</Text>
+            </View>
+          </TouchableOpacity>
+
           <TouchableOpacity onPress={() => router.push('/(auth)/signup')}>
             <Text style={styles.linkText}>Don't have an account? Sign Up</Text>
           </TouchableOpacity>
@@ -243,7 +260,7 @@ const styles = StyleSheet.create({
     paddingVertical: 15,
     paddingHorizontal: 25,
     borderRadius: 8,
-    marginTop: 20,
+    marginTop: 10,
     width: '100%',
     alignItems: 'center',
     shadowColor: '#007bff',
@@ -262,10 +279,51 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
   },
+  dividerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 20,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#ced4da',
+  },
+  dividerText: {
+    marginHorizontal: 10,
+    color: '#6c757d',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  googleButton: {
+    backgroundColor: '#db4437',
+    paddingVertical: 15,
+    paddingHorizontal: 25,
+    borderRadius: 8,
+    width: '100%',
+    alignItems: 'center',
+    shadowColor: '#db4437',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+    elevation: 5,
+  },
+  googleButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  googleIcon: {
+    marginRight: 10,
+  },
+  googleButtonText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
   linkText: {
     color: '#007bff',
     textAlign: 'center',
-    marginTop: 15,
+    marginTop: 20,
     fontSize: 14,
     fontWeight: '500',
   },

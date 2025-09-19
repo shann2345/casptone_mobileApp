@@ -1,5 +1,6 @@
 // app/(auth)/signup.tsx - Updated for multi-account system
 
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import {
@@ -98,7 +99,7 @@ export default function SignupScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        <Text style={styles.title}>Sign Up</Text>
+        <Text style={styles.title}>Create Account</Text>
         
         {/* Info about offline access */}
         <View style={styles.infoBox}>
@@ -160,7 +161,7 @@ export default function SignupScreen() {
         </View>
 
         <TouchableOpacity
-          style={styles.button}
+          style={[styles.button, loading && styles.buttonDisabled]}
           onPress={handleSignup}
           disabled={loading}
         >
@@ -169,6 +170,23 @@ export default function SignupScreen() {
           ) : (
             <Text style={styles.buttonText}>Sign Up</Text>
           )}
+        </TouchableOpacity>
+
+        <View style={styles.dividerContainer}>
+            <View style={styles.dividerLine} />
+            <Text style={styles.dividerText}>OR</Text>
+            <View style={styles.dividerLine} />
+        </View>
+
+        <TouchableOpacity
+            style={[styles.googleButton, loading && styles.buttonDisabled]}
+            onPress={() => Alert.alert('Google Sign-Up', 'Google Sign-Up functionality not implemented yet.')}
+            disabled={loading}
+          >
+            <View style={styles.googleButtonContent}>
+              <Ionicons name="logo-google" size={22} color="#fff" style={styles.googleIcon} />
+              <Text style={styles.googleButtonText}>Sign Up with Google</Text>
+            </View>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -185,7 +203,7 @@ export default function SignupScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f0f2f5' },
   scrollContent: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
-  title: { fontSize: 32, fontWeight: 'bold', color: '#2c3e50', marginBottom: 30 },
+  title: { fontSize: 32, fontWeight: 'bold', color: '#2c3e50', marginBottom: 20 },
   
   infoBox: {
     backgroundColor: '#e7f3ff',
@@ -212,10 +230,54 @@ const styles = StyleSheet.create({
   errorText: { color: '#dc3545', fontSize: 13, marginTop: 5, marginLeft: 5 },
   button: {
     backgroundColor: '#007bff', paddingVertical: 15, paddingHorizontal: 25,
-    borderRadius: 8, marginTop: 20, width: '100%', alignItems: 'center',
+    borderRadius: 8, marginTop: 10, width: '100%', alignItems: 'center',
     shadowColor: '#007bff', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 5, elevation: 5,
   },
+  buttonDisabled: {
+    backgroundColor: '#adb5bd',
+  },
   buttonText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
+  dividerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 20,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#ced4da',
+  },
+  dividerText: {
+    marginHorizontal: 10,
+    color: '#6c757d',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  googleButton: {
+    backgroundColor: '#db4437',
+    paddingVertical: 15,
+    paddingHorizontal: 25,
+    borderRadius: 8,
+    width: '100%',
+    alignItems: 'center',
+    shadowColor: '#db4437',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+    elevation: 5,
+  },
+  googleButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  googleIcon: {
+    marginRight: 10,
+  },
+  googleButtonText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
   loginLink: { marginTop: 20 },
   loginLinkText: { color: '#007bff', fontSize: 16 },
 });

@@ -98,13 +98,13 @@ export default function TodoScreen() {
 
   useEffect(() => {
       const checkOfflineWarning = async () => {
-        if (!isConnected) {
+        if (!netInfo?.isInternetReachable) {
           await showOfflineModeWarningIfNeeded();
         }
       };
       
       checkOfflineWarning();
-    }, [isConnected]);
+    }, [netInfo?.isInternetReachable]);
 
   const loadTodoItems = async (forceRefresh = false) => {
     try {
@@ -602,7 +602,7 @@ export default function TodoScreen() {
   // FIXED: Enhanced sync detection and auto-refresh
   useEffect(() => {
     const checkForSyncUpdates = async () => {
-      if (isConnected) {
+      if (netInfo?.isInternetReachable) {
         console.log('🌐 Network is online. Checking for sync updates...');
         const user = await getUserData();
         if (!user || !user.email) return;
@@ -622,7 +622,7 @@ export default function TodoScreen() {
     };
 
     checkForSyncUpdates();
-  }, [isConnected]);
+  }, [netInfo?.isInternetReachable]);
 
   useFocusEffect(
     useCallback(() => {
@@ -674,7 +674,7 @@ export default function TodoScreen() {
             </TouchableOpacity>
           </View>
           
-          {!isConnected && (
+          {!netInfo?.isInternetReachable && (
             <View style={styles.offlineNotice}>
               <Ionicons name="cloud-offline" size={14} color="#d93025" />
               <Text style={styles.offlineText}>Working offline</Text>

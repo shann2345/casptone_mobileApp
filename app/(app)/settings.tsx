@@ -17,6 +17,7 @@ import {
   TouchableOpacity,
   View
 } from 'react-native';
+import { useNetworkStatus } from '../../context/NetworkContext'; // 👈 Import the hook
 import { clearAuthToken, deleteProfileImage, getProfile, updateProfile } from '../../lib/api';
 import { clearOfflineData } from '../../lib/localDb';
 
@@ -53,6 +54,7 @@ export default function ProfileScreen() {
   const [isEditModalVisible, setIsEditModalVisible] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const router = useRouter();
+  const { isInternetReachable } = useNetworkStatus(); // 👈 Use the network hook
 
   // Edit form state
   const [editForm, setEditForm] = useState({
@@ -312,7 +314,11 @@ export default function ProfileScreen() {
     <ScrollView 
       style={styles.container}
       refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
+        <RefreshControl 
+          refreshing={refreshing} 
+          onRefresh={handleRefresh} 
+          enabled={isInternetReachable ?? false} // 👈 Disable refresh when offline
+        />
       }
     >
       {/* Header Section */}
@@ -327,8 +333,12 @@ export default function ProfileScreen() {
             style={styles.profileImage}
           />
           <TouchableOpacity 
-            style={styles.editImageButton}
+            style={[
+              styles.editImageButton,
+              !isInternetReachable && styles.disabledButton // 👈 Style for disabled state
+            ]}
             onPress={() => setIsEditModalVisible(true)}
+            disabled={!isInternetReachable} // 👈 Disable when offline
           >
             <Ionicons name="pencil" size={16} color="#fff" />
           </TouchableOpacity>
@@ -340,6 +350,14 @@ export default function ProfileScreen() {
         {profile?.program && (
           <View style={styles.programBadge}>
             <Text style={styles.programText}>{profile.program.name}</Text>
+          </View>
+        )}
+        
+        {/* 👇 Offline Indicator */}
+        {!isInternetReachable && (
+          <View style={styles.offlineNotice}>
+            <Ionicons name="cloud-offline-outline" size={18} color="#dc3545" />
+            <Text style={styles.offlineText}>Offline Mode</Text>
           </View>
         )}
       </View>
@@ -389,14 +407,25 @@ export default function ProfileScreen() {
       {/* Action Buttons */}
       <View style={styles.actionSection}>
         <TouchableOpacity 
-          style={styles.editButton} 
+          style={[
+            styles.editButton, 
+            !isInternetReachable && styles.disabledButton // 👈 Style for disabled state
+          ]} 
           onPress={() => setIsEditModalVisible(true)}
+          disabled={!isInternetReachable} // 👈 Disable when offline
         >
           <Ionicons name="pencil" size={20} color="#fff" />
           <Text style={styles.editButtonText}>Edit Profile</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+        <TouchableOpacity 
+          style={[
+            styles.logoutButton,
+            !isInternetReachable && styles.disabledButton // 👈 Style for disabled state
+          ]} 
+          onPress={handleLogout}
+          disabled={!isInternetReachable} // 👈 Disable when offline
+        >
           <Ionicons name="log-out" size={20} color="#fff" />
           <Text style={styles.logoutButtonText}>Logout</Text>
         </TouchableOpacity>
@@ -417,17 +446,24 @@ export default function ProfileScreen() {
             <Text style={styles.modalTitle}>Edit Profile</Text>
             <TouchableOpacity 
               onPress={handleUpdateProfile}
-              disabled={isUpdating}
+              disabled={isUpdating || !isInternetReachable} // 👈 Disable save when offline
             >
               {isUpdating ? (
                 <ActivityIndicator size="small" color="#007bff" />
               ) : (
-                <Text style={styles.saveButton}>Save</Text>
+                <Text style={[styles.saveButton, !isInternetReachable && styles.disabledText]}>Save</Text>
               )}
             </TouchableOpacity>
           </View>
 
           <ScrollView style={styles.modalContent}>
+            {/* 👇 Offline hint inside modal */}
+            {!isInternetReachable && (
+              <Text style={styles.offlineModalHint}>
+                You are offline. Profile picture changes and saving are disabled.
+              </Text>
+            )}
+            
             {/* Profile Image Section */}
             <View style={styles.imageSection}>
               <Text style={styles.fieldLabel}>Profile Image</Text>
@@ -441,13 +477,21 @@ export default function ProfileScreen() {
                   style={styles.editProfileImage}
                 />
                 <View style={styles.imageButtons}>
-                  <TouchableOpacity style={styles.imageButton} onPress={pickImage}>
+                  <TouchableOpacity 
+                    style={[styles.imageButton, !isInternetReachable && styles.disabledButton]} 
+                    onPress={pickImage}
+                    disabled={!isInternetReachable} // 👈 Disable when offline
+                  >
                     <Ionicons name="camera" size={20} color="#007bff" />
                     <Text style={styles.imageButtonText}>Change</Text>
                   </TouchableOpacity>
                   {(profile?.profile_image || selectedImage) && (
                     <TouchableOpacity 
-                      style={[styles.imageButton, styles.deleteImageButton]} 
+                      style={[
+                        styles.imageButton, 
+                        styles.deleteImageButton, 
+                        !isInternetReachable && styles.disabledButton
+                      ]} 
                       onPress={() => {
                         if (selectedImage) {
                           setSelectedImage(null);
@@ -455,6 +499,7 @@ export default function ProfileScreen() {
                           handleDeleteImage();
                         }
                       }}
+                      disabled={!isInternetReachable} // 👈 Disable when offline
                     >
                       <Ionicons name="trash" size={20} color="#dc3545" />
                       <Text style={[styles.imageButtonText, styles.deleteText]}>Remove</Text>
@@ -888,5 +933,38 @@ const styles = StyleSheet.create({
   },
   selectedGenderText: {
     color: '#fff',
+  },
+  
+  // 👇 New Styles for offline state
+  disabledButton: {
+    opacity: 0.5,
+  },
+  disabledText: {
+    color: '#6c757d',
+  },
+  offlineNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f8d7da',
+    borderRadius: 20,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    marginTop: 15,
+  },
+  offlineText: {
+    color: '#721c24',
+    fontSize: 14,
+    fontWeight: '600',
+    marginLeft: 8,
+  },
+  offlineModalHint: {
+    fontSize: 14,
+    color: '#721c24',
+    textAlign: 'center',
+    marginBottom: 20,
+    fontStyle: 'italic',
+    backgroundColor: '#f8d7da',
+    padding: 10,
+    borderRadius: 8,
   },
 });

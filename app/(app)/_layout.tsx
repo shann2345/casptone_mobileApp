@@ -54,13 +54,19 @@ export default function AppLayout() {
           backgroundColor: '#fff',
           borderTopWidth: StyleSheet.hairlineWidth,
           borderTopColor: '#ccc',
-          height: 80,
-          paddingBottom: 5,
         },
         tabBarLabelStyle: {
           fontSize: 12,
         },
-        headerShown: false, // Ensure the Tabs component itself doesn't render a header
+        headerStyle: {
+          backgroundColor: '#007bff',
+          height: 80, // Adjust height to include padding
+        },
+        headerTitleStyle: {
+          fontWeight: 'bold',
+        },
+        headerTintColor: '#fff',
+        headerShown: true, // Ensure headers are shown
       }}
     >
       <Tabs.Screen
@@ -189,9 +195,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   profileImageContainer: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     borderWidth: 2,
     borderColor: '#fff',
     overflow: 'hidden',

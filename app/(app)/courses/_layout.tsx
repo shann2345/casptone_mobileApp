@@ -52,13 +52,15 @@ export default function CoursesLayout() {
         options={{
           title: 'My Courses',
           headerShown: true,
-          headerStyle: { backgroundColor: '#007bff' },
+          headerStyle: { 
+            backgroundColor: '#007bff',
+            height: 80,
+          },
           headerTintColor: '#fff',
           headerTitleStyle: { fontWeight: 'bold' },
           headerRight: () => (
             <TouchableOpacity
               onPress={() => router.push('/settings')}
-              style={styles.headerRightContainer}
             >
               <HeaderRight initials={initials} profileImage={profileImage} />
             </TouchableOpacity>
@@ -68,29 +70,55 @@ export default function CoursesLayout() {
       <Stack.Screen
         name="[id]"
         options={{
-          headerStyle: { backgroundColor: '#007bff' },
+          headerStyle: { 
+            backgroundColor: '#007bff',
+            height: 80,
+          },
           headerTintColor: '#fff',
           headerTitleStyle: { fontWeight: 'bold' },
-          headerRight: () => <HeaderRight initials={initials} profileImage={profileImage} />,
+          headerRight: () => (
+            <TouchableOpacity
+              onPress={() => router.push('/settings')}
+            >
+              <HeaderRight initials={initials} profileImage={profileImage} />
+            </TouchableOpacity>
+          ),
         }}
       />
-      {/* If you wanted specific options for material details */}
       <Stack.Screen
-        name="materials/[materialId]" // Match the folder structure
+        name="materials/[materialId]"
         options={{
-          headerStyle: { backgroundColor: '#007bff' },
+          headerStyle: { 
+            backgroundColor: '#007bff',
+            height: 80,
+          },
           headerTintColor: '#fff',
           headerTitleStyle: { fontWeight: 'bold' },
-          headerRight: () => <HeaderRight initials={initials} profileImage={profileImage} />,
+          headerRight: () => (
+            <TouchableOpacity
+              onPress={() => router.push('/settings')}
+            >
+              <HeaderRight initials={initials} profileImage={profileImage} />
+            </TouchableOpacity>
+          ),
         }}
       />
       <Stack.Screen
-        name="assessments/[assessmentId]" // Match the folder structure
+        name="assessments/[assessmentId]"
         options={{
-          headerStyle: { backgroundColor: '#007bff' },
+          headerStyle: { 
+            backgroundColor: '#007bff',
+            height: 80,
+          },
           headerTintColor: '#fff',
           headerTitleStyle: { fontWeight: 'bold' },
-          headerRight: () => <HeaderRight initials={initials} profileImage={profileImage} />,
+          headerRight: () => (
+            <TouchableOpacity
+              onPress={() => router.push('/settings')}
+            >
+              <HeaderRight initials={initials} profileImage={profileImage} />
+            </TouchableOpacity>
+          ),
         }}
       />
     </Stack>
@@ -165,9 +193,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   profileImageContainer: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     borderWidth: 2,
     borderColor: '#fff',
     overflow: 'hidden',

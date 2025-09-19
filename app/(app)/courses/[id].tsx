@@ -151,7 +151,7 @@ export default function CourseDetailsScreen() {
     if (courseId) {
       fetchCourseDetails();
     }
-  }, [courseId, isConnected]);
+  }, [courseId, netInfo?.isInternetReachable]);
 
   const fetchCourseDetails = async () => {
   setLoading(true);
@@ -197,7 +197,7 @@ export default function CourseDetailsScreen() {
       }
     }
 
-    if (isConnected && !timeManipulationDetected) {
+    if (netInfo?.isInternetReachable && !timeManipulationDetected) {
       // ONLINE MODE: Fetch fresh data and establish time baseline
       console.log('✅ Online: Fetching course details and establishing strict time baseline');
       
@@ -436,7 +436,7 @@ export default function CourseDetailsScreen() {
             </View>
           )}
           
-          {!isConnected && !timeManipulationDetected && (
+          {!netInfo?.isInternetReachable && !timeManipulationDetected && (
             <View style={styles.offlineNotice}>
               <Ionicons name="cloud-offline" size={14} color="#fff" />
               <Text style={styles.offlineText}>Working offline</Text>

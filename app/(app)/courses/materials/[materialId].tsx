@@ -44,7 +44,7 @@ const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 export default function MaterialDetailsScreen() {
   const { id: courseId, materialId } = useLocalSearchParams();
-  const { isConnected } = useNetworkStatus();
+  const { isConnected, netInfo } = useNetworkStatus();
   const [materialDetail, setMaterialDetail] = useState<MaterialDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -75,7 +75,7 @@ export default function MaterialDetailsScreen() {
         sound.unloadAsync();
       }
     };
-  }, [materialId, isConnected]);
+  }, [materialId, netInfo?.isInternetReachable]);
 
   const fetchMaterialDetails = async () => {
     setLoading(true);
@@ -90,7 +90,7 @@ export default function MaterialDetailsScreen() {
     }
 
     try {
-      if (isConnected) {
+      if (netInfo?.isInternetReachable) {
         console.log('✅ Online: Fetching material details from API.');
         const response = await api.get(`/materials/${materialId}`);
         if (response.status === 200) {
@@ -260,7 +260,7 @@ export default function MaterialDetailsScreen() {
       return;
     }
 
-    if (!isConnected) {
+    if (!netInfo?.isInternetReachable) {
       Alert.alert('Offline Mode', 'File downloading requires an internet connection.');
       return;
     }
@@ -397,7 +397,7 @@ export default function MaterialDetailsScreen() {
     const fileType = getFileType(materialDetail.file_path);
     
     // Auto-download for viewable types including documents and PDFs
-    if (['image', 'video', 'audio', 'code', 'pdf', 'document'].includes(fileType) && isConnected) {
+    if (['image', 'video', 'audio', 'code', 'pdf', 'document'].includes(fileType) && netInfo?.isInternetReachable) {
       console.log(`🔄 Auto-downloading ${fileType} for offline access...`);
       await handleDownload();
     }
@@ -416,7 +416,7 @@ export default function MaterialDetailsScreen() {
   }, [downloadedFileUri, materialDetail]);
 
   const handleViewOnline = async () => {
-    if (!isConnected) {
+    if (!netInfo?.isInternetReachable) {
       Alert.alert('Offline Mode', 'Online viewing requires an internet connection.');
       return;
     }
@@ -640,7 +640,7 @@ export default function MaterialDetailsScreen() {
           </View>
           <View style={styles.viewerActions}>
             {/* PDF Web Viewer Option */}
-            {fileExtension === 'pdf' && isConnected && (
+            {fileExtension === 'pdf' && netInfo?.isInternetReachable && (
               <TouchableOpacity style={styles.actionButton} onPress={handleViewPDFOnline}>
                 <Ionicons name="globe" size={20} color="#4285f4" />
               </TouchableOpacity>
@@ -678,7 +678,7 @@ export default function MaterialDetailsScreen() {
             </TouchableOpacity>
             
             {/* Special PDF web viewer */}
-            {fileExtension === 'pdf' && isConnected && (
+            {fileExtension === 'pdf' && netInfo?.isInternetReachable && (
               <TouchableOpacity style={styles.secondaryDocumentButton} onPress={handleViewPDFOnline}>
                 <Ionicons name="globe-outline" size={20} color="#4285f4" />
                 <Text style={styles.secondaryDocumentButtonText}>View in Browser</Text>
@@ -686,7 +686,7 @@ export default function MaterialDetailsScreen() {
             )}
             
             {/* Generic online viewer for other documents */}
-            {fileExtension !== 'pdf' && isConnected && (
+            {fileExtension !== 'pdf' && netInfo?.isInternetReachable && (
               <TouchableOpacity style={styles.secondaryDocumentButton} onPress={handleViewOnline}>
                 <Ionicons name="cloud-outline" size={20} color="#4285f4" />
                 <Text style={styles.secondaryDocumentButtonText}>View Online</Text>
@@ -722,7 +722,7 @@ export default function MaterialDetailsScreen() {
     );
   };
   const handleViewPDFOnline = async () => {
-    if (!isConnected) {
+    if (!netInfo?.isInternetReachable) {
       Alert.alert('Offline Mode', 'Online PDF viewing requires an internet connection.');
       return;
     }
@@ -1060,7 +1060,7 @@ export default function MaterialDetailsScreen() {
               <TouchableOpacity 
                 style={styles.headerActionButton}
                 onPress={handleDownload}
-                disabled={!isConnected}
+                disabled={!netInfo?.isInternetReachable}
               >
                 <Ionicons name="download" size={20} color="#fff" />
                 <Text style={styles.headerActionButtonText}>Download</Text>
@@ -1077,7 +1077,7 @@ export default function MaterialDetailsScreen() {
               </TouchableOpacity>
             )}
             
-            {isConnected && (
+            {netInfo?.isInternetReachable && (
               <TouchableOpacity 
                 style={styles.headerActionButton}
                 onPress={handleViewOnline}

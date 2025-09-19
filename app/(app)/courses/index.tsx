@@ -123,7 +123,7 @@ export default function CoursesScreen() {
       setIsLoading(true);
       setError(null);
       
-      if (isConnected) {
+      if (netInfo?.isInternetReachable) {
         console.log('You are online. Fetching from API...');
         try {
           const response = await api.get('/my-courses');
@@ -153,7 +153,7 @@ export default function CoursesScreen() {
     if (currentUserEmail) {
       fetchCourses();
     }
-  }, [isConnected, currentUserEmail]);
+  }, [netInfo?.isInternetReachable, currentUserEmail]);
 
   // Helper function to fetch courses from the local database
   const fetchEnrolledCoursesFromDb = async () => {
@@ -197,13 +197,13 @@ export default function CoursesScreen() {
 
   useEffect(() => {
       const checkOfflineWarning = async () => {
-        if (!isConnected) {
+        if (!netInfo?.isInternetReachable) {
           await showOfflineModeWarningIfNeeded();
         }
       };
       
       checkOfflineWarning();
-    }, [isConnected]);
+    }, [netInfo?.isInternetReachable]);
 
   const renderCourseCard = ({ item, index }: { item: EnrolledCourse; index: number }) => (
     <TouchableOpacity
@@ -320,7 +320,7 @@ export default function CoursesScreen() {
           <Text style={styles.headerSubtitle}>
             {enrolledCourses.length} {enrolledCourses.length === 1 ? 'course' : 'courses'} enrolled
           </Text>
-          {!isConnected && (
+          {!netInfo?.isInternetReachable && (
             <View style={styles.offlineNotice}>
               <Ionicons name="wifi-outline" size={14} color="#d93025" />
               <Text style={styles.offlineText}>Offline mode</Text>

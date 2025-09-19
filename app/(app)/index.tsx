@@ -333,13 +333,13 @@ export default function HomeScreen() {
 
   useEffect(() => {
     const checkOfflineWarning = async () => {
-      if (!isConnected) {
+      if (!netInfo?.isInternetReachable) {
         await showOfflineModeWarningIfNeeded();
       }
     };
     
     checkOfflineWarning();
-  }, [isConnected]);
+  }, [netInfo?.isInternetReachable]);
 
   const fetchAndSaveCompleteCoursesData = async (courses: EnrolledCourse[], userEmail: string) => {
     console.log('📦 Starting to fetch complete course data for offline access...');
@@ -965,7 +965,7 @@ export default function HomeScreen() {
             <Text style={styles.userNameText}>{userName}</Text>
             <Text style={styles.subText}>Ready to continue your learning journey?</Text>
             
-            {!isConnected && (
+            {!netInfo?.isInternetReachable && (
               <View style={styles.offlineNotice}>
                 <Ionicons name="cloud-offline-outline" size={18} color="#fff" />
                 <Text style={styles.offlineText}>Offline Mode</Text>
@@ -1006,8 +1006,8 @@ export default function HomeScreen() {
             <Text style={styles.statLabel}>Pending Downloads</Text>
           </View>
           <View style={styles.statCard}>
-            <Ionicons name={isConnected ? "wifi" : "wifi-off"} size={24} color={isConnected ? "#10ac84" : "#ff6b6b"} />
-            <Text style={styles.statLabel}>{isConnected ? "Online" : "Offline"}</Text>
+            <Ionicons name={netInfo?.isInternetReachable ? "wifi" : "wifi-off"} size={24} color={netInfo?.isInternetReachable ? "#10ac84" : "#ff6b6b"} />
+            <Text style={styles.statLabel}>{netInfo?.isInternetReachable ? "Online" : "Offline"}</Text>
           </View>
         </View>
 
@@ -1155,7 +1155,7 @@ export default function HomeScreen() {
                 onChangeText={setSearchQuery}
                 onSubmitEditing={handleSearchSubmit}
                 returnKeyType="search"
-                editable={isConnected}
+                editable={netInfo?.isInternetReachable}
               />
               <TouchableOpacity
                 style={[

@@ -651,7 +651,7 @@ export default function AssessmentDetailsScreen() {
             )}
           </View>
           
-          {!isConnected && (
+          {!netInfo?.isInternetReachable && (
             <View style={styles.offlineNotice}>
               <Ionicons name="cloud-offline" size={14} color="#fff" />
               <Text style={styles.offlineText}>Working offline</Text>
@@ -734,8 +734,8 @@ export default function AssessmentDetailsScreen() {
             <Text style={styles.sectionHeader}>Assignment Instructions</Text>
             <TouchableOpacity 
               onPress={() => assessmentDetail.assessment_file_url && handleDownloadAssessmentFile(assessmentDetail.assessment_file_url)}
-              style={[styles.actionCard, !isConnected && styles.actionCardDisabled]}
-              disabled={!isConnected}
+              style={[styles.actionCard, !netInfo?.isInternetReachable && styles.actionCardDisabled]}
+              disabled={!netInfo?.isInternetReachable}
               activeOpacity={0.8}
             >
               <View style={styles.actionCardContent}>
@@ -743,19 +743,19 @@ export default function AssessmentDetailsScreen() {
                   <Ionicons 
                     name="download" 
                     size={24} 
-                    color={isConnected ? "#fff" : "#ccc"} 
+                    color={netInfo?.isInternetReachable ? "#fff" : "#ccc"} 
                   />
                 </View>
                 <View style={styles.actionCardText}>
-                  <Text style={[styles.actionCardTitle, !isConnected && styles.disabledText]}>
+                  <Text style={[styles.actionCardTitle, !netInfo?.isInternetReachable && styles.disabledText]}>
                     Download Instructions
                   </Text>
-                  <Text style={[styles.actionCardSubtitle, !isConnected && styles.disabledText]}>
+                  <Text style={[styles.actionCardSubtitle, !netInfo?.isInternetReachable && styles.disabledText]}>
                     Get the assignment file from your instructor
                   </Text>
                 </View>
               </View>
-              {!isConnected && (
+              {!netInfo?.isInternetReachable && (
                 <Text style={styles.offlineWarning}>Must be online to download</Text>
               )}
             </TouchableOpacity>
@@ -801,18 +801,18 @@ export default function AssessmentDetailsScreen() {
               {latestAssignmentSubmission.submitted_file_url && (
                 <TouchableOpacity 
                   onPress={() => latestAssignmentSubmission.submitted_file_url && handleDownloadSubmittedFile(latestAssignmentSubmission.submitted_file_url)}
-                  style={[styles.downloadButton, !isConnected && styles.downloadButtonDisabled]}
-                  disabled={!isConnected}
+                  style={[styles.downloadButton, !netInfo?.isInternetReachable && styles.downloadButtonDisabled]}
+                  disabled={!netInfo?.isInternetReachable}
                   activeOpacity={0.8}
                 >
-                  <Ionicons name="cloud-download" size={16} color={isConnected ? "#2196F3" : "#ccc"} />
-                  <Text style={[styles.downloadButtonText, !isConnected && { color: '#ccc' }]}>
+                  <Ionicons name="cloud-download" size={16} color={netInfo?.isInternetReachable ? "#2196F3" : "#ccc"} />
+                  <Text style={[styles.downloadButtonText, !netInfo?.isInternetReachable && { color: '#ccc' }]}>
                     Download Submission
                   </Text>
                 </TouchableOpacity>
               )}
               
-              {!isConnected && (
+              {!netInfo?.isInternetReachable && (
                 <Text style={styles.offlineWarning}>Must be online to download submission</Text>
               )}
             </View>

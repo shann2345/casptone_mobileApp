@@ -70,7 +70,7 @@ type StudentAnswers = {
 export default function AttemptQuizScreen() {
   const { submittedAssessmentId, assessmentId, isOffline } = useLocalSearchParams();
   const router = useRouter();
-  const { isConnected } = useNetworkStatus();
+  const { isConnected, netInfo } = useNetworkStatus();
   const [submittedAssessment, setSubmittedAssessment] = useState<SubmittedAssessmentData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -522,7 +522,7 @@ export default function AttemptQuizScreen() {
     let mounted = true;
     
     // Check for connection and sync if online
-    if (isConnected && isOffline === 'true' && mounted) {
+    if (netInfo?.isInternetReachable && isOffline === 'true' && mounted) {
       console.log('🔄 Connection restored, attempting to sync offline quizzes...');
       syncCompletedOfflineQuiz();
     }
@@ -530,7 +530,7 @@ export default function AttemptQuizScreen() {
     return () => {
       mounted = false;
     };
-  }, [isConnected]);
+  }, [netInfo?.isInternetReachable]);
 
   const saveAnswer = async (submittedQuestionId: number) => {
     // Check for time manipulation before saving
@@ -550,7 +550,7 @@ export default function AttemptQuizScreen() {
     setSavingAnswers(prev => new Set(prev.add(submittedQuestionId)));
 
     try {
-      if (isConnected && isOffline !== 'true') {
+      if (netInfo?.isInternetReachable && isOffline !== 'true') {
         // ONLINE MODE - existing logic
         let payload: any = {};
         if (answerData.type === 'multiple_choice' || answerData.type === 'true_false') {
@@ -625,7 +625,7 @@ export default function AttemptQuizScreen() {
   };
 
   const syncCompletedOfflineQuiz = async () => {
-  if (!isConnected || !submittedAssessment || !assessmentId) return;
+  if (!netInfo?.isInternetReachable || !submittedAssessment || !assessmentId) return;
   
   setIsSyncing(true);
   try {
@@ -716,10 +716,10 @@ export default function AttemptQuizScreen() {
 
   // Add this effect to automatically sync when connection is restored
   useEffect(() => {
-    if (isConnected && isOffline === 'true' && submittedAssessment?.status === 'completed') {
+    if (netInfo?.isInternetReachable && isOffline === 'true' && submittedAssessment?.status === 'completed') {
       syncCompletedOfflineQuiz();
     }
-  }, [isConnected, submittedAssessment?.status]);
+  }, [netInfo?.isInternetReachable, submittedAssessment?.status]);
 
   // Updated handleFinalizeQuiz to support auto-submission
   const handleFinalizeQuiz = async (isAutoSubmission: boolean = false) => {
@@ -929,7 +929,7 @@ export default function AttemptQuizScreen() {
         )}
         
         <Text style={styles.quizStatus}>Status: {submittedAssessment.status.replace('_', ' ')}</Text>
-        {!isConnected && (
+        {!netInfo?.isInternetReachable && (
           <Text style={styles.offlineStatus}>⚠️ You are currently in Offline Mode</Text>
         )}
       </View>
