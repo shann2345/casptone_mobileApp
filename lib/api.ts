@@ -4,7 +4,7 @@ import * as SecureStore from 'expo-secure-store';
 import { establishTimeBaseline, getSavedServerTime, saveAssessmentDetailsToDb, saveServerTime, updateOnlineSync } from './localDb';
 
 export const API_BASE_URL = __DEV__ 
-  ? 'http://192.168.1.10:8000/api'  // Development
+  ? 'http://192.168.1.10:8000/api'  // Development - Updated to match your Laravel server
   : 'https://your-cloud-domain.com/api'; // Production
 
 const api = axios.create({
@@ -428,6 +428,50 @@ export const deleteProfileImage = async () => {
   }
 };
 
+// Add this function to your api.ts file
+
+export const googleAuth = async (googleUser: {
+  id: string;
+  email: string;
+  name: string;
+  picture?: string;
+}) => {
+  try {
+    console.log('🔐 Authenticating with Google...');
+    
+    const response = await api.post('/auth/google', {
+      google_id: googleUser.id,
+      email: googleUser.email,
+      name: googleUser.name,
+      avatar: googleUser.picture,
+    });
+
+    const { user, token, is_new_user } = response.data;
+
+    // Store auth data
+    await storeAuthToken(token);
+    await storeUserData(user);
+
+    console.log('✅ Google authentication successful');
+    
+    return {
+      success: true,
+      user,
+      token,
+      isNewUser: is_new_user,
+      message: response.data.message
+    };
+
+  } catch (error: any) {
+    console.error('❌ Google authentication failed:', error.response?.data || error.message);
+    
+    return {
+      success: false,
+      message: error.response?.data?.message || 'Google authentication failed',
+      error: error.response?.data?.error
+    };
+  }
+};
 
 export const syncOfflineSubmission = async (assessmentId: number, fileUri: string, originalFilename: string, submittedAt: string) => {
   try {

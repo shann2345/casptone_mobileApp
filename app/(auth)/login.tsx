@@ -1,7 +1,9 @@
 // app/(auth)/login.tsx
 
 import { Ionicons } from '@expo/vector-icons';
+import * as Google from 'expo-auth-session/providers/google';
 import { useRouter } from 'expo-router';
+import * as WebBrowser from 'expo-web-browser';
 import React, { useState } from 'react';
 import {
   ActivityIndicator,
@@ -17,8 +19,18 @@ import {
 } from 'react-native';
 
 import { useNetworkStatus } from '../../context/NetworkContext';
-import api, { storeAuthToken, storeUserData } from '../../lib/api';
+import api, { googleAuth, storeAuthToken, storeUserData } from '../../lib/api';
 import { resetTimeCheckData } from '../../lib/localDb';
+
+WebBrowser.maybeCompleteAuthSession();
+
+// Add this configuration before the LoginScreen component
+const googleConfig = {
+  androidClientId: '194606315101-6q4mh9qqbhvuds8ndqck1g5ug94t9g11.apps.googleusercontent.com',
+  iosClientId: 'YOUR_IOS_CLIENT_ID',
+  webClientId: 'YOUR_WEB_CLIENT_ID', // Optional, for web testing
+};
+
 
 interface Errors {
   email?: string;
@@ -32,8 +44,70 @@ export default function LoginScreen() {
   const [password, setPassword] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
   const [errors, setErrors] = useState<Errors>({});
+  const [googleRequest, googleResponse, googlePromptAsync] = Google.useAuthRequest(googleConfig);
 
   const { isConnected, netInfo } = useNetworkStatus();
+
+  React.useEffect(() => {
+    if (googleResponse?.type === 'success') {
+      handleGoogleSuccess(googleResponse.authentication?.accessToken);
+    }
+  }, [googleResponse]);
+
+  const handleGoogleLogin = () => {
+    if (!isConnected) {
+      Alert.alert(
+        "No Network Connection",
+        "You need an internet connection to sign in with Google."
+      );
+      return;
+    }
+    
+    googlePromptAsync();
+  };
+
+  const handleGoogleSuccess = async (accessToken: string | undefined) => {
+    if (!accessToken) {
+      Alert.alert('Error', 'Google authentication failed - no access token received');
+      return;
+    }
+
+    setLoading(true);
+    
+    try {
+      // Get user info from Google
+      const userInfoResponse = await fetch(
+        `https://www.googleapis.com/oauth2/v2/userinfo?access_token=${accessToken}`
+      );
+      const googleUserData = await userInfoResponse.json();
+      
+      // Authenticate with your backend
+      const result = await googleAuth({
+        id: googleUserData.id,
+        email: googleUserData.email,
+        name: googleUserData.name,
+        picture: googleUserData.picture,
+      });
+
+      if (result.success) {
+        await resetTimeCheckData(result.user.email);
+        
+        Alert.alert(
+          'Success', 
+          result.isNewUser ? 'Account created successfully!' : 'Signed in successfully!'
+        );
+        
+        router.replace('/(app)');
+      } else {
+        Alert.alert('Authentication Failed', result.message || 'Google sign-in failed');
+      }
+    } catch (error: any) {
+      console.error('Google auth error:', error);
+      Alert.alert('Error', 'Failed to authenticate with Google. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleLogin = async () => {
     if (!netInfo?.isInternetReachable) {
@@ -145,14 +219,14 @@ export default function LoginScreen() {
             <View style={styles.dividerLine} />
           </View>
           
-          <TouchableOpacity
-            style={[styles.googleButton, !isConnected && styles.buttonDisabled]}
-            onPress={() => Alert.alert('Google Sign-In', 'Google Sign-In functionality not implemented yet.')}
-            disabled={!isConnected}
+          <TouchableOpacity 
+            style={styles.googleButton} 
+            onPress={handleGoogleLogin}
+            disabled={loading}
           >
             <View style={styles.googleButtonContent}>
-              <Ionicons name="logo-google" size={22} color="#fff" style={styles.googleIcon} />
-              <Text style={styles.googleButtonText}>Sign In with Google</Text>
+              <Ionicons name="logo-google" size={20} color="#fff" style={styles.googleIcon} />
+              <Text style={styles.googleButtonText}>Continue with Google</Text>
             </View>
           </TouchableOpacity>
 

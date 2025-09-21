@@ -2,7 +2,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Stack, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Image, Platform, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useNetworkStatus } from '../../../context/NetworkContext'; // Adjust path as needed
 import { getProfile, getUserData } from '../../../lib/api';
@@ -11,6 +12,7 @@ export default function CoursesLayout() {
   const router = useRouter();
   const [initials, setInitials] = useState<string>('');
   const [profileImage, setProfileImage] = useState<string | null>(null);
+  const insets = useSafeAreaInsets();
 
   useEffect(() => {
     const fetchUserProfile = async () => {
@@ -45,16 +47,23 @@ export default function CoursesLayout() {
     fetchUserProfile();
   }, []);
 
+  // Calculate proper header height including status bar
+  const headerHeight = Platform.OS === 'ios' ? 44 + insets.top : 56 + insets.top;
+
   return (
-    <Stack>
-      <Stack.Screen
-        name="index"
-        options={{
-          title: 'My Courses',
-          headerShown: true,
+    <>
+      {/* Status Bar Configuration */}
+      <StatusBar 
+        barStyle="light-content" 
+        backgroundColor="#007bff" 
+        translucent={false}
+      />
+      
+      <Stack
+        screenOptions={{
           headerStyle: { 
             backgroundColor: '#007bff',
-            height: 80,
+            height: headerHeight,
           },
           headerTintColor: '#fff',
           headerTitleStyle: { fontWeight: 'bold' },
@@ -66,62 +75,34 @@ export default function CoursesLayout() {
             </TouchableOpacity>
           ),
         }}
-      />
-      <Stack.Screen
-        name="[id]"
-        options={{
-          headerStyle: { 
-            backgroundColor: '#007bff',
-            height: 80,
-          },
-          headerTintColor: '#fff',
-          headerTitleStyle: { fontWeight: 'bold' },
-          headerRight: () => (
-            <TouchableOpacity
-              onPress={() => router.push('/settings')}
-            >
-              <HeaderRight initials={initials} profileImage={profileImage} />
-            </TouchableOpacity>
-          ),
-        }}
-      />
-      <Stack.Screen
-        name="materials/[materialId]"
-        options={{
-          headerStyle: { 
-            backgroundColor: '#007bff',
-            height: 80,
-          },
-          headerTintColor: '#fff',
-          headerTitleStyle: { fontWeight: 'bold' },
-          headerRight: () => (
-            <TouchableOpacity
-              onPress={() => router.push('/settings')}
-            >
-              <HeaderRight initials={initials} profileImage={profileImage} />
-            </TouchableOpacity>
-          ),
-        }}
-      />
-      <Stack.Screen
-        name="assessments/[assessmentId]"
-        options={{
-          headerStyle: { 
-            backgroundColor: '#007bff',
-            height: 80,
-          },
-          headerTintColor: '#fff',
-          headerTitleStyle: { fontWeight: 'bold' },
-          headerRight: () => (
-            <TouchableOpacity
-              onPress={() => router.push('/settings')}
-            >
-              <HeaderRight initials={initials} profileImage={profileImage} />
-            </TouchableOpacity>
-          ),
-        }}
-      />
-    </Stack>
+      >
+        <Stack.Screen
+          name="index"
+          options={{
+            title: 'My Courses',
+            headerShown: true,
+          }}
+        />
+        <Stack.Screen
+          name="[id]"
+          options={{
+            // Title will be set dynamically by the screen
+          }}
+        />
+        <Stack.Screen
+          name="materials/[materialId]"
+          options={{
+            // Title will be set dynamically by the screen
+          }}
+        />
+        <Stack.Screen
+          name="assessments/[assessmentId]"
+          options={{
+            // Title will be set dynamically by the screen
+          }}
+        />
+      </Stack>
+    </>
   );
 }
 

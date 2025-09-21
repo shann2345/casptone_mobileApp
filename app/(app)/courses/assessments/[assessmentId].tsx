@@ -58,6 +58,11 @@ interface LatestAssignmentSubmission {
   status: string | null;
 }
 
+interface SubmittedAssessment {
+  score: number | null;
+  status: string;
+}
+
 export default function AssessmentDetailsScreen() {
   const { id: courseId, assessmentId } = useLocalSearchParams();
   const router = useRouter();
@@ -65,6 +70,7 @@ export default function AssessmentDetailsScreen() {
   const [assessmentDetail, setAssessmentDetail] = useState<AssessmentDetail | null>(null);
   const [attemptStatus, setAttemptStatus] = useState<AttemptStatus | null>(null);
   const [latestAssignmentSubmission, setLatestAssignmentSubmission] = useState<LatestAssignmentSubmission | null>(null);
+  const [submittedAssessment, setSubmittedAssessment] = useState<SubmittedAssessment | null>(null);
   const [loading, setLoading] = useState(true);
   const [hasOfflineAttempt, setHasOfflineAttempt] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -571,6 +577,28 @@ export default function AssessmentDetailsScreen() {
     }
   }
 
+  const fetchSubmittedAssessment = async () => {
+    if (!netInfo?.isInternetReachable) {
+      console.log('⚠️ Offline: Cannot fetch submitted assessment.');
+      setSubmittedAssessment({ score: null, status: 'not_started' });
+      return;
+    }
+
+    try {
+      const response = await api.get(`/submitted-assessments/${assessmentId}`);
+      if (response.status === 200) {
+        setSubmittedAssessment(response.data.submitted_assessment);
+      }
+    } catch (error) {
+      console.error('Failed to fetch submitted assessment:', error);
+      setSubmittedAssessment({ score: null, status: 'not_started' });
+    }
+  };
+
+  useEffect(() => {
+    fetchSubmittedAssessment();
+  }, [assessmentId]);
+
   if (loading) {
     return (
       <View style={styles.container}>
@@ -665,13 +693,13 @@ export default function AssessmentDetailsScreen() {
           
           <View style={styles.detailsGrid}>
             {/* Points */}
-            <View style={styles.detailCard}>
+            {/* <View style={styles.detailCard}>
               <View style={styles.detailIconContainer}>
                 <Ionicons name="trophy" size={20} color="#f39c12" />
               </View>
               <Text style={styles.detailLabel}>Points</Text>
               <Text style={styles.detailValue}>{assessmentDetail.points}</Text>
-            </View>
+            </View> */}
 
             {/* Duration (for quizzes/exams) */}
             {isQuizOrExamType && (
@@ -919,6 +947,35 @@ export default function AssessmentDetailsScreen() {
             </View>
           )}
         </View>
+
+        {/* Submitted Assessment Score and Status */}
+        {submittedAssessment && (
+          <View style={styles.submittedAssessmentContainer}>
+            <Text style={styles.submittedAssessmentHeader}>Your Submission</Text>
+            {!netInfo?.isInternetReachable ? (
+              <Text style={styles.offlineSubmissionText}>
+                Submission data is not available offline. Please connect to the internet to view your submission details.
+              </Text>
+            ) : (
+              <>
+                <View style={styles.submittedAssessmentDetails}>
+                  <Ionicons name="star" size={20} color="#f39c12" style={styles.submittedAssessmentIcon} />
+                  <Text style={styles.submittedAssessmentLabel}>Score:</Text>
+                  <Text style={styles.submittedAssessmentValue}>
+                    {submittedAssessment.score !== null ? submittedAssessment.score : 'Not yet taken'}
+                  </Text>
+                </View>
+                <View style={styles.submittedAssessmentDetails}>
+                  <Ionicons name="checkmark-circle" size={20} color={submittedAssessment.status === 'graded' ? '#27ae60' : '#f39c12'} style={styles.submittedAssessmentIcon} />
+                  <Text style={styles.submittedAssessmentLabel}>Status:</Text>
+                  <Text style={[styles.submittedAssessmentValue, { color: submittedAssessment.status === 'graded' ? '#27ae60' : '#f39c12' }]}>
+                    {submittedAssessment.status === 'not_started' ? 'Not started' : submittedAssessment.status}
+                  </Text>
+                </View>
+              </>
+            )}
+          </View>
+        )}
       </ScrollView>
     </View>
   );
@@ -1306,5 +1363,44 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 5,
     fontStyle: 'italic',
+  },
+
+  // Submitted Assessment
+  submittedAssessmentContainer: {
+    backgroundColor: '#f1f8e9',
+    borderRadius: 15,
+    padding: 15,
+    marginTop: 20,
+  },
+  submittedAssessmentHeader: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#2c3e50',
+    marginBottom: 10,
+  },
+  submittedAssessmentDetails: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  submittedAssessmentLabel: {
+    fontSize: 14,
+    color: '#7f8c8d',
+    fontWeight: '500',
+  },
+  submittedAssessmentValue: {
+    fontSize: 14,
+    color: '#2c3e50',
+    fontWeight: 'bold',
+  },
+  submittedAssessmentIcon: {
+    marginRight: 8,
+  },
+  offlineSubmissionText: {
+    fontSize: 14,
+    color: '#7f8c8d',
+    fontStyle: 'italic',
+    textAlign: 'center',
+    marginTop: 10,
   },
 });
