@@ -484,20 +484,36 @@ export default function AttemptQuizScreen() {
           );
         }
       } else {
-        // ONLINE MODE - existing logic remains the same
+        // ONLINE MODE - only fetch if online
+        if (!netInfo?.isInternetReachable) {
+          setError('No internet connection. Please connect to the internet to load this quiz.');
+          setLoading(false);
+          return;
+        }
         console.log("Online: Fetching submitted quiz details from API.");
-        const response = await api.get(`/submitted-assessments/${id}`);
-        if (response.status === 200) {
-          const fetchedSubmittedAssessment = response.data.submitted_assessment;
-          setSubmittedAssessment(fetchedSubmittedAssessment);
-          initializeStudentAnswers(fetchedSubmittedAssessment.submitted_questions);
-          console.log("API Response for Submitted Quiz Details:", JSON.stringify(response.data, null, 2));
-        } else {
-          setError('Failed to fetch submitted quiz details.');
+        try {
+          const response = await api.get(`/submitted-assessments/${id}`);
+          if (response.status === 200) {
+            const fetchedSubmittedAssessment = response.data.submitted_assessment;
+            setSubmittedAssessment(fetchedSubmittedAssessment);
+            initializeStudentAnswers(fetchedSubmittedAssessment.submitted_questions);
+            console.log("API Response for Submitted Quiz Details:", JSON.stringify(response.data, null, 2));
+          } else {
+            setError('Failed to fetch submitted quiz details.');
+          }
+        } catch (err: any) {
+          // Only log error if online, otherwise suppress
+          if (netInfo?.isInternetReachable) {
+            console.error("Failed to fetch quiz data:", err.response?.data || err.message);
+          }
+          setError('Failed to load quiz data.');
         }
       }
     } catch (err: any) {
-      console.error("Failed to fetch quiz data:", err.response?.data || err.message);
+      // Only log error if online, otherwise suppress
+      if (netInfo?.isInternetReachable) {
+        console.error("Failed to fetch quiz data:", err.response?.data || err.message);
+      }
       setError('Failed to load quiz data.');
     } finally {
       setLoading(false);
@@ -558,14 +574,19 @@ export default function AttemptQuizScreen() {
         } else {
           payload.submitted_answer = answerData.answer as string;
         }
-
-        const response = await api.patch(`/submitted-questions/${submittedQuestionId}/answer`, payload);
-
-        if (response.status === 200) {
-          setStudentAnswers(prev => ({
-            ...prev,
-            [submittedQuestionId]: { ...prev[submittedQuestionId], isDirty: false }
-          }));
+        try {
+          const response = await api.patch(`/submitted-questions/${submittedQuestionId}/answer`, payload);
+          if (response.status === 200) {
+            setStudentAnswers(prev => ({
+              ...prev,
+              [submittedQuestionId]: { ...prev[submittedQuestionId], isDirty: false }
+            }));
+          }
+        } catch (err: any) {
+          // Only log error if online, otherwise suppress
+          if (netInfo?.isInternetReachable) {
+            console.error('Error saving answer:', err.response?.data || err);
+          }
         }
       } else {
         // OFFLINE MODE - Save answers to local database
@@ -583,7 +604,10 @@ export default function AttemptQuizScreen() {
         }
       }
     } catch (err: any) {
-      console.error('Error saving answer:', err.response?.data || err);
+      // Only log error if online, otherwise suppress
+      if (netInfo?.isInternetReachable) {
+        console.error('Error saving answer:', err.response?.data || err);
+      }
     } finally {
       setSavingAnswers(prev => {
         const newSet = new Set(prev);
@@ -816,38 +840,54 @@ export default function AttemptQuizScreen() {
           }
         }
       } else {
-        // ONLINE MODE - Clean up local data after successful submission
+        // ONLINE MODE - only submit if online
+        if (!netInfo?.isInternetReachable) {
+          Alert.alert('No Internet', 'Cannot submit quiz while offline. Please connect to the internet and try again.');
+          return;
+        }
         console.log(isAutoSubmission ? 'Auto-submitting quiz online...' : 'Submitting quiz online...');
-        const response = await api.post(`/submitted-assessments/${submittedAssessmentId}/finalize-quiz`);
-        
-        if (response.status === 200) {
-          // ✅ CLEAN UP LOCAL DATABASE AFTER SUCCESSFUL ONLINE SUBMISSION
-          if (userEmail && assessmentId) {
-            console.log('🧹 Cleaning up local database after successful online submission...');
-            try {
-              // Delete any existing offline attempt for this assessment
-              await deleteOfflineQuizAttempt(Number(assessmentId), userEmail);
-              console.log('✅ Local offline attempt data cleaned up successfully');
-            } catch (cleanupError) {
-              console.warn('⚠️ Failed to clean up local data, but online submission was successful:', cleanupError);
+        try {
+          const response = await api.post(`/submitted-assessments/${submittedAssessmentId}/finalize-quiz`);
+          if (response.status === 200) {
+            // ✅ CLEAN UP LOCAL DATABASE AFTER SUCCESSFUL ONLINE SUBMISSION
+            if (userEmail && assessmentId) {
+              console.log('🧹 Cleaning up local database after successful online submission...');
+              try {
+                // Delete any existing offline attempt for this assessment
+                await deleteOfflineQuizAttempt(Number(assessmentId), userEmail);
+                console.log('✅ Local offline attempt data cleaned up successfully');
+              } catch (cleanupError) {
+                console.warn('⚠️ Failed to clean up local data, but online submission was successful:', cleanupError);
+              }
+            }
+            
+            if (!isAutoSubmission) {
+              Alert.alert('Quiz Submitted!', 'Your quiz has been successfully submitted.', [
+                { text: 'OK', onPress: () => router.replace(`/courses/assessments/${assessmentId}`) }
+              ]);
+            }
+            
+            fetchQuizData(Number(submittedAssessmentId));
+          } else {
+            if (!isAutoSubmission) {
+              Alert.alert('Error', 'There was a problem submitting your quiz.');
             }
           }
-          
-          if (!isAutoSubmission) {
-            Alert.alert('Quiz Submitted!', 'Your quiz has been successfully submitted.', [
-              { text: 'OK', onPress: () => router.replace(`/courses/assessments/${assessmentId}`) }
-            ]);
+        } catch (error) {
+          // Only log error if online, otherwise suppress
+          if (netInfo?.isInternetReachable) {
+            console.error('Error submitting quiz:', error);
           }
-          
-          fetchQuizData(Number(submittedAssessmentId));
-        } else {
           if (!isAutoSubmission) {
-            Alert.alert('Error', 'There was a problem submitting your quiz.');
+            Alert.alert('Error', 'Failed to submit quiz. Please try again.');
           }
         }
       }
     } catch (error) {
-      console.error('Error submitting quiz:', error);
+      // Only log error if online, otherwise suppress
+      if (netInfo?.isInternetReachable) {
+        console.error('Error submitting quiz:', error);
+      }
       if (!isAutoSubmission) {
         Alert.alert('Error', 'Failed to submit quiz. Please try again.');
       }

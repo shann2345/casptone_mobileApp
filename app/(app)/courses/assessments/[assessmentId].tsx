@@ -80,145 +80,176 @@ export default function AssessmentDetailsScreen() {
   const navigation = useNavigation();
 
   const fetchAssessmentDetailsAndAttemptStatus = useCallback(async () => {
-  if (!assessmentId) return;
+    if (!assessmentId) return;
 
-  setLoading(true);
-  setError(null);
+    setLoading(true);
+    setError(null);
 
-  const user = await getUserData();
-  const userEmail = user?.email;
-  if (!userEmail) {
-    setError('User not logged in.');
-    setLoading(false);
-    return;
-  }
+    const user = await getUserData();
+    const userEmail = user?.email;
+    if (!userEmail) {
+      setError('User not logged in.');
+      setLoading(false);
+      return;
+    }
 
-  try {
-    if (netInfo?.isInternetReachable) {
-      // ONLINE MODE
-      console.log('✅ Online: Fetching assessment details from API.');
-      const assessmentResponse = await api.get(`/assessments/${assessmentId}`);
-      if (assessmentResponse.status === 200) {
-        console.log("API Response for Assessment Details:", JSON.stringify(assessmentResponse.data, null, 2));
-        const fetchedAssessment = assessmentResponse.data.assessment;
-        setAssessmentDetail(fetchedAssessment);
+    try {
+      if (netInfo?.isInternetReachable) {
+        // ONLINE MODE
+        console.log('✅ Online: Fetching assessment details from API.');
+        const assessmentResponse = await api.get(`/assessments/${assessmentId}`);
+        if (assessmentResponse.status === 200) {
+          console.log("API Response for Assessment Details:", JSON.stringify(assessmentResponse.data, null, 2));
+          const fetchedAssessment = assessmentResponse.data.assessment;
+          setAssessmentDetail(fetchedAssessment);
 
-        let newAttemptStatus: AttemptStatus | null = null;
-        let newLatestSubmission: LatestAssignmentSubmission | null = null;
+          let newAttemptStatus: AttemptStatus | null = null;
+          let newLatestSubmission: LatestAssignmentSubmission | null = null;
 
-        // Fetch attempt status and latest submission only if online
-        if (fetchedAssessment.type === 'quiz' || fetchedAssessment.type === 'exam') {
-          const attemptStatusResponse = await api.get(`/assessments/${assessmentId}/attempt-status`);
-          if (attemptStatusResponse.status === 200) {
-            newAttemptStatus = attemptStatusResponse.data;
-            setAttemptStatus(newAttemptStatus);
+          // Fetch attempt status and latest submission only if online
+          if (fetchedAssessment.type === 'quiz' || fetchedAssessment.type === 'exam') {
+            const attemptStatusResponse = await api.get(`/assessments/${assessmentId}/attempt-status`);
+            if (attemptStatusResponse.status === 200) {
+              newAttemptStatus = attemptStatusResponse.data;
+              setAttemptStatus(newAttemptStatus);
+            } else {
+              console.warn('Failed to fetch attempt status.');
+            }
           } else {
-            console.warn('Failed to fetch attempt status.');
+            setAttemptStatus(null);
           }
-        } else {
-          setAttemptStatus(null);
-        }
 
-        if (['assignment', 'activity', 'project'].includes(fetchedAssessment.type)) {
-          const assignmentSubmissionResponse = await api.get(`/assessments/${assessmentId}/latest-assignment-submission`);
-          if (assignmentSubmissionResponse.status === 200) {
-            newLatestSubmission = assignmentSubmissionResponse.data;
-            setLatestAssignmentSubmission(newLatestSubmission);
+          if (['assignment', 'activity', 'project'].includes(fetchedAssessment.type)) {
+            const assignmentSubmissionResponse = await api.get(`/assessments/${assessmentId}/latest-assignment-submission`);
+            if (assignmentSubmissionResponse.status === 200) {
+              newLatestSubmission = assignmentSubmissionResponse.data;
+              setLatestAssignmentSubmission(newLatestSubmission);
+            } else {
+              console.warn('Failed to fetch latest assignment submission.');
+            }
           } else {
-            console.warn('Failed to fetch latest assignment submission.');
+            setLatestAssignmentSubmission(null);
+            setSelectedFile(null);
           }
+          
+          // FIXED: Simplified courseId handling with proper validation
+          let validCourseId: number;
+          
+          // First try to get courseId from URL params
+          if (courseId) {
+            validCourseId = typeof courseId === 'string' ? parseInt(courseId, 10) : Number(courseId);
+          } else {
+            // If no courseId in params, get it from the fetched assessment
+            validCourseId = fetchedAssessment.course_id;
+          }
+
+          // Validate the courseId
+          if (!validCourseId || isNaN(validCourseId) || validCourseId <= 0) {
+            console.error('❌ Invalid courseId:', { 
+              fromParams: courseId, 
+              fromAssessment: fetchedAssessment.course_id, 
+              calculated: validCourseId 
+            });
+            setError('Invalid course information. Please navigate from the course page.');
+            setLoading(false);
+            return;
+          }
+
+          console.log('✅ Using valid courseId:', validCourseId);
+
+          // Save to database
+          await saveAssessmentsToDb([fetchedAssessment], validCourseId, userEmail);
+          await saveAssessmentDetailsToDb(
+            fetchedAssessment.id,
+            userEmail,
+            newAttemptStatus,
+            newLatestSubmission
+          );
+          
+          // Check if detailed data exists after saving
+          const needsDetails = await checkIfAssessmentNeedsDetails(fetchedAssessment.id, userEmail);
+          setHasDetailedData(!needsDetails);
+          
         } else {
-          setLatestAssignmentSubmission(null);
-          setSelectedFile(null);
-        }
-        
-        // FIXED: Simplified courseId handling with proper validation
-        let validCourseId: number;
-        
-        // First try to get courseId from URL params
-        if (courseId) {
-          validCourseId = typeof courseId === 'string' ? parseInt(courseId, 10) : Number(courseId);
-        } else {
-          // If no courseId in params, get it from the fetched assessment
-          validCourseId = fetchedAssessment.course_id;
+          setError('Failed to fetch assessment details.');
         }
 
-        // Validate the courseId
-        if (!validCourseId || isNaN(validCourseId) || validCourseId <= 0) {
-          console.error('❌ Invalid courseId:', { 
-            fromParams: courseId, 
-            fromAssessment: fetchedAssessment.course_id, 
-            calculated: validCourseId 
-          });
-          setError('Invalid course information. Please navigate from the course page.');
-          setLoading(false);
-          return;
-        }
-
-        console.log('✅ Using valid courseId:', validCourseId);
-
-        // Save to database
-        await saveAssessmentsToDb([fetchedAssessment], validCourseId, userEmail);
-        await saveAssessmentDetailsToDb(
-          fetchedAssessment.id,
-          userEmail,
-          newAttemptStatus,
-          newLatestSubmission
-        );
-        
-        // Check if detailed data exists after saving
-        const needsDetails = await checkIfAssessmentNeedsDetails(fetchedAssessment.id, userEmail);
-        setHasDetailedData(!needsDetails);
-        
-      } else {
-        setError('Failed to fetch assessment details.');
-      }
-
-      const offlineAttempt = await getOfflineQuizAttempt(parseInt(assessmentId as string), userEmail);
-      setHasOfflineAttempt(!!offlineAttempt);
-    } else {
-      // OFFLINE MODE
-      console.log('⚠️ Offline: Fetching assessment details from local DB.');
-      const offlineAssessment = await getAssessmentDetailsFromDb(assessmentId as string, userEmail);
-      const offlineAttempt = await getOfflineQuizAttempt(parseInt(assessmentId as string), userEmail);
-      
-      if (offlineAssessment) {
-        // Get completed attempts count from offline_quiz_attempts
-        const offlineAttemptCount = await getOfflineAttemptCount(parseInt(assessmentId as string), userEmail);
-
-        // Use only the completed attempts for attempts_made
-        const updatedAttemptStatus = {
-          ...offlineAssessment.attemptStatus,
-          attempts_made: offlineAttemptCount.attempts_made, // ← Use only completed attempts
-          attempts_remaining: offlineAttemptCount.attempts_remaining,
-          has_in_progress_attempt: !!offlineAttempt,
-          can_start_new_attempt: offlineAttemptCount.attempts_remaining === null || 
-                              offlineAttemptCount.attempts_remaining > 0
-        };
-
-        setAssessmentDetail(offlineAssessment);
-        setAttemptStatus(updatedAttemptStatus);
-        setLatestAssignmentSubmission(offlineAssessment.latestSubmission);
-        setHasDetailedData(true);
+        const offlineAttempt = await getOfflineQuizAttempt(parseInt(assessmentId as string), userEmail);
         setHasOfflineAttempt(!!offlineAttempt);
       } else {
-        setError('Assessment details not available offline.');
-        setHasDetailedData(false);
+        // OFFLINE MODE
+        console.log('⚠️ Offline: Fetching assessment details from local DB.');
+        const offlineAssessment = await getAssessmentDetailsFromDb(assessmentId as string, userEmail);
+        const offlineAttempt = await getOfflineQuizAttempt(parseInt(assessmentId as string), userEmail);
+        
+        if (offlineAssessment) {
+          // Get completed attempts count from offline_quiz_attempts
+          const offlineAttemptCount = await getOfflineAttemptCount(parseInt(assessmentId as string), userEmail);
+
+          // Use only the completed attempts for attempts_made
+          const updatedAttemptStatus = {
+            ...offlineAssessment.attemptStatus,
+            attempts_made: offlineAttemptCount.attempts_made, // ← Use only completed attempts
+            attempts_remaining: offlineAttemptCount.attempts_remaining,
+            has_in_progress_attempt: !!offlineAttempt,
+            can_start_new_attempt: offlineAttemptCount.attempts_remaining === null || 
+                                offlineAttemptCount.attempts_remaining > 0
+          };
+
+          setAssessmentDetail(offlineAssessment);
+          setAttemptStatus(updatedAttemptStatus);
+          setLatestAssignmentSubmission(offlineAssessment.latestSubmission);
+          setHasDetailedData(true);
+          setHasOfflineAttempt(!!offlineAttempt);
+        } else {
+          setError('Assessment details not available offline.');
+          setHasDetailedData(false);
+        }
       }
+    } catch (err: any) {
+      console.error('Failed to fetch assessment details/status/submission:', err.response?.data || err.message);
+      setError('Network error or unable to load assessment details/status/submission.');
+      if (!netInfo?.isInternetReachable) {
+        Alert.alert('Error', 'Failed to load assessment details from local storage.');
+      } else {
+        Alert.alert('Error', 'Failed to fetch assessment details/status/submission.');
+      }
+    } finally {
+      setLoading(false);
     }
-  } catch (err: any) {
-    console.error('Failed to fetch assessment details/status/submission:', err.response?.data || err.message);
-    setError('Network error or unable to load assessment details/status/submission.');
-    if (!netInfo?.isInternetReachable) {
-      Alert.alert('Error', 'Failed to load assessment details from local storage.');
-    } else {
-      Alert.alert('Error', 'Failed to fetch assessment details/status/submission.');
+  }, [assessmentId, courseId, netInfo?.isInternetReachable]);
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'completed': return 'checkmark-circle';
+      case 'graded': return 'checkmark-done-circle';
+      case 'in_progress': return 'time';
+      case 'submitted': return 'cloud-done';
+      default: return 'help-circle';
     }
-  } finally {
-    setLoading(false);
-  }
-}, [assessmentId, courseId, netInfo?.isInternetReachable]);
-  // ✅ CRITICAL: This will refresh data when returning from quiz attempt
+  };
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'completed': return '#27ae60';
+      case 'graded': return '#2ecc71';
+      case 'in_progress': return '#f39c12';
+      case 'submitted': return '#3498db';
+      default: return '#7f8c8d';
+    }
+  };
+
+  const getStatusText = (status: string) => {
+    switch (status) {
+      case 'completed': return 'Completed';
+      case 'graded': return 'Graded';
+      case 'in_progress': return 'In Progress';
+      case 'submitted': return 'Submitted';
+      case 'not_started': return 'Not yet taken';
+      default: return 'Unknown';
+    }
+  };
+
   useFocusEffect(
     useCallback(() => {
       fetchAssessmentDetailsAndAttemptStatus();
@@ -290,7 +321,7 @@ export default function AssessmentDetailsScreen() {
   const handlePickDocument = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: '*/*',
+        type: '*/*', // Allow all file types
         copyToCacheDirectory: true,
       });
 
@@ -314,7 +345,7 @@ export default function AssessmentDetailsScreen() {
 
   const handleDownloadAssessmentFile = async (fileUrl: string) => {
     try {
-      await Linking.openURL(fileUrl);
+      await Linking.openURL(fileUrl); // Open any file type
     } catch (error) {
       console.error('Error opening assessment file:', error);
       Alert.alert('Error', 'Could not open the assessment file.');
@@ -584,20 +615,42 @@ export default function AssessmentDetailsScreen() {
       return;
     }
 
+    if (!assessmentId) {
+      setSubmittedAssessment({ score: null, status: 'not_started' });
+      return;
+    }
+
     try {
-      const response = await api.get(`/submitted-assessments/${assessmentId}`);
+      const user = await getUserData();
+      if (!user?.id) {
+        setSubmittedAssessment({ score: null, status: 'not_started' });
+        return;
+      }
+
+      // Use the correct endpoint that filters by student_id and assessment_id
+      const response = await api.get(`/assessments/${assessmentId}/submitted-assessment`);
+      
       if (response.status === 200) {
         setSubmittedAssessment(response.data.submitted_assessment);
+      } else {
+        setSubmittedAssessment({ score: null, status: 'not_started' });
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to fetch submitted assessment:', error);
-      setSubmittedAssessment({ score: null, status: 'not_started' });
+      // If it's a 404, that means no submission exists
+      if (error.response?.status === 404) {
+        setSubmittedAssessment({ score: null, status: 'not_started' });
+      } else {
+        setSubmittedAssessment({ score: null, status: 'not_started' });
+      }
     }
   };
 
   useEffect(() => {
-    fetchSubmittedAssessment();
-  }, [assessmentId]);
+    if (assessmentDetail) {
+      fetchSubmittedAssessment();
+    }
+  }, [assessmentId, assessmentDetail, netInfo?.isInternetReachable]);
 
   if (loading) {
     return (
@@ -949,30 +1002,73 @@ export default function AssessmentDetailsScreen() {
         </View>
 
         {/* Submitted Assessment Score and Status */}
-        {submittedAssessment && (
-          <View style={styles.submittedAssessmentContainer}>
-            <Text style={styles.submittedAssessmentHeader}>Your Submission</Text>
+        {assessmentDetail && (
+          <View style={styles.sectionContainer}>
+            <Text style={styles.sectionHeader}>Your Submission</Text>
             {!netInfo?.isInternetReachable ? (
-              <Text style={styles.offlineSubmissionText}>
-                Submission data is not available offline. Please connect to the internet to view your submission details.
-              </Text>
+              <View style={styles.offlineSubmissionContainer}>
+                <Ionicons name="cloud-offline" size={24} color="#7f8c8d" />
+                <Text style={styles.offlineSubmissionText}>
+                  Submission data is not available offline. Please connect to the internet to view your submission details.
+                </Text>
+              </View>
             ) : (
-              <>
-                <View style={styles.submittedAssessmentDetails}>
-                  <Ionicons name="star" size={20} color="#f39c12" style={styles.submittedAssessmentIcon} />
-                  <Text style={styles.submittedAssessmentLabel}>Score:</Text>
-                  <Text style={styles.submittedAssessmentValue}>
-                    {submittedAssessment.score !== null ? submittedAssessment.score : 'Not yet taken'}
-                  </Text>
-                </View>
-                <View style={styles.submittedAssessmentDetails}>
-                  <Ionicons name="checkmark-circle" size={20} color={submittedAssessment.status === 'graded' ? '#27ae60' : '#f39c12'} style={styles.submittedAssessmentIcon} />
-                  <Text style={styles.submittedAssessmentLabel}>Status:</Text>
-                  <Text style={[styles.submittedAssessmentValue, { color: submittedAssessment.status === 'graded' ? '#27ae60' : '#f39c12' }]}>
-                    {submittedAssessment.status === 'not_started' ? 'Not started' : submittedAssessment.status}
-                  </Text>
-                </View>
-              </>
+              <View style={styles.submissionStatusContainer}>
+                {submittedAssessment ? (
+                  <>
+                    <View style={styles.submissionStatusItem}>
+                      <View style={styles.submissionIconContainer}>
+                        <Ionicons 
+                          name="star" 
+                          size={20} 
+                          color={submittedAssessment.score !== null ? "#f39c12" : "#7f8c8d"} 
+                        />
+                      </View>
+                      <Text style={styles.submissionLabel}>Score:</Text>
+                      <Text style={[
+                        styles.submissionValue,
+                        { color: submittedAssessment.score !== null ? "#2c3e50" : "#7f8c8d" }
+                      ]}>
+                        {submittedAssessment.score !== null ? `${submittedAssessment.score} %` : 'Not yet taken'}
+                      </Text>
+                    </View>
+                    
+                    <View style={styles.submissionStatusItem}>
+                      <View style={styles.submissionIconContainer}>
+                        <Ionicons 
+                          name={getStatusIcon(submittedAssessment.status)} 
+                          size={20} 
+                          color={getStatusColor(submittedAssessment.status)} 
+                        />
+                      </View>
+                      <Text style={styles.submissionLabel}>Status:</Text>
+                      <Text style={[
+                        styles.submissionValue, 
+                        { color: getStatusColor(submittedAssessment.status) }
+                      ]}>
+                        {getStatusText(submittedAssessment.status)}
+                      </Text>
+                    </View>
+
+                    {/* Show additional info for completed assessments */}
+                    {submittedAssessment.status === 'completed' || submittedAssessment.status === 'graded' ? (
+                      <View style={styles.completionInfoContainer}>
+                        <Text style={styles.completionInfoText}>
+                          Assessment completed. 
+                          {submittedAssessment.status === 'graded' 
+                            ? ' Results have been graded.' 
+                            : ' Awaiting grading.'}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </>
+                ) : (
+                  <View style={styles.loadingSubmissionContainer}>
+                    <ActivityIndicator size="small" color="#7f8c8d" />
+                    <Text style={styles.loadingSubmissionText}>Loading submission status...</Text>
+                  </View>
+                )}
+              </View>
             )}
           </View>
         )}
@@ -1402,5 +1498,57 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     textAlign: 'center',
     marginTop: 10,
+  },
+  submissionStatusContainer: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 15,
+    padding: 15,
+  },
+  submissionStatusItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  submissionLabel: {
+    fontSize: 14,
+    color: '#7f8c8d',
+    fontWeight: '500',
+    minWidth: 60,
+  },
+  submissionValue: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    flex: 1,
+    textAlign: 'right',
+  },
+  completionInfoContainer: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#e9ecef',
+  },
+  completionInfoText: {
+    fontSize: 13,
+    color: '#6c757d',
+    fontStyle: 'italic',
+    textAlign: 'center',
+  },
+  offlineSubmissionContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f8f9fa',
+    borderRadius: 15,
+    padding: 15,
+  },
+  loadingSubmissionContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 20,
+  },
+  loadingSubmissionText: {
+    fontSize: 14,
+    color: '#7f8c8d',
+    marginLeft: 8,
   },
 });

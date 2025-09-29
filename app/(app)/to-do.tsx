@@ -354,35 +354,27 @@ export default function TodoScreen() {
     setIsLoading(false);
   };
 
-  // FIXED: Updated navigation to follow proper course hierarchy
   const handleItemPress = (item: TodoItem) => {
-    console.log('Navigating to assessment via course hierarchy:', {
+    console.log('Navigating to assessment via course hierarchy with auto-scroll:', {
       courseId: item.course_id,
       assessmentId: item.assessment_id,
       title: item.title,
-      courseName: item.course_name
+      courseName: item.course_name,
+      status: item.status
     });
 
     // Step 1: Navigate to the courses tab first
-    // This ensures the courses navigation stack is properly set up
     router.push('/courses');
 
-    // Step 2: After a brief delay, navigate to the specific course
-    // This allows the courses tab to load first
+    // Step 2: Navigate to the specific course with assessment ID parameter for auto-scrolling
     setTimeout(() => {
-      router.push(`/courses/${item.course_id}`);
-      
-      // Step 3: After another brief delay, navigate to the assessment
-      // FIXED: Use the correct assessment path structure
-      setTimeout(() => {
-        router.push({
-          pathname: '/courses/assessments/[assessmentId]',
-          params: {
-            id: item.course_id.toString(),
-            assessmentId: item.assessment_id.toString(),
-          },
-        });
-      }, 100);
+      router.push({
+        pathname: `/courses/${item.course_id}`,
+        params: {
+          scrollToAssessment: item.assessment_id.toString(), // Pass the assessment ID
+          highlightAssessment: 'true' // Flag to enable highlighting
+        }
+      });
     }, 100);
   };
 

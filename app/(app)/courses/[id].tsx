@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -88,7 +88,7 @@ interface CourseDetail {
 }
 
 export default function CourseDetailsScreen() {
-  const { id: courseId } = useLocalSearchParams(); 
+  const { id: courseId, scrollToAssessment, highlightAssessment } = useLocalSearchParams<{ id: string; scrollToAssessment?: string; highlightAssessment?: string; }>(); 
   const [courseDetail, setCourseDetail] = useState<CourseDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
@@ -100,6 +100,45 @@ export default function CourseDetailsScreen() {
   const [serverTime, setServerTime] = useState<Date | null>(null);
   const [timeManipulationDetected, setTimeManipulationDetected] = useState<boolean>(false);
   const [isRefreshing, setIsRefreshing] = useState(false); 
+  const [highlightedAssessmentId, setHighlightedAssessmentId] = useState<number | null>(null);
+  const sectionListRef = useRef<SectionList<CourseItem>>(null);
+
+  useEffect(() => {
+    if (highlightAssessment && scrollToAssessment && courseDetail?.sorted_content) {
+      const assessmentIdToFind = Number(scrollToAssessment);
+
+      // Find the item index in the main list
+      const itemIndex = courseDetail.sorted_content.findIndex(item => {
+        if (item.type === 'assessment' && item.id === assessmentIdToFind) {
+          return true; // It's a standalone assessment
+        }
+        if (item.type === 'topic') {
+          // Check if the assessment is nested inside this topic
+          return item.assessments.some(a => a.id === assessmentIdToFind);
+        }
+        return false;
+      });
+
+      if (itemIndex !== -1) {
+        console.log(`🎯 Found assessment ${assessmentIdToFind} at index ${itemIndex}. Highlighting and scrolling...`);
+        
+        // Set the highlight state. It will now remain in this state.
+        setHighlightedAssessmentId(assessmentIdToFind);
+
+        // Scroll to the location
+        sectionListRef.current?.scrollToLocation({
+          sectionIndex: 0, 
+          itemIndex: itemIndex,
+          viewPosition: 0.3, 
+          animated: true,
+        });
+
+        // The timer that cleared the highlight has been removed.
+      } else {
+          console.log(`⚠️ Could not find assessment with ID ${assessmentIdToFind} to highlight.`);
+      }
+    }
+  }, [courseDetail, scrollToAssessment, highlightAssessment]);
 
   const formatDate = (dateString?: string) => {
     if (!dateString) return 'N/A';
@@ -540,6 +579,7 @@ export default function CourseDetailsScreen() {
               {topic.assessments.map(assessment => {
                 const available = isAvailable(assessment);
                 const disabled = !available || timeManipulationDetected;
+                const isHighlighted = highlightedAssessmentId === assessment.id;
 
                 return (
                   <TouchableOpacity
@@ -547,7 +587,8 @@ export default function CourseDetailsScreen() {
                     style={[
                       styles.itemCardNested,
                       !available && styles.unavailableCard,
-                      timeManipulationDetected && styles.disabledCard
+                      timeManipulationDetected && styles.disabledCard,
+                      isHighlighted && styles.highlightedCardNested,
                     ]}
                     onPress={() => {
                       if (timeManipulationDetected) {
@@ -676,13 +717,15 @@ export default function CourseDetailsScreen() {
       const assessment = item as Assessment;
       const available = isAvailable(assessment);
       const disabled = !available || timeManipulationDetected;
+      const isHighlighted = highlightedAssessmentId === assessment.id;
 
       return (
         <TouchableOpacity
           style={[
             styles.itemCard,
             !available && styles.unavailableCard,
-            timeManipulationDetected && styles.disabledCard
+            timeManipulationDetected && styles.disabledCard,
+            isHighlighted && styles.highlightedCard
           ]}
           onPress={() => {
             if (timeManipulationDetected) {
@@ -753,6 +796,7 @@ export default function CourseDetailsScreen() {
       <Stack.Screen options={{ title: courseDetail.title }} />
       
       <SectionList
+        ref={sectionListRef}
         sections={sectionsData}
         keyExtractor={(item, index) => `${item.type}-${item.id}-${index}`}
         renderItem={renderItem}
@@ -1042,6 +1086,26 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 8,
     elevation: 4,
+    transition: 'all 0.3s ease-in-out',
+  },
+  highlightedCard: {
+    borderColor: '#7979f1ff',
+    borderWidth: 2.5,
+    shadowColor: '#7979f1ff',
+    shadowOpacity: 0.6,
+    shadowRadius: 10,
+    elevation: 12,
+    transform: [{ scale: 1.02 }],
+  },
+  highlightedCardNested: {
+    borderColor: '#7979f1ff',
+    borderWidth: 2,
+    backgroundColor: '#f0f0ff',
+    transform: [{ scale: 1.02 }],
+    shadowColor: '#7979f1ff',
+    shadowOpacity: 0.4,
+    shadowRadius: 5,
+    elevation: 6,
   },
   disabledCard: {
     backgroundColor: '#f5f5f5',
@@ -1204,6 +1268,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 4,
     elevation: 2,
+    transition: 'all 0.3s ease-in-out',
   },
 
   sectionListContent: {

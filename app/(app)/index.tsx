@@ -36,6 +36,7 @@ interface Course {
   course_code: string;
   description: string;
   credits: number;
+  status: string; // Added status field
   program: {
     id: number;
     name: string;
@@ -44,7 +45,6 @@ interface Course {
     id: number;
     name: string;
   };
-  status: string;
 }
 
 interface EnrolledCourse extends Course {

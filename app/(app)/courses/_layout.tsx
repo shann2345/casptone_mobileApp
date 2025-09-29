@@ -67,13 +67,7 @@ export default function CoursesLayout() {
           },
           headerTintColor: '#fff',
           headerTitleStyle: { fontWeight: 'bold' },
-          headerRight: () => (
-            <TouchableOpacity
-              onPress={() => router.push('/settings')}
-            >
-              <HeaderRight initials={initials} profileImage={profileImage} />
-            </TouchableOpacity>
-          ),
+
         }}
       >
         <Stack.Screen
@@ -81,6 +75,13 @@ export default function CoursesLayout() {
           options={{
             title: 'My Courses',
             headerShown: true,
+            headerRight: () => (
+            <TouchableOpacity
+              onPress={() => router.push('/settings')}
+            >
+              <HeaderRight initials={initials} profileImage={profileImage} />
+            </TouchableOpacity>
+          ),
           }}
         />
         <Stack.Screen
