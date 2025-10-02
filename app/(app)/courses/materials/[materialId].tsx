@@ -45,6 +45,9 @@ const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 export default function MaterialDetailsScreen() {
   const { id: courseId, materialId } = useLocalSearchParams();
   const { isConnected, netInfo } = useNetworkStatus();
+  
+  // Import Linking for opening URLs
+  const { Linking } = require('react-native');
   const [materialDetail, setMaterialDetail] = useState<MaterialDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -254,6 +257,20 @@ export default function MaterialDetailsScreen() {
 
 
   // FIXED: Enhanced download function with proper progress tracking
+  const handleOpenLink = async (url: string) => {
+    try {
+      const supported = await Linking.canOpenURL(url);
+      if (supported) {
+        await Linking.openURL(url);
+      } else {
+        Alert.alert('Error', 'Cannot open this link. Please check the URL format.');
+      }
+    } catch (error) {
+      console.error('Error opening link:', error);
+      Alert.alert('Error', 'Failed to open the link. Please try again.');
+    }
+  };
+
   const handleDownload = async () => {
     if (!materialDetail?.file_path || !materialDetail?.id) {
       Alert.alert('No File', 'This material does not have an attached file.');
@@ -1054,39 +1071,41 @@ export default function MaterialDetailsScreen() {
             <Text style={styles.materialDescription}>{materialDetail.description}</Text>
           )}
           
-          {/* Action Buttons */}
-          <View style={styles.actionButtonsContainer}>
-            {!downloadedFileUri && !isDownloading && (
-              <TouchableOpacity 
-                style={styles.headerActionButton}
-                onPress={handleDownload}
-                disabled={!netInfo?.isInternetReachable}
-              >
-                <Ionicons name="download" size={20} color="#fff" />
-                <Text style={styles.headerActionButtonText}>Download</Text>
-              </TouchableOpacity>
-            )}
-            
-            {downloadedFileUri && (
-              <TouchableOpacity 
-                style={[styles.headerActionButton, styles.downloadedButton]}
-                onPress={handleShare}
-              >
-                <Ionicons name="checkmark-circle" size={20} color="#fff" />
-                <Text style={styles.headerActionButtonText}>Downloaded</Text>
-              </TouchableOpacity>
-            )}
-            
-            {netInfo?.isInternetReachable && (
-              <TouchableOpacity 
-                style={styles.headerActionButton}
-                onPress={handleViewOnline}
-              >
-                <Ionicons name="open" size={20} color="#fff" />
-                <Text style={styles.headerActionButtonText}>View Online</Text>
-              </TouchableOpacity>
-            )}
-          </View>
+          {/* Action Buttons - Only show for non-link materials */}
+          {materialDetail.material_type !== 'link' && (
+            <View style={styles.actionButtonsContainer}>
+              {!downloadedFileUri && !isDownloading && (
+                <TouchableOpacity 
+                  style={styles.headerActionButton}
+                  onPress={handleDownload}
+                  disabled={!netInfo?.isInternetReachable}
+                >
+                  <Ionicons name="download" size={20} color="#fff" />
+                  <Text style={styles.headerActionButtonText}>Download</Text>
+                </TouchableOpacity>
+              )}
+              
+              {downloadedFileUri && (
+                <TouchableOpacity 
+                  style={[styles.headerActionButton, styles.downloadedButton]}
+                  onPress={handleShare}
+                >
+                  <Ionicons name="checkmark-circle" size={20} color="#fff" />
+                  <Text style={styles.headerActionButtonText}>Downloaded</Text>
+                </TouchableOpacity>
+              )}
+              
+              {netInfo?.isInternetReachable && (
+                <TouchableOpacity 
+                  style={styles.headerActionButton}
+                  onPress={handleViewOnline}
+                >
+                  <Ionicons name="open" size={20} color="#fff" />
+                  <Text style={styles.headerActionButtonText}>View Online</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
         </LinearGradient>
 
         {/* Content Section */}
@@ -1097,8 +1116,33 @@ export default function MaterialDetailsScreen() {
           </View>
         )}
 
-        {/* File Viewer */}
-        {materialDetail.file_path && renderInlineViewer()}
+        {/* Link Content Section - Show clickable link for link-type materials */}
+        {materialDetail.material_type === 'link' && materialDetail.file_path && (
+          <View style={styles.contentSection}>
+            <Text style={styles.sectionHeader}>External Link</Text>
+            <TouchableOpacity 
+              style={styles.linkClickableContainer}
+              onPress={() => materialDetail.file_path && handleOpenLink(materialDetail.file_path)}
+              activeOpacity={0.7}
+            >
+              <View style={styles.linkContentWrapper}>
+                <View style={styles.linkIconWrapper}>
+                  <Ionicons name="link" size={24} color="#4285f4" />
+                </View>
+                <View style={styles.linkTextContainer}>
+                  <Text style={styles.linkUrlText} numberOfLines={2}>
+                    {materialDetail.file_path}
+                  </Text>
+                  <Text style={styles.linkActionText}>Tap to open in browser</Text>
+                </View>
+                <Ionicons name="open-outline" size={20} color="#4285f4" />
+              </View>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* File Viewer - Only show for non-link materials */}
+        {materialDetail.file_path && materialDetail.material_type !== 'link' && renderInlineViewer()}
 
         {/* Details Section */}
         <View style={styles.detailsSection}>
@@ -1624,5 +1668,44 @@ const styles = StyleSheet.create({
   detailLabel: {
     fontWeight: '600',
     color: '#202124',
+  },
+  
+  // Link styles for external links
+  linkClickableContainer: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#4285f4',
+    marginTop: 8,
+    overflow: 'hidden',
+  },
+  linkContentWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+  },
+  linkIconWrapper: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#e3f2fd',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  linkTextContainer: {
+    flex: 1,
+    marginRight: 12,
+  },
+  linkUrlText: {
+    fontSize: 16,
+    color: '#4285f4',
+    fontWeight: '500',
+    marginBottom: 4,
+  },
+  linkActionText: {
+    fontSize: 12,
+    color: '#5f6368',
+    fontStyle: 'italic',
   },
 });

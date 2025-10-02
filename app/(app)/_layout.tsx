@@ -9,6 +9,7 @@ import { API_BASE_URL, getAuthorizationHeader, getProfile, getUserData } from '.
 
 export default function AppLayout() {
   const router = useRouter();
+  const { isConnected, netInfo } = useNetworkStatus();
   const [initials, setInitials] = useState<string>('');
   const [profileImage, setProfileImage] = useState<string | null>(null);
   const [notifications, setNotifications] = useState<any[]>([]);
@@ -18,20 +19,22 @@ export default function AppLayout() {
   useEffect(() => {
     const fetchUserProfile = async () => {
       try {
-        // Try to get full profile first (includes profile_image)
-        try {
-          const profileData = await getProfile();
-          if (profileData && profileData.name) {
-            const firstLetter = profileData.name.charAt(0).toUpperCase();
-            setInitials(firstLetter);
-            setProfileImage(profileData.profile_image);
-            return;
+        // Only fetch profile if internet is reachable
+        if (netInfo?.isInternetReachable) {
+          try {
+            const profileData = await getProfile();
+            if (profileData && profileData.name) {
+              const firstLetter = profileData.name.charAt(0).toUpperCase();
+              setInitials(firstLetter);
+              setProfileImage(profileData.profile_image);
+              return;
+            }
+          } catch (profileError) {
+            console.log('Profile fetch failed, falling back to user data:', profileError);
           }
-        } catch (profileError) {
-          console.log('Profile fetch failed, falling back to user data:', profileError);
         }
 
-        // Fallback to stored user data if profile fetch fails
+        // Fallback to stored user data
         const userData = await getUserData();
         if (userData && userData.name) {
           const firstLetter = userData.name.charAt(0).toUpperCase();
@@ -46,18 +49,16 @@ export default function AppLayout() {
     };
 
     fetchUserProfile();
-    loadNotifications();
-    
-    // Refresh notifications every 30 seconds
-    const notificationInterval = setInterval(loadNotifications, 30000);
-    
-    return () => {
-      clearInterval(notificationInterval);
-    };
-  }, []);
+  }, [netInfo?.isInternetReachable]);
 
   const loadNotifications = async () => {
     try {
+      // Check internet reachability before making API calls
+      if (!netInfo?.isInternetReachable) {
+        console.log('📵 No internet connection - skipping notification fetch');
+        return;
+      }
+
       const userData = await getUserData();
       if (!userData?.email) {
         console.log('No user data for notifications');
@@ -66,9 +67,10 @@ export default function AppLayout() {
 
       console.log('🔔 Loading notifications from student endpoint...');
 
+      const authHeader = await getAuthorizationHeader();
       const response = await fetch(`${API_BASE_URL}/student/notifications`, {
         headers: {
-          'Authorization': await getAuthorizationHeader(),
+          'Authorization': String(authHeader || ''),
           'Accept': 'application/json',
         },
       });
@@ -80,7 +82,7 @@ export default function AppLayout() {
         setNotifications(data.notifications || []);
         
         // Calculate unread count based on actual unread notifications
-        const unreadNotifications = (data.notifications || []).filter(n => !n.read);
+        const unreadNotifications = (data.notifications || []).filter((n: any) => !n.read);
         setUnreadCount(unreadNotifications.length);
       } else {
         console.error('Failed to fetch notifications:', response.status);
@@ -106,40 +108,78 @@ export default function AppLayout() {
   };
 
   const formatDate = (dateInput: string | Date): string => {
-  // Guard against null or undefined input
-  if (!dateInput) {
-    return 'Date unavailable';
-  }
+    // Guard against null or undefined input
+    if (!dateInput) {
+      return 'Date unavailable';
+    }
 
-  // Create a new Date object from the input string
-  const date = new Date(dateInput);
+    // Create a new Date object from the input string
+    const date = new Date(dateInput);
 
-  // Check if the created date is valid
-  if (isNaN(date.getTime())) {
-    console.warn('Received an invalid date string:', dateInput);
-    return 'Invalid date';
-  }
+    // Check if the created date is valid
+    if (isNaN(date.getTime())) {
+      console.warn('Received an invalid date string:', dateInput);
+      return 'Invalid date';
+    }
 
-  const now = new Date();
-  const diffTime = Math.abs(now.getTime() - date.getTime());
-  const diffMinutes = Math.floor(diffTime / (1000 * 60));
-  const diffHours = Math.floor(diffTime / (1000 * 60 * 60));
-  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-  
-  if (diffMinutes < 1) {
-    return 'Just now';
-  } else if (diffMinutes < 60) {
-    return `${diffMinutes} minute${diffMinutes > 1 ? 's' : ''} ago`;
-  } else if (diffHours < 24) {
-    return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
-  } else if (diffDays === 1) {
-    return 'Yesterday';
-  } else if (diffDays < 7) {
-    return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
-  } else {
-    return date.toLocaleDateString();
-  }
-};
+    const now = new Date();
+    const diffTime = Math.abs(now.getTime() - date.getTime());
+    const diffMinutes = Math.floor(diffTime / (1000 * 60));
+    const diffHours = Math.floor(diffTime / (1000 * 60 * 60));
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+    
+    if (diffMinutes < 1) {
+      return 'Just now';
+    } else if (diffMinutes < 60) {
+      return `${diffMinutes} minute${diffMinutes > 1 ? 's' : ''} ago`;
+    } else if (diffHours < 24) {
+      return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+    } else if (diffDays === 1) {
+      return 'Yesterday';
+    } else if (diffDays < 7) {
+      return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
+    } else {
+      return date.toLocaleDateString();
+    }
+  };
+
+  // Separate useEffect for notifications that depends on internet connectivity
+  useEffect(() => {
+    let notificationInterval: ReturnType<typeof setInterval> | null = null;
+
+    const startNotificationInterval = () => {
+      // Load notifications immediately
+      loadNotifications();
+      
+      // Set up interval only if online
+      if (netInfo?.isInternetReachable) {
+        notificationInterval = setInterval(() => {
+          // Double-check connectivity before each interval call
+          if (netInfo?.isInternetReachable) {
+            loadNotifications();
+          }
+        }, 30000);
+      }
+    };
+
+    if (netInfo?.isInternetReachable) {
+      startNotificationInterval();
+    } else {
+      // Clear any existing interval when going offline
+      if (notificationInterval) {
+        clearInterval(notificationInterval);
+        notificationInterval = null;
+      }
+      console.log('📵 Offline mode - notification interval disabled');
+    }
+
+    return () => {
+      if (notificationInterval) {
+        clearInterval(notificationInterval);
+      }
+    };
+  }, [netInfo?.isInternetReachable]);
+
 
   const markAsRead = async (id: string) => {
     try {
@@ -149,11 +189,18 @@ export default function AppLayout() {
       );
       setUnreadCount((prev) => Math.max(prev - 1, 0));
 
+      // Only persist to server if internet is reachable
+      if (!netInfo?.isInternetReachable) {
+        console.log('📵 No internet connection - marking as read locally only');
+        return;
+      }
+
       // Persist the read status on the server
+      const authHeader = await getAuthorizationHeader();
       const response = await fetch(`${API_BASE_URL}/student/mark-notification-as-read`, {
         method: 'POST',
         headers: {
-          'Authorization': await getAuthorizationHeader(),
+          'Authorization': authHeader || '',
           'Accept': 'application/json',
           'Content-Type': 'application/json',
         },
@@ -184,12 +231,19 @@ export default function AppLayout() {
       setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
       setUnreadCount(0);
 
+      // Only persist to server if internet is reachable
+      if (!netInfo?.isInternetReachable) {
+        console.log('📵 No internet connection - marking all as read locally only');
+        return;
+      }
+
       // Persist the read status on the server
       const notificationIds = unreadNotifications.map((n) => n.id);
+      const authHeader = await getAuthorizationHeader();
       const response = await fetch(`${API_BASE_URL}/student/mark-all-notifications-as-read`, {
         method: 'POST',
         headers: {
-          'Authorization': await getAuthorizationHeader(),
+          'Authorization': authHeader || '',
           'Accept': 'application/json',
           'Content-Type': 'application/json',
         },
@@ -252,8 +306,9 @@ export default function AppLayout() {
                 <HeaderRight
                   initials={initials}
                   profileImage={profileImage}
-                  toggleModal={toggleModal}
+                  toggleModal={netInfo?.isInternetReachable ? toggleModal : () => console.log('📵 Notifications disabled - no internet connection')}
                   unreadCount={unreadCount}
+                  isInternetReachable={netInfo?.isInternetReachable}
                 />
               </TouchableOpacity>
             ),
@@ -282,8 +337,9 @@ export default function AppLayout() {
                 <HeaderRight
                   initials={initials}
                   profileImage={profileImage}
-                  toggleModal={toggleModal}
+                  toggleModal={netInfo?.isInternetReachable ? toggleModal : () => console.log('📵 Notifications disabled - no internet connection')}
                   unreadCount={unreadCount}
+                  isInternetReachable={netInfo?.isInternetReachable}
                 />
               </TouchableOpacity>
             ),
@@ -378,20 +434,30 @@ const HeaderRight = ({
   profileImage,
   toggleModal,
   unreadCount,
+  isInternetReachable,
 }: {
   initials: string;
   profileImage: string | null;
   toggleModal: () => void;
   unreadCount: number;
+  isInternetReachable?: boolean;
 }) => {
   const { isConnected } = useNetworkStatus();
 
   return (
     <View style={styles.headerRightWrapper}>
       {/* Bell Icon with Badge */}
-      <TouchableOpacity style={styles.bellIconContainer} onPress={toggleModal}>
-        <Ionicons name="notifications-outline" size={24} color="#fff" />
-        {unreadCount > 0 && (
+      <TouchableOpacity 
+        style={[styles.bellIconContainer, !isInternetReachable && styles.disabledBellIcon]} 
+        onPress={toggleModal}
+        disabled={!isInternetReachable}
+      >
+        <Ionicons 
+          name={isInternetReachable ? "notifications-outline" : "notifications-off-outline"} 
+          size={24} 
+          color={isInternetReachable ? "#fff" : "#ccc"} 
+        />
+        {unreadCount > 0 && isInternetReachable && (
           <View style={styles.notificationBadge}>
             <Text style={styles.notificationBadgeText}>
               {unreadCount > 9 ? '9+' : unreadCount}
@@ -464,6 +530,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     position: 'relative',
+  },
+  disabledBellIcon: {
+    opacity: 0.5,
   },
   notificationBadge: {
     position: 'absolute',

@@ -27,16 +27,18 @@ import {
 interface AssessmentDetail {
   id: number;
   course_id: number;
+  topic_id: number;
   title: string;
-  description?: string;
-  type: 'quiz' | 'exam' | 'assignment' | 'activity' | 'project';
-  available_at?: string;
-  unavailable_at?: string;
-  max_attempts?: number;
-  duration_minutes?: number;
-  assessment_file_path?: string | null;
-  assessment_file_url?: string | null;
-  points: number;
+  type: 'quiz' | 'exam' | 'assignment';
+  description: string;
+  assessment_file_path: string | null;
+  duration_minutes: number | null;
+  available_at: string | null;
+  unavailable_at: string | null;
+  created_by: number;
+  max_attempts: number | null;
+  total_points: number | null;
+  assessment_file_url?: string; // from controller
 }
 
 interface AttemptStatus {
@@ -575,7 +577,7 @@ export default function AssessmentDetailsScreen() {
       if (attemptStatus.has_in_progress_attempt) {
         quizButtonText = 'Resume Quiz';
         isQuizAttemptButtonDisabled = submissionLoading;
-      } else if (attemptStatus.attempts_remaining !== null && attemptStatus.attempts_remaining <= 0) {
+      } else     if (attemptStatus.remaining_attempts !== null && attemptStatus.remaining_attempts <= 0) {
         quizButtonText = 'Attempt Limit Reached';
         isQuizAttemptButtonDisabled = true;
       }
@@ -776,6 +778,19 @@ export default function AssessmentDetailsScreen() {
                 <Text style={styles.detailLabel}>Max Attempts</Text>
                 <Text style={styles.detailValue}>
                   {assessmentDetail.max_attempts ?? 'Unlimited'}
+                </Text>
+              </View>
+            )}
+
+            {/* Total Points (for quizzes/exams) */}
+            {isQuizOrExamType && (
+              <View style={styles.detailCard}>
+                <View style={styles.detailIconContainer}>
+                  <Ionicons name="star" size={20} color="#f39c12" />
+                </View>
+                <Text style={styles.detailLabel}>Total Points</Text>
+                <Text style={styles.detailValue}>
+                  {assessmentDetail.total_points ?? 'Not specified'}
                 </Text>
               </View>
             )}
@@ -1029,7 +1044,12 @@ export default function AssessmentDetailsScreen() {
                         styles.submissionValue,
                         { color: submittedAssessment.score !== null ? "#2c3e50" : "#7f8c8d" }
                       ]}>
-                        {submittedAssessment.score !== null ? `${submittedAssessment.score} %` : 'Not yet taken'}
+                        {submittedAssessment.score !== null 
+                          ? `${submittedAssessment.score} / ${assessmentDetail.total_points || 0}`
+                          : (isAssignmentType && submittedAssessment.status === 'submitted') 
+                            ? `/ ${assessmentDetail.total_points || 0}`
+                            : 'Not yet taken'
+                        }
                       </Text>
                     </View>
                     
