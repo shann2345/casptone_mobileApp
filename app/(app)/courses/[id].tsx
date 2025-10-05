@@ -567,8 +567,13 @@ export default function CourseDetailsScreen() {
                         Created: {formatDate(material.created_at)}
                       </Text>
                       {material.available_at && !available && !timeManipulationDetected && (
-                        <Text style={styles.availableDateText}>
+                        <Text style={[styles.availableDateText, styles.additionalDateInfo]}>
                           Available: {formatDate(material.available_at)}
+                        </Text>
+                      )}
+                      {material.unavailable_at && (
+                        <Text style={[styles.availableDateText, styles.additionalDateInfo]}>
+                          Unavailable: {formatDate(material.unavailable_at)}
                         </Text>
                       )}
                     </View>
@@ -638,8 +643,13 @@ export default function CourseDetailsScreen() {
                         Created: {formatDate(assessment.created_at)}
                       </Text>
                       {assessment.available_at && !available && !timeManipulationDetected && (
-                        <Text style={styles.availableDateText}>
+                        <Text style={[styles.availableDateText, styles.additionalDateInfo]}>
                           Available: {formatDate(assessment.available_at)}
+                        </Text>
+                      )}
+                      {assessment.unavailable_at && (
+                        <Text style={[styles.availableDateText, styles.additionalDateInfo]}>
+                          Unavailable: {formatDate(assessment.unavailable_at)}
                         </Text>
                       )}
                     </View>
@@ -706,8 +716,13 @@ export default function CourseDetailsScreen() {
           <View style={styles.itemFooter}>
             <Text style={styles.itemDate}>Created: {formatDate(material.created_at)}</Text>
             {material.available_at && !available && !timeManipulationDetected && (
-              <Text style={styles.availableDateText}>
+              <Text style={[styles.availableDateText, styles.additionalDateInfo]}>
                 Available: {formatDate(material.available_at)}
+              </Text>
+            )}
+            {material.unavailable_at && (
+              <Text style={[styles.availableDateText, styles.additionalDateInfo]}>
+                Unavailable: {formatDate(material.unavailable_at)}
               </Text>
             )}
           </View>
@@ -780,8 +795,13 @@ export default function CourseDetailsScreen() {
           <View style={styles.itemFooter}>
             <Text style={styles.itemDate}>Created: {formatDate(assessment.created_at)}</Text>
             {assessment.available_at && !available && !timeManipulationDetected && (
-              <Text style={styles.availableDateText}>
+              <Text style={[styles.availableDateText, styles.additionalDateInfo]}>
                 Available: {formatDate(assessment.available_at)}
+              </Text>
+            )}
+            {assessment.unavailable_at && (
+              <Text style={[styles.availableDateText, styles.additionalDateInfo]}>
+                Unavailable: {formatDate(assessment.unavailable_at)}
               </Text>
             )}
           </View>
@@ -1229,9 +1249,6 @@ const styles = StyleSheet.create({
 
   // Footer and Dates
   itemFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
     marginTop: 12,
     paddingTop: 12,
     borderTopWidth: 1,
@@ -1249,6 +1266,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#e74c3c',
     fontWeight: '500',
+  },
+  additionalDateInfo: {
+    marginTop: 4,
   },
 
   // Nested Items

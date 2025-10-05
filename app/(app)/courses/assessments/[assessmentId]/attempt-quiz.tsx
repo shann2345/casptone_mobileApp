@@ -44,6 +44,7 @@ interface AssessmentDetail {
   type: 'quiz' | 'exam';
   duration_minutes?: number;
   points: number;
+  unavailable_at?: string | null;
 }
 
 interface SubmittedAssessmentData {
@@ -118,6 +119,58 @@ export default function AttemptQuizScreen() {
       timeManipulationDetected
     });
 
+    let unavailableCheckInterval: ReturnType<typeof setInterval> | null = null;
+
+    // FIRST: Immediate unavailable_at check regardless of duration or timer
+    const checkUnavailableTime = async () => {
+      if (!submittedAssessment || submittedAssessment.status !== 'in_progress' || timeManipulationDetected || autoSubmitting) {
+        return;
+      }
+
+      const user = await getUserData();
+      if (!user?.email) return;
+
+      try {
+        let currentTime;
+        
+        if (isOffline === 'true') {
+          const serverTimeString = await getCurrentServerTime(user.email);
+          if (serverTimeString) {
+            currentTime = new Date(serverTimeString).getTime();
+          } else {
+            currentTime = new Date().getTime();
+          }
+        } else {
+          currentTime = new Date().getTime();
+        }
+
+        // Check if assessment has reached its unavailable_at time
+        if (submittedAssessment.assessment.unavailable_at) {
+          const unavailableTime = new Date(submittedAssessment.assessment.unavailable_at).getTime();
+          console.log("🔍 Checking unavailable time:", {
+            currentTime: new Date(currentTime).toISOString(),
+            unavailableAt: submittedAssessment.assessment.unavailable_at,
+            unavailableTime: new Date(unavailableTime).toISOString(),
+            isUnavailable: currentTime >= unavailableTime
+          });
+          
+          if (currentTime >= unavailableTime) {
+            console.log("🚨 Assessment unavailable time reached during quiz taking, auto-submitting");
+            await handleAutoSubmit('assessment_unavailable');
+            return;
+          }
+        }
+      } catch (error) {
+        console.error("❌ Error checking unavailable time:", error);
+      }
+    };
+
+    // Run immediate check
+    checkUnavailableTime();
+
+    // Set up periodic unavailable_at check (every 5 seconds) regardless of timer
+    unavailableCheckInterval = setInterval(checkUnavailableTime, 5000);
+
     if (submittedAssessment && submittedAssessment.assessment.duration_minutes && submittedAssessment.status === 'in_progress' && !timeManipulationDetected) {
       const startTime = new Date(submittedAssessment.started_at).getTime();
       const durationMs = submittedAssessment.assessment.duration_minutes * 60 * 1000;
@@ -175,14 +228,39 @@ export default function AttemptQuizScreen() {
             console.log("🕐 Using online device time:", new Date(currentTime).toISOString());
           }
           
+          // Check if assessment has reached its unavailable_at time
+          if (submittedAssessment.assessment.unavailable_at) {
+            const unavailableTime = new Date(submittedAssessment.assessment.unavailable_at).getTime();
+            if (currentTime >= unavailableTime) {
+              console.log("🚨 Assessment unavailable time reached, auto-submitting");
+              setTimeLeft(0);
+              if (timerInterval) clearInterval(timerInterval);
+              
+              if (submittedAssessment.status === 'in_progress' && !autoSubmitting) {
+                await handleAutoSubmit('assessment_unavailable');
+              }
+              return;
+            }
+          }
+          
           const remainingMs = endTime - currentTime;
           const remainingSeconds = Math.floor(remainingMs / 1000);
+          
+          // If assessment has unavailable_at, also consider that as a time limit
+          let effectiveTimeLeft = remainingSeconds;
+          if (submittedAssessment.assessment.unavailable_at) {
+            const unavailableTime = new Date(submittedAssessment.assessment.unavailable_at).getTime();
+            const timeUntilUnavailable = Math.floor((unavailableTime - currentTime) / 1000);
+            effectiveTimeLeft = Math.min(remainingSeconds, timeUntilUnavailable);
+          }
           
           console.log("⏰ Time calculation", {
             currentTime: new Date(currentTime).toISOString(),
             endTime: new Date(endTime).toISOString(),
+            unavailableAt: submittedAssessment.assessment.unavailable_at,
             remainingMs,
-            remainingSeconds
+            remainingSeconds,
+            effectiveTimeLeft
           });
           
           if (remainingMs <= 0) {
@@ -194,7 +272,7 @@ export default function AttemptQuizScreen() {
               await handleAutoSubmit('time_up');
             }
           } else {
-            setTimeLeft(remainingSeconds);
+            setTimeLeft(effectiveTimeLeft);
             
             // Update time sync for offline mode to prevent manipulation
             if (isOffline === 'true') {
@@ -220,6 +298,7 @@ export default function AttemptQuizScreen() {
 
       return () => {
         if (interval) clearInterval(interval);
+        if (unavailableCheckInterval) clearInterval(unavailableCheckInterval);
       };
     } else {
       console.log("⏰ Timer not started", {
@@ -233,6 +312,11 @@ export default function AttemptQuizScreen() {
       if (timeManipulationDetected) {
         setTimeLeft(0);
       }
+      
+      // Still return cleanup for unavailable check interval
+      return () => {
+        if (unavailableCheckInterval) clearInterval(unavailableCheckInterval);
+      };
     }
   }, [submittedAssessment, isOffline, timeManipulationDetected, autoSubmitting]);
 
@@ -260,7 +344,7 @@ export default function AttemptQuizScreen() {
   }, []);
 
   // New function to handle automatic submission
-  const handleAutoSubmit = async (reason: 'time_up' | 'time_manipulation' | 'no_server_time' | 'timer_error') => {
+  const handleAutoSubmit = async (reason: 'time_up' | 'time_manipulation' | 'no_server_time' | 'timer_error' | 'assessment_unavailable') => {
     if (autoSubmitting) {
       console.log('Auto-submission already in progress, skipping...');
       return;
@@ -290,6 +374,10 @@ export default function AttemptQuizScreen() {
         case 'timer_error':
           alertTitle = "Timer Error";
           alertMessage = "Timer error detected. Quiz has been automatically submitted for security.";
+          break;
+        case 'assessment_unavailable':
+          alertTitle = "Assessment Unavailable";
+          alertMessage = "The assessment time window has closed and has been automatically submitted.";
           break;
       }
 
@@ -368,15 +456,16 @@ export default function AttemptQuizScreen() {
         const startTime = offlineAttempt?.start_time || new Date().toISOString();
 
         if (localQuestions.length > 0) {
-          // Get duration from the assessment data in the database
+          // Get duration and unavailable_at from the assessment data in the database
           const db = await getDb();
           const assessmentResult = await db.getFirstAsync(
-            `SELECT duration_minutes FROM offline_assessments WHERE id = ? AND user_email = ?;`,
+            `SELECT duration_minutes, unavailable_at FROM offline_assessments WHERE id = ? AND user_email = ?;`,
             [id, userEmail]
-          );
+          ) as any;
           const durationMinutes = assessmentResult?.duration_minutes || null;
+          const unavailableAt = assessmentResult?.unavailable_at || null;
           
-          console.log("📊 Duration found in offline assessment:", durationMinutes);
+          console.log("📊 Assessment data found:", { durationMinutes, unavailableAt });
           
           const processedQuestions = localQuestions.map(q => {
             let parsedOptions: any[] = [];
@@ -461,6 +550,7 @@ export default function AttemptQuizScreen() {
               type: 'quiz',
               duration_minutes: durationMinutes,
               points: processedQuestions.reduce((sum, q) => sum + q.max_points, 0),
+              unavailable_at: unavailableAt,
             }
           };
 
@@ -472,6 +562,7 @@ export default function AttemptQuizScreen() {
             id: offlineSubmittedAssessment.id,
             title: offlineSubmittedAssessment.assessment.title,
             duration_minutes: offlineSubmittedAssessment.assessment.duration_minutes,
+            unavailable_at: offlineSubmittedAssessment.assessment.unavailable_at,
             status: offlineSubmittedAssessment.status,
             started_at: offlineSubmittedAssessment.started_at
           });
