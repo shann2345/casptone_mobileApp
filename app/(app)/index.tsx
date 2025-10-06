@@ -7,24 +7,21 @@ import { ActivityIndicator, Alert, Animated, Dimensions, FlatList, Modal, Refres
 import { useNetworkStatus } from '../../context/NetworkContext';
 import api, { clearAuthToken, getAuthToken, getServerTime, getUserData, syncOfflineQuiz, syncOfflineSubmission } from '../../lib/api';
 import {
-  deleteAllAssessmentDetails,
   deleteOfflineQuizAttempt,
   deleteOfflineSubmission,
-  downloadAllAssessmentDetails,
   downloadAllQuizQuestions,
-  fixQuizQuestionsTable,
+  getAssessmentsNeedingSync,
   getAssessmentsWithoutDetails,
   getCompletedOfflineQuizzes,
   getDb,
   getEnrolledCoursesFromDb,
   getUnsyncedSubmissions,
-  hasAssessmentDetailsSaved,
-  hasQuizQuestionsSaved,
   initDb,
   resetTimeCheckData,
   saveCourseDetailsToDb,
   saveCourseToDb,
   saveServerTime,
+  syncAllAssessmentDetails,
   updateTimeSync
 } from '../../lib/localDb';
 import { showOfflineModeWarningIfNeeded } from '../../lib/offlineWarning';
@@ -82,7 +79,28 @@ export default function HomeScreen() {
   const [courseToEnroll, setCourseToEnroll] = useState<Course | null>(null);
   const [enrollmentCode, setEnrollmentCode] = useState<string>('');
   const [isEnrolling, setIsEnrolling] = useState<boolean>(false);
+  const [syncStatus, setSyncStatus] = useState<string>('');
+  const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
 
+  // Utility function for retry logic with exponential backoff
+  const retryWithBackoff = async (fn: Function, maxRetries = 3, baseDelay = 1000) => {
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        return await fn();
+      } catch (error) {
+        if (i === maxRetries - 1) throw error;
+        const delay = baseDelay * Math.pow(2, i);
+        console.log(`⏳ Retry attempt ${i + 1}/${maxRetries} in ${delay}ms`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  };
+
+  // Check if data is stale
+  const isDataStale = (lastSync: string | null, maxAge: number = 3600000) => { // 1 hour default
+    if (!lastSync) return true;
+    return Date.now() - new Date(lastSync).getTime() > maxAge;
+  };
 
   useEffect(() => {
   let isMounted = true;
@@ -144,95 +162,92 @@ export default function HomeScreen() {
   };
 }, []);
 
-  // Auto-download assessment data after courses are loaded
-  const autoDownloadAssessmentData = async (userEmail: string) => {
+  // Enhanced smart sync assessment data with retry logic and better status tracking
+  const autoDownloadAssessmentData = async (userEmail: string, forceRefresh: boolean = false) => {
     if (!netInfo?.isInternetReachable) {
-      console.log('⚠️ No internet connection for auto-download');
-      return;
+      console.log('📡 No internet connection - skipping smart sync');
+      setSyncStatus('Offline - sync skipped');
+      return { success: true, downloaded: 0, failed: 0 };
+    }
+
+    // Check data freshness
+    if (!forceRefresh && !isDataStale(lastSyncTime)) {
+      console.log('� Data is fresh, skipping sync');
+      setSyncStatus('Data is up to date');
+      return { success: true, downloaded: 0, failed: 0 };
     }
 
     try {
-      console.log('🔄 Starting automatic assessment data download...');
-      
-      // Get assessments that need details
-      const assessmentIds = await getAssessmentsWithoutDetails(userEmail);
-      
-      // Get quiz assessments that need questions
-      const db = await getDb();
-      const quizAssessments = await db.getAllAsync(
-        `SELECT id FROM offline_assessments 
-         WHERE user_email = ? AND (type = 'quiz' OR type = 'exam');`,
-        [userEmail]
-      );
-      
-      // Count how many items actually need downloading
-      let assessmentsNeedingDownload = 0;
-      let quizzesNeedingDownload = 0;
-
-      for (const id of assessmentIds) {
-        const hasDetails = await hasAssessmentDetailsSaved(id, userEmail);
-        if (!hasDetails) assessmentsNeedingDownload++;
-      }
-
-      for (const quiz of quizAssessments) {
-        const hasQuestions = await hasQuizQuestionsSaved(quiz.id, userEmail);
-        if (!hasQuestions) quizzesNeedingDownload++;
-      }
-
-      const totalItemsToDownload = assessmentsNeedingDownload + quizzesNeedingDownload;
-      
-      if (totalItemsToDownload === 0) {
-        console.log('✅ All assessment data already downloaded');
-        return;
-      }
-
-      console.log(`📦 Auto-downloading ${totalItemsToDownload} assessment items...`);
+      console.log('�🔄 Starting enhanced smart assessment data sync...');
       setIsDownloadingData(true);
-      setDownloadProgress({ current: 0, total: totalItemsToDownload });
+      setDownloadProgress({ current: 0, total: 0 });
+      setSyncStatus('Initializing sync...');
 
-      let assessmentResult = { success: 0, failed: 0, skipped: 0 };
-      let quizResult = { success: 0, failed: 0, skipped: 0 };
+      // Use retry logic for critical operations
+      const syncResult = await retryWithBackoff(async () => {
+        setSyncStatus('Syncing assessment details...');
+        return await syncAllAssessmentDetails(
+          userEmail,
+          api,
+          (current, total, type) => {
+            setDownloadProgress({ current, total });
+            setSyncStatus(`Processing ${type}: ${current}/${total} assessments`);
+            console.log(`📥 ${type}: ${current}/${total} assessments processed`);
+          }
+        );
+      }, 3, 2000);
 
-      // Download assessment details
-      if (assessmentIds.length > 0) {
-        assessmentResult = await downloadAllAssessmentDetails(
+      console.log(`✅ Smart Sync Complete: ${syncResult.success} successful, ${syncResult.failed} failed, ${syncResult.updated} updated`);
+
+      // Download quiz questions with chunked processing
+      setSyncStatus('Downloading quiz questions...');
+      const quizResult = await retryWithBackoff(async () => {
+        return await downloadAllQuizQuestions(
           userEmail,
           api,
           (current, total, skipped = 0) => {
-            setDownloadProgress({ current, total: totalItemsToDownload });
+            const baseProgress = syncResult.success;
+            setDownloadProgress({ current: current + baseProgress, total: total + baseProgress });
+            setSyncStatus(`Quiz questions: ${current}/${total} (${skipped} skipped)`);
+            console.log(`📝 Downloaded ${current}/${total} quiz questions (${skipped} skipped)`);
           }
         );
+      }, 2, 1500);
+
+      console.log(`✅ Quiz Questions: ${quizResult.success} successful, ${quizResult.failed} failed, ${quizResult.skipped} skipped`);
+
+      const totalSuccessful = syncResult.success + quizResult.success;
+      const totalFailed = syncResult.failed + quizResult.failed;
+
+      // Update sync timestamp on success
+      if (totalSuccessful > 0) {
+        const now = new Date().toISOString();
+        setLastSyncTime(now);
+        setSyncStatus(`✅ Synced ${totalSuccessful} items successfully`);
+        console.log(`🎉 Successfully synced ${totalSuccessful} items for offline access`);
       }
 
-      // Download quiz questions
-      if (quizAssessments.length > 0) {
-        try {
-          await fixQuizQuestionsTable();
-        } catch (error) {
-          console.error('Failed to fix quiz questions table:', error);
-        }
-
-        quizResult = await downloadAllQuizQuestions(
-          userEmail,
-          api,
-          (current, total, skipped = 0) => {
-            const totalProgress = assessmentIds.length + current;
-            setDownloadProgress({ current: totalProgress, total: totalItemsToDownload });
-          }
-        );
+      if (totalFailed > 0) {
+        console.warn(`⚠️ Some downloads failed: ${totalFailed} items - offline data preserved`);
+        setSyncStatus(`⚠️ ${totalFailed} items failed, offline data preserved`);
       }
 
       // Update assessment count
       const remainingAssessments = await getAssessmentsWithoutDetails(userEmail);
       setAssessmentsNeedingDetails(remainingAssessments.length);
 
-      console.log(`✅ Auto-download completed: ${assessmentResult.success + quizResult.success} items downloaded`);
-      
+      return { success: true, downloaded: totalSuccessful, failed: totalFailed };
+
     } catch (error) {
-      console.error('❌ Auto-download failed:', error);
+      console.error('❌ Enhanced sync failed:', error);
+      setSyncStatus('❌ Sync failed - offline data preserved');
+      // Don't throw - preserve existing data
+      return { success: false, downloaded: 0, failed: 1 };
     } finally {
       setIsDownloadingData(false);
       setDownloadProgress({ current: 0, total: 0 });
+      // Clear status after a delay
+      setTimeout(() => setSyncStatus(''), 3000);
     }
   };
 
@@ -463,8 +478,11 @@ export default function HomeScreen() {
         // Fetch and save complete course details including materials and assessments
         await fetchAndSaveCompleteCoursesData(courses, userEmail);
 
-        // ✅ NEW: Auto-download assessment data after courses are loaded
-        await autoDownloadAssessmentData(userEmail);
+        // ✅ Enhanced: Auto-download assessment data with smart logic
+        if (courses.length > 0) {
+          setSyncStatus('Auto-syncing assessment data...');
+          await autoDownloadAssessmentData(userEmail);
+        }
 
       } else {
         console.log('⚠️ Offline or no internet reachability: Fetching courses from local DB.');
@@ -538,6 +556,7 @@ export default function HomeScreen() {
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
+    setSyncStatus('Starting refresh...');
 
     if (!netInfo?.isInternetReachable) {
       Alert.alert(
@@ -546,6 +565,7 @@ export default function HomeScreen() {
         [{ text: 'OK' }]
       );
       setIsRefreshing(false);
+      setSyncStatus('');
       return;
     }
 
@@ -554,41 +574,91 @@ export default function HomeScreen() {
       if (!userData?.email) {
         Alert.alert('Error', 'User data not found. Please log in again.');
         setIsRefreshing(false);
+        setSyncStatus('');
         return;
       }
 
-      console.log('Fetching fresh course data from API...');
-      // Remove these lines to prevent deletion of offline data and re-download
-      // await deleteAllAssessmentDetails(userData.email);
-      // await resetTimeCheckData(userData.email);
-
-      const response = await api.get('/my-courses');
-      const courses = response.data.courses || [];
-
-      await deleteAllAssessmentDetails(userData.email);
-      await resetTimeCheckData(userData.email);
-      await fetchCourses();
-      await fetchAndSaveCompleteCoursesData(courses, userData.email);
-      setEnrolledCourses(courses);
-
-      for (const course of courses) {
+      console.log('🔄 Starting enhanced refresh with incremental updates...');
+      setSyncStatus('Fetching course updates...');
+      
+      let refreshSuccessful = false;
+      try {
+        // Use retry logic for API calls
+        const response = await retryWithBackoff(async () => {
+          setSyncStatus('Connecting to server...');
+          return await api.get('/my-courses');
+        }, 3, 1000);
+        
+        const courses = response.data.courses || [];
+        
+        // Check if course data has actually changed
+        const hasChanges = JSON.stringify(courses) !== JSON.stringify(enrolledCourses);
+        
+        if (hasChanges) {
+          setSyncStatus('Updating course data...');
+          setEnrolledCourses(courses);
+          
+          // Chunked processing for better performance
+          const chunkSize = 3;
+          for (let i = 0; i < courses.length; i += chunkSize) {
+            const chunk = courses.slice(i, i + chunkSize);
+            setSyncStatus(`Saving courses ${i + 1}-${Math.min(i + chunkSize, courses.length)} of ${courses.length}`);
+            
+            await Promise.all(chunk.map(async (course) => {
+              try {
+                await saveCourseToDb(course, userData.email);
+              } catch (saveError) {
+                console.error('Failed to save course to DB:', saveError);
+              }
+            }));
+            
+            // Small delay to prevent overwhelming the system
+            if (i + chunkSize < courses.length) {
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
+          }
+          
+          setSyncStatus('Updating course details...');
+          await fetchAndSaveCompleteCoursesData(courses, userData.email);
+        } else {
+          setSyncStatus('No course changes detected');
+        }
+        
+        // Force refresh assessment data
+        setSyncStatus('Syncing assessment data...');
+        const syncResult = await autoDownloadAssessmentData(userData.email, true);
+        refreshSuccessful = syncResult.success;
+        
+        if (refreshSuccessful) {
+          setSyncStatus('✅ Refresh completed successfully');
+          console.log('✅ Enhanced refresh completed successfully');
+        }
+        
+      } catch (downloadError) {
+        console.warn('⚠️ Refresh failed, keeping existing offline data:', downloadError);
+        setSyncStatus('⚠️ Refresh failed, using offline data');
+        // Fallback to existing data
         try {
-          await saveCourseToDb(course, userData.email);
-        } catch (saveError) {
-          console.error('Failed to save basic course to DB:', saveError);
+          await fetchCourses();
+        } catch (fallbackError) {
+          console.error('❌ Fallback fetch also failed:', fallbackError);
         }
       }
 
-      // Remove the auto-download call from here
-      // await autoDownloadAssessmentData(userData.email);
-
-      Alert.alert('Refresh Complete', 'Your course list has been updated!', [{ text: 'OK' }]);
+      const message = refreshSuccessful 
+        ? 'Your course list has been updated successfully!' 
+        : 'Refresh completed with some limitations. Offline data preserved.';
+        
+      Alert.alert('Refresh Complete', message, [{ text: 'OK' }]);
 
     } catch (error) {
-      console.error('Refresh failed:', error);
+      console.error('❌ Enhanced refresh failed:', error);
+      setSyncStatus('❌ Refresh failed');
       Alert.alert('Error', 'Failed to refresh data. Please try again.');
     } finally {
       setIsRefreshing(false);
+      // Clear status after delay
+      setTimeout(() => setSyncStatus(''), 3000);
     }
   };
 
@@ -800,130 +870,90 @@ export default function HomeScreen() {
         return;
       }
 
-      const assessmentIds = await getAssessmentsWithoutDetails(userData.email);
-      
-      const db = await getDb();
-      const quizAssessments = await db.getAllAsync(
-        `SELECT id FROM offline_assessments 
-         WHERE user_email = ? AND (type = 'quiz' OR type = 'exam');`,
-        [userData.email]
-      );
-      
-      let assessmentsNeedingDownload = 0;
-      let quizzesNeedingDownload = 0;
+      setSyncStatus('Checking assessment data...');
 
-      for (const id of assessmentIds) {
-        const hasDetails = await hasAssessmentDetailsSaved(id, userData.email);
-        if (!hasDetails) assessmentsNeedingDownload++;
-      }
+      // Enhanced: Use retry logic for initial checks
+      const syncNeeded = await retryWithBackoff(async () => {
+        return await getAssessmentsNeedingSync(userData.email, api);
+      }, 2, 1000);
 
-      for (const quiz of quizAssessments) {
-        const hasQuestions = await hasQuizQuestionsSaved(quiz.id, userData.email);
-        if (!hasQuestions) quizzesNeedingDownload++;
-      }
+      const totalToSync = syncNeeded.missing.length + syncNeeded.outdated.length;
       
-      if (assessmentsNeedingDownload === 0 && quizzesNeedingDownload === 0) {
-        Alert.alert(
-          'Already Up to Date', 
-          'All assessment details and quiz questions are already downloaded for offline use.',
+      if (totalToSync === 0) {
+        setSyncStatus('All data is up to date');
+        Alert.alert('Information', 
+          `All assessment data is current!\n\n📊 Last sync: ${lastSyncTime ? new Date(lastSyncTime).toLocaleString() : 'Never'}\n\n🔒 Your offline data is ready for use.`, 
           [{ text: 'OK', onPress: toggleAd }]
         );
+        setTimeout(() => setSyncStatus(''), 2000);
         return;
       }
-
-      const totalItems = assessmentIds.length + quizAssessments.length;
+      
+      // Enhanced dialog with data freshness info
       Alert.alert(
-        'Download Assessment Data',
-        `Found ${assessmentsNeedingDownload} assessments needing details and ${quizzesNeedingDownload} quiz/exam assessments needing questions.\n\nThis will download:\n• Assessment attempts & submissions\n• Quiz/exam questions\n\nAlready downloaded items will be skipped. Proceed?`,
+        'Enhanced Smart Download',
+        `🔍 Analysis Complete:\n• ${syncNeeded.missing.length} new assessments\n• ${syncNeeded.outdated.length} updates available\n\n💡 Features:\n✅ Preserves existing offline data\n✅ Chunked download for performance\n✅ Automatic retry on failures\n\nProceed with smart download?`,
         [
-          { text: 'Cancel', style: 'cancel' },
+          { text: 'Cancel', style: 'cancel', onPress: () => setSyncStatus('') },
           {
-            text: 'Download',
+            text: 'Smart Download',
             onPress: async () => {
               setIsDownloadingData(true);
-              setDownloadProgress({ current: 0, total: totalItems });
+              setDownloadProgress({ current: 0, total: totalToSync });
+              setSyncStatus('Starting enhanced download...');
 
               try {
-                let currentProgress = 0;
-                let assessmentResult = { success: 0, failed: 0, skipped: 0 };
-                let quizResult = { success: 0, failed: 0, skipped: 0 };
+                // Enhanced: Use the improved autoDownloadAssessmentData function
+                const result = await autoDownloadAssessmentData(userData.email, true);
 
-                if (assessmentIds.length > 0) {
-                  assessmentResult = await downloadAllAssessmentDetails(
-                    userData.email,
-                    api,
-                    (current, total, skipped = 0) => {
-                      setDownloadProgress({ current: currentProgress + current, total: totalItems });
-                    }
-                  );
-                  currentProgress += assessmentIds.length;
+                if (result.success) {
+                  const now = new Date().toISOString();
+                  setLastSyncTime(now);
+                  
+                  let message = '🎉 Enhanced Download Complete!\n\n';
+                  
+                  if (result.downloaded > 0) {
+                    message += `✅ Successfully processed ${result.downloaded} items\n`;
+                  }
+                  
+                  if (result.failed > 0) {
+                    message += `⚠️ ${result.failed} items failed (data preserved)\n`;
+                  }
+
+                  message += `\n📅 Last sync: ${new Date(now).toLocaleString()}`;
+                  message += '\n🔒 All offline data preserved and optimized!';
+
+                  Alert.alert('Success', message, [{ text: 'OK', onPress: toggleAd }]);
+
+                  // Update assessment count
+                  const remainingAssessments = await getAssessmentsWithoutDetails(userData.email);
+                  setAssessmentsNeedingDetails(remainingAssessments.length);
+                } else {
+                  throw new Error('Download operation failed');
                 }
-
-                if (quizAssessments.length > 0) {
-                  try {
-                    await fixQuizQuestionsTable();
-                  } catch (error) {
-                    console.error('Failed to fix quiz questions table:', error);
-                  }
-
-                  quizResult = await downloadAllQuizQuestions(
-                    userData.email,
-                    api,
-                    (current, total, skipped = 0) => {
-                      setDownloadProgress({ current: currentProgress + current, total: totalItems });
-                    }
-                  );
-                }
-
-                let message = 'Download Complete!\n\n';
-                
-                if (assessmentResult.success > 0 || assessmentResult.skipped > 0) {
-                  message += `Assessment details: ${assessmentResult.success} downloaded`;
-                  if (assessmentResult.skipped > 0) {
-                    message += `, ${assessmentResult.skipped} already saved`;
-                  }
-                  if (assessmentResult.failed > 0) {
-                    message += `, ${assessmentResult.failed} failed`;
-                  }
-                  message += '\n';
-                }
-                
-                if (quizResult.success > 0 || quizResult.skipped > 0) {
-                  message += `Quiz questions: ${quizResult.success} downloaded`;
-                  if (quizResult.skipped > 0) {
-                    message += `, ${quizResult.skipped} already saved`;
-                  }
-                  if (quizResult.failed > 0) {
-                    message += `, ${quizResult.failed} failed`;
-                  }
-                  message += '\n';
-                }
-
-                message += '\nAll data is now available offline!';
-
-                Alert.alert('Success', message, [{ text: 'OK', onPress: toggleAd }]);
-
-                const remainingAssessments = await getAssessmentsWithoutDetails(userData.email);
-                setAssessmentsNeedingDetails(remainingAssessments.length);
 
               } catch (error) {
-                console.error('Download failed:', error);
+                console.error('Enhanced download failed:', error);
+                setSyncStatus('Download failed - data preserved');
                 Alert.alert(
-                  'Download Failed',
-                  'Failed to download assessment data. Please check your internet connection and try again.',
+                  'Download Error',
+                  '❌ Enhanced download encountered issues.\n\n🔒 Your existing offline data is preserved and safe.\n\n💡 Try again when network is stable.',
                   [{ text: 'OK' }]
                 );
               } finally {
                 setIsDownloadingData(false);
                 setDownloadProgress({ current: 0, total: 0 });
+                setTimeout(() => setSyncStatus(''), 3000);
               }
             }
           }
         ]
       );
     } catch (error) {
-      console.error('Error in handleAdButtonPress:', error);
+      console.error('Error in enhanced handleAdButtonPress:', error);
+      setSyncStatus('Error occurred');
       Alert.alert('Error', 'An unexpected error occurred. Please try again.');
+      setTimeout(() => setSyncStatus(''), 3000);
     }
   };
 
@@ -971,6 +1001,13 @@ export default function HomeScreen() {
                 <Text style={styles.offlineText}>Offline Mode</Text>
               </View>
             )}
+            
+            {syncStatus && (
+              <View style={styles.downloadIndicator}>
+                <ActivityIndicator size="small" color="#fff" />
+                <Text style={styles.downloadText}>{syncStatus}</Text>
+              </View>
+            )}
 
           </Animated.View>
         </LinearGradient>
@@ -1006,7 +1043,7 @@ export default function HomeScreen() {
             <Text style={styles.statLabel}>Pending Downloads</Text>
           </View>
           <View style={styles.statCard}>
-            <Ionicons name={netInfo?.isInternetReachable ? "wifi" : "wifi-off"} size={24} color={netInfo?.isInternetReachable ? "#10ac84" : "#ff6b6b"} />
+            <Ionicons name={netInfo?.isInternetReachable ? "wifi" : "wifi-outline"} size={24} color={netInfo?.isInternetReachable ? "#10ac84" : "#ff6b6b"} />
             <Text style={styles.statLabel}>{netInfo?.isInternetReachable ? "Online" : "Offline"}</Text>
           </View>
         </View>
@@ -1042,8 +1079,10 @@ export default function HomeScreen() {
                                   <Ionicons name="cloud-download" size={20} color="#fff" />
                                   <Text style={styles.adButtonText}>
                                       {assessmentsNeedingDetails > 0 
-                                          ? `Download (${assessmentsNeedingDetails})`
-                                          : 'Download All Data'
+                                          ? `Smart Download (${assessmentsNeedingDetails})`
+                                          : lastSyncTime 
+                                            ? 'Update Available Data'
+                                            : 'Download All Data'
                                       }
                                   </Text>
                               </View>
@@ -1155,7 +1194,7 @@ export default function HomeScreen() {
                 onChangeText={setSearchQuery}
                 onSubmitEditing={handleSearchSubmit}
                 returnKeyType="search"
-                editable={netInfo?.isInternetReachable}
+                editable={netInfo?.isInternetReachable ?? false}
               />
               <TouchableOpacity
                 style={[

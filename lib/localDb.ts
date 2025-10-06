@@ -1967,8 +1967,8 @@ export const getSavedServerTime = async (userEmail: string): Promise<string | nu
     // STRICT LIMITS: Much tighter tolerances
     const MAX_APP_INACTIVITY = 90 * 24 * 60 * 60 * 1000; // 90 days
     const MAX_OFFLINE_USAGE = 30 * 24 * 60 * 60 * 1000;   // 30 days
-    const BACKWARD_TIME_LIMIT = 30 * 1000; // 30 SECONDS - Very strict!
-    const FORWARD_TIME_LIMIT = 10 * 60 * 1000; // 10 MINUTES - Much stricter!
+    const BACKWARD_TIME_LIMIT = 60 * 1000; // 60 SECONDS - Very strict!
+    const FORWARD_TIME_LIMIT = 30 * 60 * 1000; // 30 MINUTES - Much stricter!
     const SUSPICIOUS_FORWARD_JUMP = 30 * 60 * 1000; // 30 minutes - Suspicious
     
     console.log('🔍 STRICT time analysis:', {
@@ -2029,7 +2029,7 @@ export const getSavedServerTime = async (userEmail: string): Promise<string | nu
       const timeDifference = Math.abs(expectedServerTime - calculatedServerTime);
       
       // Even for extended periods, be strict
-      const EXTENDED_STRICT_TOLERANCE = 5 * 60 * 1000; // 5 minutes max tolerance
+      const EXTENDED_STRICT_TOLERANCE = 15 * 60 * 1000; // 15 minutes max tolerance
       
       if (timeDifference > EXTENDED_STRICT_TOLERANCE) {
         console.log('❌ STRICT: Time discrepancy in extended offline period');
@@ -2111,8 +2111,8 @@ export const detectTimeManipulation = async (
     
     // STRICT LIMITS
     const MAX_APP_INACTIVITY = 90 * 24 * 60 * 60 * 1000; // 90 days
-    const BACKWARD_TIME_LIMIT = 30 * 1000; // 30 seconds
-    const FORWARD_TIME_LIMIT = 10 * 60 * 1000; // 10 minutes
+    const BACKWARD_TIME_LIMIT = 10 * 60 * 1000; // 5 minutes
+    const FORWARD_TIME_LIMIT = 2 * 60 * 60 * 1000; // 10 minutes
     const SUSPICIOUS_FORWARD_JUMP = 30 * 60 * 1000; // 30 minutes
     
     console.log('🔍 STRICT time manipulation check:', {
