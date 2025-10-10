@@ -4,8 +4,8 @@ import * as SecureStore from 'expo-secure-store';
 import { establishTimeBaseline, getSavedServerTime, saveAssessmentDetailsToDb, saveServerTime, updateOnlineSync } from './localDb';
 
 export const API_BASE_URL = __DEV__ 
-  ? 'http://192.168.1.18:8000/api'  
-  : 'https://your-cloud-domain.com/api'; 
+  ? 'http://192.168.1.13:8000/api'  
+  : 'https://olinlms.com/api'; 
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -404,27 +404,19 @@ export const updateProfile = async (profileData: any, profileImage?: any) => {
 
 export const deleteProfileImage = async () => {
   try {
-    console.log('🗑️ Deleting profile image...');
+    console.log('🗑️  Deleting profile image...');
     const response = await api.delete('/profile/image');
     
     if (response.status === 200 && response.data.success) {
-      console.log('✅ Profile image deleted successfully');
-      return {
-        success: true,
-        message: response.data.message
-      };
+      console.log('✅ Profile image deleted successfully.');
+      return { success: true, message: response.data.message };
     } else {
-      return {
-        success: false,
-        message: response.data.message || 'Failed to delete profile image'
-      };
+      console.error('❌ Failed to delete profile image:', response.data.message);
+      return { success: false, message: response.data.message || 'An unknown error occurred.' };
     }
   } catch (error: any) {
     console.error('❌ Error deleting profile image:', error.response?.data || error.message);
-    return {
-      success: false,
-      message: error.response?.data?.message || 'Network error occurred'
-    };
+    return { success: false, message: error.response?.data?.message || 'Could not connect to the server.' };
   }
 };
 
@@ -437,38 +429,30 @@ export const googleAuth = async (googleUser: {
   picture?: string;
 }) => {
   try {
-    console.log('🔐 Authenticating with Google...');
-    
-    const response = await api.post('/auth/google', {
-      google_id: googleUser.id,
-      email: googleUser.email,
-      name: googleUser.name,
-      avatar: googleUser.picture,
-    });
+    console.log('🚀 Authenticating with backend using Google data...');
+    const response = await api.post('/auth/google', googleUser);
 
-    const { user, token, is_new_user } = response.data;
+    if (response.status === 200 && response.data.token) {
+      const { user, token, is_new_user } = response.data;
 
-    // Store auth data
-    await storeAuthToken(token);
-    await storeUserData(user);
+      // Store token and user data
+      await storeAuthToken(token);
+      await storeUserData(user);
 
-    console.log('✅ Google authentication successful');
-    
-    return {
-      success: true,
-      user,
-      token,
-      isNewUser: is_new_user,
-      message: response.data.message
-    };
-
+      console.log('✅ Google authentication successful.');
+      return {
+        success: true,
+        user,
+        isNewUser: is_new_user,
+      };
+    } else {
+      throw new Error('Backend authentication failed.');
+    }
   } catch (error: any) {
-    console.error('❌ Google authentication failed:', error.response?.data || error.message);
-    
+    console.error('❌ Error in googleAuth function:', error.response?.data || error.message);
     return {
       success: false,
-      message: error.response?.data?.message || 'Google authentication failed',
-      error: error.response?.data?.error
+      message: error.response?.data?.message || 'An unknown error occurred during Google authentication.',
     };
   }
 };

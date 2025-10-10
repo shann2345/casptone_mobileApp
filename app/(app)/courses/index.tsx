@@ -1,12 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import { showOfflineModeWarningIfNeeded } from '../../../lib/offlineWarning';
 
 import {
   ActivityIndicator,
-  Alert,
   Dimensions,
   FlatList,
   RefreshControl,
@@ -68,6 +67,41 @@ export default function CoursesScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
 
+  const fetchCourses = useCallback(async () => {
+    if (!currentUserEmail) {
+      // Don't fetch if no email
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      if (netInfo?.isInternetReachable) {
+        console.log('Network is reachable. Fetching courses from API...');
+        const response = await api.get('/my-courses');
+        if (response.data && response.data.courses) {
+          setEnrolledCourses(response.data.courses);
+          // Save to local DB for offline access
+          await Promise.all(response.data.courses.map((course: Course) => 
+            saveCourseToDb(course, currentUserEmail)
+          ));
+        } else {
+          setEnrolledCourses([]);
+        }
+      } else {
+        console.log('Network is not reachable. Fetching courses from local DB...');
+        await fetchEnrolledCoursesFromDb();
+      }
+    } catch (error: any) {
+      console.error('Failed to fetch courses:', error);
+      setError('Failed to load courses. Please try again.');
+      // Attempt to load from DB as a fallback
+      await fetchEnrolledCoursesFromDb();
+    } finally {
+      setIsLoading(false);
+    }
+  }, [currentUserEmail, netInfo?.isInternetReachable]);
+
   useEffect(() => {
     const initialize = async () => {
       try {
@@ -87,6 +121,16 @@ export default function CoursesScreen() {
     initialize();
   }, []);
 
+  // Use useFocusEffect to refetch data when the screen is focused
+  useFocusEffect(
+    useCallback(() => {
+      if (currentUserEmail) {
+        console.log('Courses screen focused. Fetching courses.');
+        fetchCourses();
+      }
+    }, [currentUserEmail, fetchCourses])
+  );
+
   // Enhanced deep link navigation logic
   useEffect(() => {
     if (params.courseId && !isLoading && enrolledCourses.length > 0) {
@@ -97,20 +141,19 @@ export default function CoursesScreen() {
       );
       
       if (targetCourse) {
-        console.log('Navigating to course from to-do:', {
-          courseId: courseIdToNavigate,
-          courseName: targetCourse.title
+        console.log(`Navigating to course ${courseIdToNavigate} from deep link.`);
+        router.push({
+          pathname: `/courses/${courseIdToNavigate}`,
+          params: { course: JSON.stringify(targetCourse) },
         });
-        
-        router.setParams({ courseId: undefined });
-        router.push(`/courses/${courseIdToNavigate}`);
       } else {
-        console.warn('Course not found in enrolled courses:', courseIdToNavigate);
-        Alert.alert(
-          'Course Not Found',
-          'The course you\'re trying to access is not in your enrolled courses.',
-          [{ text: 'OK' }]
-        );
+        console.warn(`Deep link to course ID ${courseIdToNavigate} failed: Course not found in user's enrolled list.`);
+        // Optionally, show a toast or alert
+        Toast.show({
+          type: 'error',
+          text1: 'Course Not Found',
+          text2: 'You may not be enrolled in the specified course.',
+        });
       }
     }
   }, [params.courseId, isLoading, enrolledCourses]);
@@ -118,40 +161,42 @@ export default function CoursesScreen() {
   useEffect(() => {
     const fetchCourses = async () => {
       if (!currentUserEmail) {
+        // Don't fetch if no email
         return;
       }
       setIsLoading(true);
       setError(null);
       
       if (netInfo?.isInternetReachable) {
-        console.log('You are online. Fetching from API...');
+        console.log('Network is reachable. Fetching courses from API...');
         try {
           const response = await api.get('/my-courses');
-          const courses = response.data.courses;
-          setEnrolledCourses(courses);
-
-          if (currentUserEmail) {
-            for (const course of courses) {
-              await saveCourseToDb(course, currentUserEmail);
-            }
-            console.log('Courses saved to local DB successfully.');
+          if (response.data && response.data.courses) {
+            setEnrolledCourses(response.data.courses);
+            // Save to local DB for offline access
+            await Promise.all(response.data.courses.map((course: Course) => 
+              saveCourseToDb(course, currentUserEmail)
+            ));
+          } else {
+            setEnrolledCourses([]);
           }
-        } catch (err: any) {
-          console.error('Failed to fetch enrolled courses from API:', err.response?.data || err.message);
-          setError('Failed to load courses from the network. Displaying offline data.');
+        } catch (error: any) {
+          console.error('Failed to fetch courses:', error);
+          setError('Failed to load courses. Please try again.');
+          // Attempt to load from DB as a fallback
           await fetchEnrolledCoursesFromDb();
         } finally {
           setIsLoading(false);
         }
       } else {
-        console.log('You are offline. Fetching from local DB...');
+        console.log('Network is not reachable. Fetching courses from local DB...');
         await fetchEnrolledCoursesFromDb();
-        setIsLoading(false);
       }
     };
     
     if (currentUserEmail) {
-      fetchCourses();
+      // Initial fetch is now handled by useFocusEffect
+      // fetchCourses();
     }
   }, [netInfo?.isInternetReachable, currentUserEmail]);
 
@@ -166,7 +211,7 @@ export default function CoursesScreen() {
       const courses = await getEnrolledCoursesFromDb(currentUserEmail);
       setEnrolledCourses(courses);
       if (courses.length === 0) {
-        setError('No courses found in local database.');
+        setError('You are not enrolled in any courses yet.');
       }
     } catch (e) {
       console.error('Failed to get enrolled courses from local DB:', e);
@@ -178,22 +223,22 @@ export default function CoursesScreen() {
     setIsRefreshing(true);
 
     if (!netInfo?.isInternetReachable) {
-      Alert.alert(
-        'Offline',
-        'Please check your internet connection to refresh data.',
-        [{ text: 'OK' }]
-      );
+      Toast.show({
+        type: 'info',
+        text1: 'Offline Mode',
+        text2: 'Cannot refresh while offline. Showing cached data.',
+      });
       setIsRefreshing(false);
       return;
     }
     try {
-      await fetchEnrolledCoursesFromDb();
+      await fetchCourses();
     } catch (error) {
-      console.error('Refresh failed:', error);
+      console.error('Error on refresh:', error);
     } finally {
       setIsRefreshing(false);
     }
-  }, [fetchEnrolledCoursesFromDb]);
+  }, [fetchCourses, netInfo?.isInternetReachable]);
 
   useEffect(() => {
       const checkOfflineWarning = async () => {
@@ -210,7 +255,7 @@ export default function CoursesScreen() {
       style={styles.courseCard}
       onPress={() => {
         console.log('Navigating to course:', item.title);
-        router.push(`/courses/${item.id}`);
+        router.push({ pathname: `/courses/${item.id}`, params: { course: JSON.stringify(item) } });
       }}
       activeOpacity={0.8}
     >

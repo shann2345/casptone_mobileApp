@@ -26,9 +26,9 @@ WebBrowser.maybeCompleteAuthSession();
 
 // Add this configuration before the LoginScreen component
 const googleConfig = {
-  androidClientId: '194606315101-6q4mh9qqbhvuds8ndqck1g5ug94t9g11.apps.googleusercontent.com',
-  iosClientId: 'YOUR_IOS_CLIENT_ID',
-  webClientId: 'YOUR_WEB_CLIENT_ID', // Optional, for web testing
+  androidClientId: '194606315101-m6sevhgm14ur13i1thcv3jsir7a6lf7q.apps.googleusercontent.com', // Replace with your Android client ID
+  iosClientId: 'YOUR_IOS_CLIENT_ID', // Replace with your iOS client ID
+  webClientId: '194606315101-g1egkoqokj85endbcm6k97esgro4uot4.apps.googleusercontent.com', // Your existing web client ID
 };
 
 

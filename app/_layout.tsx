@@ -10,7 +10,7 @@ import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { NetworkProvider } from '../context/NetworkContext';
-import { getAuthToken, getUserData, initializeAuth } from '../lib/api';
+import api, { getAuthToken, getUserData, initializeAuth } from '../lib/api';
 import { initDb } from '../lib/localDb';
 
 export default function RootLayout() {
@@ -41,8 +41,25 @@ export default function RootLayout() {
         
         if (token && userData) {
           console.log('✅ Existing authentication found for user:', userData.email);
-          console.log('🎯 Redirecting to app dashboard');
-          setInitialRoute('(app)');
+          
+          // Check verification status before deciding where to redirect
+          try {
+            const verificationResponse = await api.get('/user/verification-status');
+            const isVerified = verificationResponse.data.is_verified;
+            
+            if (isVerified) {
+              console.log('🎯 User is verified - Redirecting to app dashboard');
+              setInitialRoute('(app)');
+            } else {
+              console.log('⚠️ User is not verified - Redirecting to verify-notice');
+              setInitialRoute('(auth)/verify-notice');
+            }
+          } catch (error) {
+            console.error('❌ Error checking verification status:', error);
+            // If we can't check verification (e.g., offline), redirect to verify-notice to be safe
+            console.log('🎯 Cannot verify status - Redirecting to verify-notice');
+            setInitialRoute('(auth)/verify-notice');
+          }
         } else {
           console.log('❌ No existing authentication found');
           console.log('🎯 Redirecting to login');

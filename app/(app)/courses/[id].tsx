@@ -434,7 +434,7 @@ export default function CourseDetailsScreen() {
       >
         <View style={styles.headerContent}>
           <Text style={styles.courseTitle}>{courseDetail?.title || 'Course Access Blocked'}</Text>
-          <Text style={styles.courseCode}>{courseDetail?.course_code}</Text>
+          <Text style={styles.courseCode}>{courseDetail?.description}</Text>
           
           {!timeManipulationDetected && courseDetail && (
             <>
@@ -445,7 +445,7 @@ export default function CourseDetailsScreen() {
                 </Text>
               </View>
               
-              <View style={styles.courseStats}>
+              {/* <View style={styles.courseStats}>
                 <View style={styles.statItem}>
                   <Text style={styles.statValue}>{courseDetail.credits}</Text>
                   <Text style={styles.statLabel}>Credits</Text>
@@ -458,7 +458,7 @@ export default function CourseDetailsScreen() {
                   <Text style={styles.statValue}>{courseDetail.status}</Text>
                   <Text style={styles.statLabel}>Status</Text>
                 </View>
-              </View>
+              </View> */}
             </>
           )}
           
