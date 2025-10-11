@@ -4,7 +4,7 @@ import * as SecureStore from 'expo-secure-store';
 import { establishTimeBaseline, getSavedServerTime, saveAssessmentDetailsToDb, saveServerTime, updateOnlineSync } from './localDb';
 
 export const API_BASE_URL = __DEV__ 
-  ? 'http://192.168.1.13:8000/api'  
+  ? 'http://192.168.1.14:8000/api'  
   : 'https://olinlms.com/api'; 
 
 const api = axios.create({
@@ -57,14 +57,15 @@ api.interceptors.response.use(
 );
 
 // Function to store the token and set up authorization
-export const storeAuthToken = async (token: string) => {
+export const storeAuthToken = async (token: string, expiresAt?: string) => {
   try {
     console.log('💾 Attempting to store auth token...');
     await SecureStore.setItemAsync('user_token', token);
-    
+    if (expiresAt) {
+      await SecureStore.setItemAsync('token_expires_at', expiresAt);
+    }
     // Set the authorization header in axios defaults
     api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-    
     console.log('✅ Auth token stored successfully in SecureStore');
     
     // Verify it was stored
@@ -420,23 +421,31 @@ export const deleteProfileImage = async () => {
   }
 };
 
-// Add this function to your api.ts file
-
 export const googleAuth = async (googleUser: {
   id: string;
   email: string;
   name: string;
   picture?: string;
+  given_name?: string;
+  family_name?: string;
 }) => {
   try {
     console.log('🚀 Authenticating with backend using Google data...');
-    const response = await api.post('/auth/google', googleUser);
+    const response = await api.post('/auth/google', {
+      google_id: googleUser.id,
+      email: googleUser.email,
+      name: googleUser.name,
+      avatar: googleUser.picture,
+      given_name: googleUser.given_name,
+      family_name: googleUser.family_name,
+    });
 
     if (response.status === 200 && response.data.token) {
-      const { user, token, is_new_user } = response.data;
+      // **MODIFICATION**: Destructure is_verified from the response
+      const { user, token, is_new_user, is_verified, token_expires_at } = response.data;
 
       // Store token and user data
-      await storeAuthToken(token);
+      await storeAuthToken(token, token_expires_at);
       await storeUserData(user);
 
       console.log('✅ Google authentication successful.');
@@ -444,6 +453,7 @@ export const googleAuth = async (googleUser: {
         success: true,
         user,
         isNewUser: is_new_user,
+        isVerified: is_verified, // **MODIFICATION**: Pass the flag to the UI
       };
     } else {
       throw new Error('Backend authentication failed.');

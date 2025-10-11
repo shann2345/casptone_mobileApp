@@ -20,9 +20,7 @@ WebBrowser.maybeCompleteAuthSession();
 
 // Add this configuration before the SignupScreen component (same as login)
 const googleConfig = {
-  androidClientId: '194606315101-m6sevhgm14ur13i1thcv3jsir7a6lf7q.apps.googleusercontent.com', // Replace with your Android client ID
-  iosClientId: 'YOUR_IOS_CLIENT_ID', // Replace with your iOS client ID
-  webClientId: '194606315101-g1egkoqokj85endbcm6k97esgro4uot4.apps.googleusercontent.com', // Your existing web client ID
+  androidClientId: '194606315101-b2ihku865cct78jmvnu9abl6niqed24f.apps.googleusercontent.com', // Replace with your Android client ID
 };
 
 interface Errors {

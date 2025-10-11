@@ -85,11 +85,28 @@ export default function AttemptQuizScreen() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [timeManipulationDetected, setTimeManipulationDetected] = useState(false);
   const [autoSubmitting, setAutoSubmitting] = useState(false); // Track auto-submission
+  const [shuffledQuestions, setShuffledQuestions] = useState<SubmittedQuestion[]>([]);
 
   // Update the ref whenever studentAnswers state changes
   useEffect(() => {
     studentAnswersRef.current = studentAnswers;
   }, [studentAnswers]);
+
+  useEffect(() => {
+    if (submittedAssessment && submittedAssessment.submitted_questions.length > 0 && shuffledQuestions.length === 0) {
+      // Fisher-Yates shuffle algorithm to randomize for UX only
+      const shuffleArray = (array: SubmittedQuestion[]) => {
+        const newArray = [...array];
+        for (let i = newArray.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
+        }
+        return newArray;
+      };
+      const shuffled = shuffleArray(submittedAssessment.submitted_questions);
+      setShuffledQuestions(shuffled);
+    }
+  }, [submittedAssessment]);
 
   useEffect(() => {
     // Determine which ID to use based on the mode
@@ -470,38 +487,72 @@ export default function AttemptQuizScreen() {
           const processedQuestions = localQuestions.map(q => {
             let parsedOptions: any[] = [];
             
-            if (q.options) {
-              try {
-                if (typeof q.options === 'string') {
-                  const trimmed = q.options.trim();
-                  if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
-                    parsedOptions = JSON.parse(q.options);
-                  } else {
-                    console.warn(`Question ${q.id} has non-JSON options string:`, q.options);
-                    parsedOptions = [];
+            // Special handling for true_false questions
+            if (q.question_type === 'true_false') {
+              // If options exist, parse them
+              if (q.options) {
+                try {
+                  if (typeof q.options === 'string') {
+                    const trimmed = q.options.trim();
+                    if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+                      parsedOptions = JSON.parse(q.options);
+                    } else {
+                      parsedOptions = [];
+                    }
+                  } else if (Array.isArray(q.options)) {
+                    parsedOptions = q.options;
+                  } else if (typeof q.options === 'object' && q.options !== null) {
+                    parsedOptions = Object.values(q.options);
                   }
-                } else if (Array.isArray(q.options)) {
-                  parsedOptions = q.options;
-                } else if (typeof q.options === 'object' && q.options !== null) {
-                  parsedOptions = Object.values(q.options);
+                } catch (e) {
+                  console.error('Failed to parse true/false options for question', q.id, 'Error:', e);
+                  parsedOptions = [];
                 }
-              } catch (e) {
-                console.error('Failed to parse options for question', q.id, 'Error:', e);
-                console.error('Problematic options value:', q.options);
-                parsedOptions = [];
+              }
+              
+              // If no options or empty options, create default True/False options
+              if (parsedOptions.length === 0) {
+                console.log(`Creating default True/False options for question ${q.id}`);
+                parsedOptions = [
+                  { id: 1, text: 'True', option_text: 'True', is_correct: false },
+                  { id: 2, text: 'False', option_text: 'False', is_correct: false }
+                ];
+              }
+            } else {
+              // Handle other question types (existing logic)
+              if (q.options) {
+                try {
+                  if (typeof q.options === 'string') {
+                    const trimmed = q.options.trim();
+                    if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+                      parsedOptions = JSON.parse(q.options);
+                    } else {
+                      console.warn(`Question ${q.id} has non-JSON options string:`, q.options);
+                      parsedOptions = [];
+                    }
+                  } else if (Array.isArray(q.options)) {
+                    parsedOptions = q.options;
+                  } else if (typeof q.options === 'object' && q.options !== null) {
+                    parsedOptions = Object.values(q.options);
+                  }
+                } catch (e) {
+                  console.error('Failed to parse options for question', q.id, 'Error:', e);
+                  console.error('Problematic options value:', q.options);
+                  parsedOptions = [];
+                }
               }
             }
 
             const submittedAnswer = localAnswers[q.id]?.answer;
             const submittedOptions = parsedOptions.map((option, index) => {
-              const optionId = option.id || index;
+              const optionId = option.id || index + 1;
               let isSelected = false;
 
               // Check if this option was selected in the saved answers
               if (q.question_type === 'multiple_choice' || q.question_type === 'true_false') {
                 if (Array.isArray(submittedAnswer)) {
                   isSelected = submittedAnswer.includes(optionId);
-                } else {
+                } else if (submittedAnswer !== undefined && submittedAnswer !== null) {
                   // For single-select, submittedAnswer will be a number, not an array.
                   isSelected = submittedAnswer === optionId;
                 }
@@ -510,7 +561,7 @@ export default function AttemptQuizScreen() {
               return {
                 id: optionId,
                 submitted_question_id: q.id,
-                question_option_id: option.id || option.question_option_id || index,
+                question_option_id: option.id || option.question_option_id || optionId,
                 option_text: option.text || option.option_text || option.toString(),
                 is_correct_option: option.is_correct || false,
                 is_selected: isSelected,
@@ -1065,7 +1116,7 @@ export default function AttemptQuizScreen() {
         )}
       </View>
 
-      {submittedAssessment.submitted_questions.map((question, qIndex) => (
+      {shuffledQuestions.map((question, qIndex) => (
         <View key={question.id} style={[styles.questionCard, (timeManipulationDetected || autoSubmitting) && styles.disabledCard]}>
           <View style={styles.questionHeader}>
             <Text style={styles.questionText}>

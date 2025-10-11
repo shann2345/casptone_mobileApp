@@ -1,5 +1,3 @@
-// app/(auth)/login.tsx
-
 import { Ionicons } from '@expo/vector-icons';
 import * as Google from 'expo-auth-session/providers/google';
 import { useRouter } from 'expo-router';
@@ -24,11 +22,9 @@ import { resetTimeCheckData } from '../../lib/localDb';
 
 WebBrowser.maybeCompleteAuthSession();
 
-// Add this configuration before the LoginScreen component
 const googleConfig = {
-  androidClientId: '194606315101-m6sevhgm14ur13i1thcv3jsir7a6lf7q.apps.googleusercontent.com', // Replace with your Android client ID
-  iosClientId: 'YOUR_IOS_CLIENT_ID', // Replace with your iOS client ID
-  webClientId: '194606315101-g1egkoqokj85endbcm6k97esgro4uot4.apps.googleusercontent.com', // Your existing web client ID
+  androidClientId: '194606315101-b2ihku865cct78jmvnu9abl6niqed24f.apps.googleusercontent.com',
+  webClientId: '194606315101-t6942gavub8kh16dogd0k600upkctcf2.apps.googleusercontent.com', 
 };
 
 
@@ -81,24 +77,43 @@ export default function LoginScreen() {
       );
       const googleUserData = await userInfoResponse.json();
       
+      console.log('ðŸ“‹ Google user data:', googleUserData);
+      
       // Authenticate with your backend
       const result = await googleAuth({
         id: googleUserData.id,
         email: googleUserData.email,
         name: googleUserData.name,
         picture: googleUserData.picture,
+        given_name: googleUserData.given_name,
+        family_name: googleUserData.family_name,
       });
 
+      // **MODIFICATION**: Reworked logic for clarity and to use the new API response flag
       if (result.success) {
+        console.log('✅ Google auth result:', result);
         await resetTimeCheckData(result.user.email);
         
-        Alert.alert(
-          'Success', 
-          result.isNewUser ? 'Account created successfully!' : 'Signed in successfully!'
-        );
-        
-        router.replace('/(app)');
+        // Use the explicit 'isVerified' flag from the API response
+        if (result.isVerified) {
+          // Email already verified, go to dashboard
+          Alert.alert(
+            'Success', 
+            'Signed in successfully!'
+          );
+          console.log('➡️ Navigating to /(app)');
+          router.replace('/(app)');
+        } else {
+          // Email not verified, go to verification screen
+          Alert.alert(
+            result.isNewUser ? 'Account Created' : 'Verify Your Email', 
+            'Please check your email for a verification code to complete your registration.'
+          );
+          console.log('➡️ Navigating to /(auth)/verify-notice');
+          router.replace('/(auth)/verify-notice');
+        }
       } else {
+        console.error('❌ Google auth failed:', result.message);
         Alert.alert('Authentication Failed', result.message || 'Google sign-in failed');
       }
     } catch (error: any) {
@@ -230,9 +245,9 @@ export default function LoginScreen() {
             </View>
           </TouchableOpacity>
 
-          <TouchableOpacity onPress={() => router.push('/(auth)/signup')}>
+          {/* <TouchableOpacity onPress={() => router.push('/(auth)/signup')}>
             <Text style={styles.linkText}>Don't have an account? Sign Up</Text>
-          </TouchableOpacity>
+          </TouchableOpacity> */}
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
