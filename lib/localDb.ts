@@ -5,7 +5,6 @@ import { Platform } from 'react-native';
 const DB_NAME = 'multiuser.db';
 const dbDirectory = `${FileSystem.documentDirectory}SQLite`;
 
-// Add near the top with other type definitions
 type TimeCheckRecord = {
   user_email: string;
   server_time: string;
@@ -14,8 +13,12 @@ type TimeCheckRecord = {
   time_check_sequence: number;
   last_online_sync: number;
   manipulation_detected: number;
-  cumulative_forward_drift?: number; // NEW: Track cumulative suspicious forward movement
-  last_drift_reset?: number; // NEW: When we last reset the drift counter
+  cumulative_forward_drift?: number;
+  last_drift_reset?: number;
+  // NEW: Track suspicious patterns
+  recent_jumps_count?: number;       
+  last_jump_reset?: number;         
+  suspicious_pattern_count?: number;  
 };
 
 // Add this type definition near the top of your file
@@ -138,7 +141,10 @@ export const initDb = async (): Promise<void> => {
               last_online_sync INTEGER,
               manipulation_detected INTEGER DEFAULT 0,
               cumulative_forward_drift INTEGER DEFAULT 0,
-              last_drift_reset INTEGER
+              last_drift_reset INTEGER,
+              recent_jumps_count INTEGER DEFAULT 0,
+              last_jump_reset INTEGER,
+              suspicious_pattern_count INTEGER DEFAULT 0
             );`,
             
             // 2. offline_courses (parent table)
@@ -1921,15 +1927,14 @@ export const saveServerTime = async (
     
     console.log('💾 Saving server time baseline with online sync timestamp');
 
-    // FIXED: Include cumulative_forward_drift and last_drift_reset
     await db.runAsync(
       `INSERT OR REPLACE INTO app_state 
-       (user_email, server_time, server_time_offset, last_time_check, time_check_sequence, last_online_sync, manipulation_detected, cumulative_forward_drift, last_drift_reset) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
-      [userEmail, apiServerTime, offset, deviceTimeMs, currentSequence, deviceTimeMs, 0, 0, deviceTimeMs]
+       (user_email, server_time, server_time_offset, last_time_check, time_check_sequence, last_online_sync, manipulation_detected, cumulative_forward_drift, last_drift_reset, recent_jumps_count, last_jump_reset, suspicious_pattern_count) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      [userEmail, apiServerTime, offset, deviceTimeMs, currentSequence, deviceTimeMs, 0, 0, deviceTimeMs, 0, deviceTimeMs, 0]
     );
     
-    console.log('✅ Server time baseline saved with strict monitoring enabled');
+    console.log('✅ Server time baseline saved with enhanced pattern detection');
   } catch (error) {
     console.error('❌ Failed to save server time:', error);
     throw error;
@@ -1967,99 +1972,157 @@ export const getSavedServerTime = async (userEmail: string): Promise<string | nu
     const timeSinceLastCheck = currentDeviceTime - lastCheckTime;
     const timeSinceLastOnlineSync = currentDeviceTime - lastOnlineSync;
     
-    // UPDATED LIMITS - Focus on manipulation detection, not usage time
-    const MAX_APP_INACTIVITY = 90 * 24 * 60 * 60 * 1000; // 90 days - app not used
-    const MAX_OFFLINE_USAGE = 90 * 24 * 60 * 60 * 1000;   // 90 days - continuous offline usage
-    const BACKWARD_TIME_LIMIT = 2 * 60 * 1000; // 2 minutes - allow for minor clock adjustments
-    const CUMULATIVE_DRIFT_LIMIT = 4 * 60 * 60 * 1000; // 4 hours total drift allowed per week
-    const DRIFT_RESET_PERIOD = 7 * 24 * 60 * 60 * 1000; // Reset every 7 days
+    // CONSTANTS
+    const MAX_APP_INACTIVITY = 12 * 60 * 60 * 1000; // 12 hours
+    const MAX_OFFLINE_USAGE = 7 * 24 * 60 * 60 * 1000; // 7 days
+    const BACKWARD_TIME_LIMIT = 2 * 60 * 1000; // 2 minutes
+    const IMMEDIATE_BLOCK_THRESHOLD = 20 * 60 * 60 * 1000; // 20 hours
+    const TIME_MANIPULATION_LIMIT = 5 * 60 * 60 * 1000; // 5 hours
+    const DRIFT_RESET_PERIOD = 7 * 24 * 60 * 60 * 1000; // Reset weekly
+    
+    // 🆕 NEW CONSTANTS FOR PATTERN DETECTION
+    const SMALL_JUMP_THRESHOLD = 30 * 60 * 1000; // 30 minutes
+    const LARGE_JUMP_THRESHOLD = 60 * 60 * 1000; // 1 hour
+    const JUMP_COUNT_WINDOW = 60 * 60 * 1000; // 1 hour window
+    const MAX_SMALL_JUMPS_PER_HOUR = 3; // Max 3 jumps in 1 hour
+    const MAX_SUSPICIOUS_PATTERNS = 5; // Block after 5 suspicious patterns
     
     const lastDriftReset = record.last_drift_reset || lastOnlineSync;
     const timeSinceDriftReset = currentDeviceTime - lastDriftReset;
+    
+    const lastJumpReset = record.last_jump_reset || lastCheckTime;
+    const timeSinceJumpReset = currentDeviceTime - lastJumpReset;
     
     console.log('🔍 Time analysis:', {
       timeSinceLastCheck: Math.round(timeSinceLastCheck / 1000 / 60), // minutes
       timeSinceLastOnlineSync: Math.round(timeSinceLastOnlineSync / 1000 / 60 / 60), // hours
       cumulativeDrift: Math.round((record.cumulative_forward_drift || 0) / 1000 / 60), // minutes
-      timeSinceDriftReset: Math.round(timeSinceDriftReset / 1000 / 60 / 60), // hours
+      recentJumpsCount: record.recent_jumps_count || 0,
+      suspiciousPatternCount: record.suspicious_pattern_count || 0,
     });
     
-    // Check 1: App inactivity too long (app wasn't opened)
-    if (timeSinceLastCheck > MAX_APP_INACTIVITY) {
-      console.log('⚠️ App inactive for too long, require fresh login');
-      return null;
-    }
-    
-    // Check 2: Been offline for too long without syncing
-    if (timeSinceLastOnlineSync > MAX_OFFLINE_USAGE) {
-      console.log('⚠️ Offline usage period exceeded, require online sync');
-      return null;
-    }
-    
-    // Check 3: Backward time detection (device clock moved backward)
+    // ✅ Check 1: Backward time FIRST
     if (timeSinceLastCheck < -BACKWARD_TIME_LIMIT) {
       console.log('❌ Backward time manipulation detected');
       await flagTimeManipulation(userEmail, 'Backward time jump detected');
       return null;
     }
     
-    // Check 4: Detect forward time manipulation
-    // This catches when device time has been moved forward
+    // ✅ Check 2: App inactivity (only with valid positive time)
+    if (timeSinceLastCheck > MAX_APP_INACTIVITY) {
+      console.log('❌ App not opened for 12+ hours - blocking access');
+      console.log(`📊 Details: Last check was ${Math.round(timeSinceLastCheck / 1000 / 60 / 60)} hours ago`);
+      return null;
+    }
+    
+    // ✅ Check 3: Total offline time
+    if (timeSinceLastOnlineSync > MAX_OFFLINE_USAGE) {
+      console.log('⚠️ Offline for 7+ days, require online sync');
+      return null;
+    }
+    
+    // ✅ Check 4: Forward time manipulation detection
     if (timeSinceLastCheck > 0) {
-      // The key insight: we should detect large forward jumps directly
-      // A normal app session shouldn't have huge time gaps unless the user manipulated time
-      const LARGE_TIME_JUMP_THRESHOLD = 2 * 60 * 60 * 1000; // 2 hours
-      const VERY_LARGE_JUMP_THRESHOLD = 12 * 60 * 60 * 1000; // 12 hours - immediate flag
-      
-      console.log('⏱️ Forward time jump analysis:', {
-        timeSinceLastCheck: Math.round(timeSinceLastCheck / 1000 / 60), // minutes
-        largeJumpThreshold: Math.round(LARGE_TIME_JUMP_THRESHOLD / 1000 / 60), // minutes
-        veryLargeJumpThreshold: Math.round(VERY_LARGE_JUMP_THRESHOLD / 1000 / 60), // minutes
+      console.log('🔍 Checking forward time manipulation:', {
+        timeSinceLastCheck: Math.round(timeSinceLastCheck / 1000 / 60 / 60), // hours
+        immediateBlockThreshold: Math.round(IMMEDIATE_BLOCK_THRESHOLD / 1000 / 60 / 60), // hours
+        weeklyManipulationLimit: Math.round(TIME_MANIPULATION_LIMIT / 1000 / 60 / 60), // hours
       });
       
-      // Immediate flag for very large jumps (12+ hours)
-      if (timeSinceLastCheck > VERY_LARGE_JUMP_THRESHOLD) {
-        console.log('❌ IMMEDIATE: Very large forward time jump detected');
+      // RULE 1: Immediate block for large jumps (20+ hours)
+      if (timeSinceLastCheck > IMMEDIATE_BLOCK_THRESHOLD) {
+        console.log('❌ IMMEDIATE BLOCK: Large time jump detected (20+ hours)');
         await flagTimeManipulation(userEmail, 'Large forward time jump detected');
         return null;
       }
       
-      // Track cumulative suspicious time jumps for smaller but repeated manipulation
-      if (timeSinceLastCheck > LARGE_TIME_JUMP_THRESHOLD) {
-        let cumulativeDrift = record.cumulative_forward_drift || 0;
+      // 🆕 RULE 2A: PATTERN DETECTION - Catch the 59-minute loophole
+      if (timeSinceLastCheck >= SMALL_JUMP_THRESHOLD && timeSinceLastCheck < LARGE_JUMP_THRESHOLD) {
+        console.log('🚨 Detected suspicious time jump (30-59 minutes)');
         
-        // Reset cumulative drift if it's been more than DRIFT_RESET_PERIOD
+        let recentJumpsCount = record.recent_jumps_count || 0;
+        let suspiciousPatternCount = record.suspicious_pattern_count || 0;
+        
+        // Reset jump counter every hour
+        if (timeSinceJumpReset > JUMP_COUNT_WINDOW) {
+          console.log('🔄 Resetting hourly jump counter');
+          recentJumpsCount = 0;
+          await db.runAsync(
+            `UPDATE app_state SET recent_jumps_count = 0, last_jump_reset = ? WHERE user_email = ?;`,
+            [currentDeviceTime, userEmail]
+          );
+        }
+        
+        // Increment jump counter
+        recentJumpsCount++;
+        
+        console.log(`📊 Small jump detected: ${recentJumpsCount}/${MAX_SMALL_JUMPS_PER_HOUR} in last hour`);
+        
+        // Check if user is making too many small jumps
+        if (recentJumpsCount > MAX_SMALL_JUMPS_PER_HOUR) {
+          suspiciousPatternCount++;
+          console.log(`⚠️ SUSPICIOUS PATTERN DETECTED! Count: ${suspiciousPatternCount}/${MAX_SUSPICIOUS_PATTERNS}`);
+          
+          // Update suspicious pattern count
+          await db.runAsync(
+            `UPDATE app_state SET suspicious_pattern_count = ?, recent_jumps_count = 0, last_jump_reset = ? WHERE user_email = ?;`,
+            [suspiciousPatternCount, currentDeviceTime, userEmail]
+          );
+          
+          // Block if too many suspicious patterns
+          if (suspiciousPatternCount >= MAX_SUSPICIOUS_PATTERNS) {
+            console.log('❌ BLOCKED: Too many suspicious time manipulation patterns');
+            await flagTimeManipulation(userEmail, 'Repeated suspicious time jump patterns detected');
+            return null;
+          }
+          
+          // Reset jump counter after recording the pattern
+          recentJumpsCount = 0;
+        } else {
+          // Update jump counter
+          await db.runAsync(
+            `UPDATE app_state SET recent_jumps_count = ?, last_jump_reset = ? WHERE user_email = ?;`,
+            [recentJumpsCount, lastJumpReset || currentDeviceTime, userEmail]
+          );
+        }
+      }
+      
+      // RULE 2B: Accumulate forward jumps over 1 hour
+      if (timeSinceLastCheck > LARGE_JUMP_THRESHOLD) {
+        let cumulativeManipulation = record.cumulative_forward_drift || 0;
+        
+        // Reset weekly counter
         if (timeSinceDriftReset > DRIFT_RESET_PERIOD) {
-          console.log('🔄 Resetting cumulative drift counter (7-day period elapsed)');
-          cumulativeDrift = 0;
+          console.log('🔄 Resetting weekly manipulation counter');
+          cumulativeManipulation = 0;
           await db.runAsync(
             `UPDATE app_state SET cumulative_forward_drift = 0, last_drift_reset = ? WHERE user_email = ?;`,
             [currentDeviceTime, userEmail]
           );
         }
         
-        // Add this suspicious jump to cumulative drift
-        const suspiciousJump = timeSinceLastCheck - LARGE_TIME_JUMP_THRESHOLD;
-        cumulativeDrift += suspiciousJump;
+        // Add the jump amount over 1 hour to accumulation
+        const manipulationAmount = timeSinceLastCheck - LARGE_JUMP_THRESHOLD;
+        cumulativeManipulation += manipulationAmount;
         
-        console.log('⚠️ Suspicious forward time jump detected:', {
-          thisJump: Math.round(timeSinceLastCheck / 1000 / 60), // minutes
-          suspiciousPortion: Math.round(suspiciousJump / 1000 / 60), // minutes
-          cumulativeDrift: Math.round(cumulativeDrift / 1000 / 60), // minutes
-          limit: Math.round(CUMULATIVE_DRIFT_LIMIT / 1000 / 60) // minutes
+        console.log('📊 Time manipulation accumulation:', {
+          thisJump: Math.round(timeSinceLastCheck / 1000 / 60 / 60), // hours
+          manipulationAmount: Math.round(manipulationAmount / 1000 / 60 / 60), // hours
+          totalAccumulated: Math.round(cumulativeManipulation / 1000 / 60 / 60), // hours
+          weeklyLimit: Math.round(TIME_MANIPULATION_LIMIT / 1000 / 60 / 60), // hours
         });
         
-        // Check if cumulative drift exceeds limit
-        if (cumulativeDrift > CUMULATIVE_DRIFT_LIMIT) {
-          console.log('❌ CUMULATIVE forward time manipulation detected - total drift exceeded limit');
-          await flagTimeManipulation(userEmail, 'Cumulative forward time manipulation detected');
+        // Check if weekly limit exceeded
+        if (cumulativeManipulation > TIME_MANIPULATION_LIMIT) {
+          console.log('❌ WEEKLY LIMIT EXCEEDED: Time manipulation limit reached');
+          await flagTimeManipulation(userEmail, 'Weekly time manipulation limit exceeded');
           return null;
         }
         
-        // Update cumulative drift
+        // Update the accumulated manipulation
         await db.runAsync(
           `UPDATE app_state SET cumulative_forward_drift = ? WHERE user_email = ?;`,
-          [cumulativeDrift, userEmail]
+          [cumulativeManipulation, userEmail]
         );
       }
     }
@@ -2072,7 +2135,7 @@ export const getSavedServerTime = async (userEmail: string): Promise<string | nu
       return null;
     }
     
-    // Update the last check time
+    // ✅ Update the last check time
     await db.runAsync(
       `UPDATE app_state SET last_time_check = ?, time_check_sequence = ? WHERE user_email = ?;`,
       [currentDeviceTime, currentSequence, userEmail]
@@ -2087,6 +2150,7 @@ export const getSavedServerTime = async (userEmail: string): Promise<string | nu
     return null;
   }
 };
+
 export const resetTimeCheckData = async (userEmail: string): Promise<void> => {
   try {
     await initDb();
@@ -2136,25 +2200,17 @@ export const detectTimeManipulation = async (
     
     const currentDeviceTime = Date.now();
     const lastCheckTime = record.last_time_check;
-    const serverTimeOffset = record.server_time_offset;
     
     const timeSinceLastCheck = currentDeviceTime - lastCheckTime;
     
-    const MAX_APP_INACTIVITY = 90 * 24 * 60 * 60 * 1000;
+    const MAX_APP_INACTIVITY = 12 * 60 * 60 * 1000;
     const BACKWARD_TIME_LIMIT = 2 * 60 * 1000;
-    const CUMULATIVE_DRIFT_LIMIT = 4 * 60 * 60 * 1000;
+    const IMMEDIATE_BLOCK_THRESHOLD = 20 * 60 * 60 * 1000;
+    const TIME_MANIPULATION_LIMIT = 5 * 60 * 60 * 1000;
     
-    // Check 1: App inactivity
-    if (timeSinceLastCheck > MAX_APP_INACTIVITY) {
-      return { 
-        isValid: false, 
-        reason: 'App has been inactive for too long. Please log in again.',
-        requiresOnlineSync: true
-      };
-    }
-    
-    // Check 2: Backward time
+    // ✅ FIX: Check backward time FIRST before checking app inactivity
     if (timeSinceLastCheck < -BACKWARD_TIME_LIMIT) {
+      console.log('❌ Backward time manipulation detected');
       await flagTimeManipulation(userEmail, 'Backward time manipulation');
       return { 
         isValid: false, 
@@ -2163,31 +2219,39 @@ export const detectTimeManipulation = async (
       };
     }
     
+    // ✅ NOW check app inactivity with valid time
+    if (timeSinceLastCheck > MAX_APP_INACTIVITY) {
+      console.log('❌ App not opened for 12+ hours - blocking access');
+      console.log(`📊 Details: Last check was ${Math.round(timeSinceLastCheck / 1000 / 60 / 60)} hours ago`);
+      return { 
+        isValid: false, 
+        reason: 'App must be opened every 12 hours. Please use the app regularly.',
+        requiresOnlineSync: false
+      };
+    }
+    
     // Check 3: Forward time manipulation detection
     if (timeSinceLastCheck > 0) {
-      const LARGE_TIME_JUMP_THRESHOLD = 2 * 60 * 60 * 1000; // 2 hours
-      const VERY_LARGE_JUMP_THRESHOLD = 12 * 60 * 60 * 1000; // 12 hours
-      
-      // Immediate flag for very large jumps
-      if (timeSinceLastCheck > VERY_LARGE_JUMP_THRESHOLD) {
+      // Immediate block for large jumps
+      if (timeSinceLastCheck > IMMEDIATE_BLOCK_THRESHOLD) {
         await flagTimeManipulation(userEmail, 'Large forward time jump');
         return { 
           isValid: false, 
-          reason: 'Large forward time manipulation detected. Please connect to the internet.',
+          reason: 'Large time manipulation detected. Please connect to the internet.',
           requiresOnlineSync: true
         };
       }
       
-      // Check cumulative smaller jumps
-      if (timeSinceLastCheck > LARGE_TIME_JUMP_THRESHOLD) {
-        const cumulativeDrift = record.cumulative_forward_drift || 0;
-        const suspiciousJump = timeSinceLastCheck - LARGE_TIME_JUMP_THRESHOLD;
+      // Check weekly accumulation limit
+      if (timeSinceLastCheck > 60 * 60 * 1000) {
+        const cumulativeManipulation = record.cumulative_forward_drift || 0;
+        const manipulationAmount = timeSinceLastCheck - (60 * 60 * 1000);
         
-        if (cumulativeDrift + suspiciousJump > CUMULATIVE_DRIFT_LIMIT) {
-          await flagTimeManipulation(userEmail, 'Cumulative forward time manipulation');
+        if (cumulativeManipulation + manipulationAmount > TIME_MANIPULATION_LIMIT) {
+          await flagTimeManipulation(userEmail, 'Weekly time manipulation limit');
           return { 
             isValid: false, 
-            reason: 'Repeated forward time manipulation detected. Please connect to the internet.',
+            reason: 'Weekly time manipulation limit exceeded. Please connect to the internet.',
             requiresOnlineSync: true
           };
         }
@@ -2237,17 +2301,19 @@ export const clearManipulationFlag = async (userEmail: string): Promise<void> =>
       `UPDATE app_state SET 
         manipulation_detected = 0,
         cumulative_forward_drift = 0,
-        last_drift_reset = ?
+        last_drift_reset = ?,
+        recent_jumps_count = 0,
+        last_jump_reset = ?,
+        suspicious_pattern_count = 0
        WHERE user_email = ?;`,
-      [currentTime, userEmail]
+      [currentTime, currentTime, userEmail]
     );
     
-    console.log('✅ Manipulation flag and drift counter cleared');
+    console.log('✅ All manipulation counters cleared');
   } catch (error) {
     console.error('❌ Failed to clear manipulation flag:', error);
   }
 };
-
 export const updateOnlineSync = async (userEmail: string): Promise<void> => {
   try {
     await initDb();

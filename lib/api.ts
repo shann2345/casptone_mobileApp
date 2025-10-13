@@ -4,7 +4,7 @@ import * as SecureStore from 'expo-secure-store';
 import { establishTimeBaseline, getSavedServerTime, saveAssessmentDetailsToDb, saveServerTime, updateOnlineSync } from './localDb';
 
 export const API_BASE_URL = __DEV__ 
-  ? 'http://192.168.1.14:8000/api'  
+  ? 'http://192.168.1.11:8000/api'  
   : 'https://olinlms.com/api'; 
 
 const api = axios.create({
@@ -441,25 +441,50 @@ export const googleAuth = async (googleUser: {
     });
 
     if (response.status === 200 && response.data.token) {
-      // **MODIFICATION**: Destructure is_verified from the response
       const { user, token, is_new_user, is_verified, token_expires_at } = response.data;
 
-      // Store token and user data
+      // **CHECK: Verify user is a student (extra safety check)**
+      if (user.role !== 'student') {
+        console.error('❌ Non-student account attempted to login');
+        return {
+          success: false,
+          message: `Access denied. This app is only for students. Please use the web portal for ${user.role} access.`,
+          error: 'invalid_role',
+        };
+      }
+
+      console.log('💾 Storing auth data immediately...');
+      
+      api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+      console.log('✅ Authorization header set synchronously');
+      
       await storeAuthToken(token, token_expires_at);
       await storeUserData(user);
-
-      console.log('✅ Google authentication successful.');
+      
+      console.log('✅ Google authentication successful and auth state committed');
+      
       return {
         success: true,
         user,
         isNewUser: is_new_user,
-        isVerified: is_verified, // **MODIFICATION**: Pass the flag to the UI
+        isVerified: is_verified,
       };
     } else {
       throw new Error('Backend authentication failed.');
     }
   } catch (error: any) {
     console.error('❌ Error in googleAuth function:', error.response?.data || error.message);
+    
+    // **NEW: Handle role-based rejection from backend**
+    if (error.response?.status === 403 && error.response?.data?.error === 'invalid_role') {
+      return {
+        success: false,
+        message: error.response.data.message || 'This app is only available for students.',
+        error: 'invalid_role',
+        userRole: error.response.data.user_role,
+      };
+    }
+    
     return {
       success: false,
       message: error.response?.data?.message || 'An unknown error occurred during Google authentication.',

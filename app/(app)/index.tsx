@@ -7,22 +7,22 @@ import { ActivityIndicator, Alert, Animated, Dimensions, FlatList, Modal, Refres
 import { useNetworkStatus } from '../../context/NetworkContext';
 import api, { clearAuthToken, getAuthToken, getServerTime, getUserData, syncOfflineQuiz, syncOfflineSubmission } from '../../lib/api';
 import {
-  deleteOfflineQuizAttempt,
-  deleteOfflineSubmission,
-  downloadAllQuizQuestions,
-  getAssessmentsNeedingSync,
-  getAssessmentsWithoutDetails,
-  getCompletedOfflineQuizzes,
-  getDb,
-  getEnrolledCoursesFromDb,
-  getUnsyncedSubmissions,
-  initDb,
-  resetTimeCheckData,
-  saveCourseDetailsToDb,
-  saveCourseToDb,
-  saveServerTime,
-  syncAllAssessmentDetails,
-  updateTimeSync
+    deleteOfflineQuizAttempt,
+    deleteOfflineSubmission,
+    downloadAllQuizQuestions,
+    getAssessmentsNeedingSync,
+    getAssessmentsWithoutDetails,
+    getCompletedOfflineQuizzes,
+    getDb,
+    getEnrolledCoursesFromDb,
+    getUnsyncedSubmissions,
+    initDb,
+    resetTimeCheckData,
+    saveCourseDetailsToDb,
+    saveCourseToDb,
+    saveServerTime,
+    syncAllAssessmentDetails,
+    updateTimeSync
 } from '../../lib/localDb';
 import { showOfflineModeWarningIfNeeded } from '../../lib/offlineWarning';
 const { width, height } = Dimensions.get('window');
@@ -1456,6 +1456,7 @@ const styles = StyleSheet.create({
   adButtonContainer: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 10, // Add gap for spacing between buttons
   },
   adButtonText: {
     color: '#fff',

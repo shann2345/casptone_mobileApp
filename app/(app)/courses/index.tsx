@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { showOfflineModeWarningIfNeeded } from '../../../lib/offlineWarning';
 
 import {
@@ -67,6 +67,9 @@ export default function CoursesScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
 
+  // Ref to prevent repeated deep link navigation
+  const hasNavigatedToCourseRef = useRef(false);
+
   const fetchCourses = useCallback(async () => {
     if (!currentUserEmail) {
       // Don't fetch if no email
@@ -131,30 +134,46 @@ export default function CoursesScreen() {
     }, [currentUserEmail, fetchCourses])
   );
 
-  // Enhanced deep link navigation logic
+  // Enhanced deep link navigation logic with fix
   useEffect(() => {
-    if (params.courseId && !isLoading && enrolledCourses.length > 0) {
+    if (
+      params.courseId &&
+      !isLoading &&
+      enrolledCourses.length > 0 &&
+      !hasNavigatedToCourseRef.current
+    ) {
       const courseIdToNavigate = params.courseId;
-      
       const targetCourse = enrolledCourses.find(course => 
         course.id.toString() === courseIdToNavigate.toString()
       );
       
       if (targetCourse) {
+        hasNavigatedToCourseRef.current = true;
         console.log(`Navigating to course ${courseIdToNavigate} from deep link.`);
         router.push({
           pathname: `/courses/${courseIdToNavigate}`,
           params: { course: JSON.stringify(targetCourse) },
         });
+        // Clear the param so tab doesn't keep auto-navigating
+        setTimeout(() => {
+          if (router.setParams) {
+            router.setParams({ courseId: undefined });
+          }
+        }, 500);
       } else {
         console.warn(`Deep link to course ID ${courseIdToNavigate} failed: Course not found in user's enrolled list.`);
         // Optionally, show a toast or alert
-        Toast.show({
-          type: 'error',
-          text1: 'Course Not Found',
-          text2: 'You may not be enrolled in the specified course.',
-        });
+        // Toast library: Uncomment if you use Toast
+        // Toast.show({
+        //   type: 'error',
+        //   text1: 'Course Not Found',
+        //   text2: 'You may not be enrolled in the specified course.',
+        // });
       }
+    }
+    // Reset the flag if params.courseId is removed
+    if (!params.courseId) {
+      hasNavigatedToCourseRef.current = false;
     }
   }, [params.courseId, isLoading, enrolledCourses]);
 
@@ -223,11 +242,12 @@ export default function CoursesScreen() {
     setIsRefreshing(true);
 
     if (!netInfo?.isInternetReachable) {
-      Toast.show({
-        type: 'info',
-        text1: 'Offline Mode',
-        text2: 'Cannot refresh while offline. Showing cached data.',
-      });
+      // Toast library: Uncomment if you use Toast
+      // Toast.show({
+      //   type: 'info',
+      //   text1: 'Offline Mode',
+      //   text2: 'Cannot refresh while offline. Showing cached data.',
+      // });
       setIsRefreshing(false);
       return;
     }
@@ -241,14 +261,13 @@ export default function CoursesScreen() {
   }, [fetchCourses, netInfo?.isInternetReachable]);
 
   useEffect(() => {
-      const checkOfflineWarning = async () => {
-        if (!netInfo?.isInternetReachable) {
-          await showOfflineModeWarningIfNeeded();
-        }
-      };
-      
-      checkOfflineWarning();
-    }, [netInfo?.isInternetReachable]);
+    const checkOfflineWarning = async () => {
+      if (!netInfo?.isInternetReachable) {
+        await showOfflineModeWarningIfNeeded();
+      }
+    };
+    checkOfflineWarning();
+  }, [netInfo?.isInternetReachable]);
 
   const renderCourseCard = ({ item, index }: { item: EnrolledCourse; index: number }) => (
     <TouchableOpacity

@@ -7,10 +7,10 @@ const packageName = 'com.shannarlly.mobileappolin';
 export default {
   "expo": {
     "name": "Olin",
-    "slug": "mobile_app",
+    "slug": "olin_app",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/logo.png",
+    "icon": "./assets/images/logoo 1.png",
     "scheme": packageName, // Use the package name as the scheme for consistency
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -21,7 +21,7 @@ export default {
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "foregroundImage": "./assets/images/logoo 1.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
@@ -85,8 +85,11 @@ export default {
       "router": {
         "origin": IS_PROD ? "https://olinlms.com" : undefined
       },
+      // "eas": {
+      //   "projectId": "824ee34b-3739-4280-82b8-dd7a8ba8e5ee"
+      // }
       "eas": {
-        "projectId": "824ee34b-3739-4280-82b8-dd7a8ba8e5ee"
+        "projectId": "3438c390-06db-4c15-a5ab-b41868009b2a"
       }
     }
   }

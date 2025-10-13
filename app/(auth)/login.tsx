@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 
 import { useNetworkStatus } from '../../context/NetworkContext';
+import { useOAuth } from '../../context/OAuthContext'; // NEW IMPORT
 import api, { googleAuth, storeAuthToken, storeUserData } from '../../lib/api';
 import { resetTimeCheckData } from '../../lib/localDb';
 
@@ -26,7 +27,6 @@ const googleConfig = {
   androidClientId: '194606315101-b2ihku865cct78jmvnu9abl6niqed24f.apps.googleusercontent.com',
   webClientId: '194606315101-t6942gavub8kh16dogd0k600upkctcf2.apps.googleusercontent.com', 
 };
-
 
 interface Errors {
   email?: string;
@@ -43,9 +43,11 @@ export default function LoginScreen() {
   const [googleRequest, googleResponse, googlePromptAsync] = Google.useAuthRequest(googleConfig);
 
   const { isConnected, netInfo } = useNetworkStatus();
+  const { startProcessing, stopProcessing } = useOAuth(); // NEW: Use global OAuth context
 
   React.useEffect(() => {
     if (googleResponse?.type === 'success') {
+      startProcessing(); // Show global overlay
       handleGoogleSuccess(googleResponse.authentication?.accessToken);
     }
   }, [googleResponse]);
@@ -65,21 +67,18 @@ export default function LoginScreen() {
   const handleGoogleSuccess = async (accessToken: string | undefined) => {
     if (!accessToken) {
       Alert.alert('Error', 'Google authentication failed - no access token received');
+      stopProcessing();
       return;
     }
-
-    setLoading(true);
     
     try {
-      // Get user info from Google
       const userInfoResponse = await fetch(
         `https://www.googleapis.com/oauth2/v2/userinfo?access_token=${accessToken}`
       );
       const googleUserData = await userInfoResponse.json();
       
-      console.log('ðŸ“‹ Google user data:', googleUserData);
+      console.log('📋 Google user data:', googleUserData);
       
-      // Authenticate with your backend
       const result = await googleAuth({
         id: googleUserData.id,
         email: googleUserData.email,
@@ -89,38 +88,59 @@ export default function LoginScreen() {
         family_name: googleUserData.family_name,
       });
 
-      // **MODIFICATION**: Reworked logic for clarity and to use the new API response flag
       if (result.success) {
         console.log('✅ Google auth result:', result);
         await resetTimeCheckData(result.user.email);
         
-        // Use the explicit 'isVerified' flag from the API response
+        stopProcessing(); // Hide overlay before showing alert
+        
         if (result.isVerified) {
-          // Email already verified, go to dashboard
           Alert.alert(
             'Success', 
-            'Signed in successfully!'
+            'Signed in successfully!',
+            [
+              {
+                text: 'OK',
+                onPress: () => {
+                  console.log('➡️ Navigating to /(app)');
+                  router.replace('/(app)');
+                }
+              }
+            ]
           );
-          console.log('➡️ Navigating to /(app)');
-          router.replace('/(app)');
         } else {
-          // Email not verified, go to verification screen
           Alert.alert(
             result.isNewUser ? 'Account Created' : 'Verify Your Email', 
-            'Please check your email for a verification code to complete your registration.'
+            'Please check your email for a verification code to complete your registration.',
+            [
+              {
+                text: 'OK',
+                onPress: () => {
+                  console.log('➡️ Navigating to /(auth)/verify-notice');
+                  router.replace('/(auth)/verify-notice');
+                }
+              }
+            ]
           );
-          console.log('➡️ Navigating to /(auth)/verify-notice');
-          router.replace('/(auth)/verify-notice');
         }
       } else {
+        stopProcessing();
         console.error('❌ Google auth failed:', result.message);
-        Alert.alert('Authentication Failed', result.message || 'Google sign-in failed');
+        
+        if (result.error === 'invalid_role') {
+          Alert.alert(
+            'Access Denied', 
+            result.message || 'This mobile app is only available for students. Please use the web portal.',
+            [{ text: 'OK' }]
+          );
+        } else {
+          Alert.alert('Authentication Failed', result.message || 'Google sign-in failed');
+        }
       }
     } catch (error: any) {
+      stopProcessing();
       console.error('Google auth error:', error);
       Alert.alert('Error', 'Failed to authenticate with Google. Please try again.');
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -143,7 +163,6 @@ export default function LoginScreen() {
       await storeAuthToken(token);
       await storeUserData(user);
 
-      // After successful login and token storage, check verification status
       const verificationResponse = await api.get('/user/verification-status');
       const isVerified = verificationResponse.data.is_verified;
 
@@ -157,7 +176,14 @@ export default function LoginScreen() {
       }
     } catch (err: any) {
       console.error('Login error:', err.response?.data || err.message);
-      if (err.response && err.response.data && err.response.data.errors) {
+      
+      if (err.response?.status === 403 && err.response?.data?.error === 'invalid_role') {
+        Alert.alert(
+          'Access Denied',
+          err.response.data.message || 'This mobile app is only available for students. Please use the web portal.',
+          [{ text: 'OK' }]
+        );
+      } else if (err.response && err.response.data && err.response.data.errors) {
         const validationErrors: Errors = {};
         for (const key in err.response.data.errors) {
           validationErrors[key as keyof Errors] = err.response.data.errors[key][0];
@@ -244,10 +270,6 @@ export default function LoginScreen() {
               <Text style={styles.googleButtonText}>Continue with Google</Text>
             </View>
           </TouchableOpacity>
-
-          {/* <TouchableOpacity onPress={() => router.push('/(auth)/signup')}>
-            <Text style={styles.linkText}>Don't have an account? Sign Up</Text>
-          </TouchableOpacity> */}
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
