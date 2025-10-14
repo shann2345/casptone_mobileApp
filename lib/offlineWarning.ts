@@ -12,21 +12,17 @@ export const showOfflineModeWarningIfNeeded = async (): Promise<void> => {
     
     if (!lastWarningTime || (currentTime - parseInt(lastWarningTime)) > WARNING_COOLDOWN) {
       Alert.alert(
-        `Offline Mode - 24 Hour Access`,
+        `Offline Mode - 7 Day Access`,
         `SIMPLE OFFLINE RULES:\n\n` + 
-        `You have 24 hours of offline access\n` +
+        `You have 7 days (168 hours) of offline access\n` +
         `Timer resets when you go online\n` +
         `All features work normally offline\n\n` +
-        ` TIME MANIPULATION:\n\n` +
-        `   Backward time = INSTANT BLOCK\n` +
-        `   (Even 2 minutes backwards)\n\n` +
-        `   Forward time = REDUCED OFFLINE TIME\n` +
-        `   Example: Jump 2 hours forward?\n` +
-        `   You lose 2 hours from your 24-hour budget!\n\n` +
-        `   Smart tip: Moving time forward gives you early access\n` +
-        `   to materials, BUT shortens your offline window.\n` +
-        `   Use it wisely!\n\n` +
-        `   Connect to internet anytime to reset your 24 hours.`,
+        `TIME MANIPULATION:\n\n` +
+        `  Backward time = INSTANT BLOCK\n` +
+        `  (Even 2 minutes backwards)\n\n` +
+        `  Forward time > 24 hours = INSTANT BLOCK\n` +
+        `  (Normal sleep/usage under 24 hours is allowed)\n\n` +
+        `  Connect to internet anytime to reset your 7 days.`,
         [
           {
             text: "Don't Show Again Today",

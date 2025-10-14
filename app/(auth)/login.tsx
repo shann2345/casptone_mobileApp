@@ -1,11 +1,13 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Google from 'expo-auth-session/providers/google';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import React, { useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -41,9 +43,29 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState<boolean>(false);
   const [errors, setErrors] = useState<Errors>({});
   const [googleRequest, googleResponse, googlePromptAsync] = Google.useAuthRequest(googleConfig);
+  const [showPassword, setShowPassword] = useState<boolean>(false);
+  
+  // Animation values
+  const fadeAnim = React.useRef(new Animated.Value(0)).current;
+  const slideAnim = React.useRef(new Animated.Value(50)).current;
 
   const { isConnected, netInfo } = useNetworkStatus();
   const { startProcessing, stopProcessing } = useOAuth(); // NEW: Use global OAuth context
+
+  React.useEffect(() => {
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 800,
+        useNativeDriver: true,
+      }),
+      Animated.timing(slideAnim, {
+        toValue: 0,
+        duration: 600,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, []);
 
   React.useEffect(() => {
     if (googleResponse?.type === 'success') {
@@ -198,244 +220,363 @@ export default function LoginScreen() {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    <LinearGradient
+      colors={['#667eea', '#764ba2']}
+      style={styles.gradientBackground}
     >
-      <ScrollView contentContainerStyle={styles.scrollContainer}>
-        <View style={styles.contentContainer}>
-          <Text style={styles.logo}>OLIN</Text>
-          <Text style={styles.title}>Sign In to Your Account</Text>
-          
-          {!isConnected && (
-            <View style={styles.offlineNotice}>
-              <Ionicons name="wifi-outline" size={20} color="#856404" />
-              <Text style={styles.offlineText}>You're offline</Text>
-              <Text style={styles.offlineHint}>Connect to the internet to sign in</Text>
-            </View>
-          )}
-          
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Email</Text>
-            <TextInput
-              style={[styles.input, !isConnected && styles.inputDisabled]}
-              placeholder="Enter your email"
-              value={email}
-              onChangeText={setEmail}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              editable={isConnected}
-            />
-            {errors.email && <Text style={styles.errorText}>{errors.email}</Text>}
-          </View>
-          
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Password</Text>
-            <TextInput
-              style={[styles.input, !isConnected && styles.inputDisabled]}
-              placeholder="Enter your password"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-              editable={isConnected}
-            />
-            {errors.password && <Text style={styles.errorText}>{errors.password}</Text>}
-          </View>
-          
-          <TouchableOpacity
-            style={[styles.button, (loading || !isConnected) && styles.buttonDisabled]}
-            onPress={handleLogin}
-            disabled={loading || !isConnected}
+      <KeyboardAvoidingView
+        style={styles.container}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        <ScrollView contentContainerStyle={styles.scrollContainer}>
+          <Animated.View 
+            style={[
+              styles.contentContainer,
+              {
+                opacity: fadeAnim,
+                transform: [{ translateY: slideAnim }]
+              }
+            ]}
           >
-            {loading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.buttonText}>Sign In</Text>
+            {/* Logo Section */}
+            <View style={styles.logoContainer}>
+              <LinearGradient
+                colors={['#667eea', '#764ba2']}
+                style={styles.logoCircle}
+              >
+                <Ionicons name="school-outline" size={50} color="#fff" />
+              </LinearGradient>
+              <Text style={styles.logo}>OLIN</Text>
+            </View>
+
+            <Text style={styles.title}>Welcome Back!</Text>
+            
+            {!isConnected && (
+              <Animated.View style={styles.offlineNotice}>
+                <Ionicons name="wifi-outline" size={24} color="#856404" />
+                <View style={styles.offlineTextContainer}>
+                  <Text style={styles.offlineText}>You're offline</Text>
+                  <Text style={styles.offlineHint}>Connect to the internet to sign in</Text>
+                </View>
+              </Animated.View>
             )}
-          </TouchableOpacity>
-          
-          <View style={styles.dividerContainer}>
-            <View style={styles.dividerLine} />
-            <Text style={styles.dividerText}>OR</Text>
-            <View style={styles.dividerLine} />
-          </View>
-          
-          <TouchableOpacity 
-            style={styles.googleButton} 
-            onPress={handleGoogleLogin}
-            disabled={loading}
-          >
-            <View style={styles.googleButtonContent}>
-              <Ionicons name="logo-google" size={20} color="#fff" style={styles.googleIcon} />
-              <Text style={styles.googleButtonText}>Continue with Google</Text>
+            
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>
+                <Ionicons name="mail-outline" size={16} color="#495057" /> Email
+              </Text>
+              <View style={styles.inputContainer}>
+                <Ionicons name="mail-outline" size={20} color="#6c757d" style={styles.inputIcon} />
+                <TextInput
+                  style={[styles.input, !isConnected && styles.inputDisabled]}
+                  placeholder="Enter your email"
+                  placeholderTextColor="#adb5bd"
+                  value={email}
+                  onChangeText={setEmail}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  editable={isConnected}
+                />
+              </View>
+              {errors.email && (
+                <View style={styles.errorContainer}>
+                  <Ionicons name="alert-circle-outline" size={14} color="#dc3545" />
+                  <Text style={styles.errorText}>{errors.email}</Text>
+                </View>
+              )}
             </View>
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+            
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>
+                <Ionicons name="lock-closed-outline" size={16} color="#495057" /> Password
+              </Text>
+              <View style={styles.inputContainer}>
+                <Ionicons name="lock-closed-outline" size={20} color="#6c757d" style={styles.inputIcon} />
+                <TextInput
+                  style={[styles.input, !isConnected && styles.inputDisabled]}
+                  placeholder="Enter your password"
+                  placeholderTextColor="#adb5bd"
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry={!showPassword}
+                  editable={isConnected}
+                />
+                <TouchableOpacity 
+                  onPress={() => setShowPassword(!showPassword)}
+                  style={styles.eyeIcon}
+                >
+                  <Ionicons 
+                    name={showPassword ? "eye-outline" : "eye-off-outline"} 
+                    size={20} 
+                    color="#6c757d" 
+                  />
+                </TouchableOpacity>
+              </View>
+              {errors.password && (
+                <View style={styles.errorContainer}>
+                  <Ionicons name="alert-circle-outline" size={14} color="#dc3545" />
+                  <Text style={styles.errorText}>{errors.password}</Text>
+                </View>
+              )}
+            </View>
+            
+            <TouchableOpacity
+              style={[styles.button, (loading || !isConnected) && styles.buttonDisabled]}
+              onPress={handleLogin}
+              disabled={loading || !isConnected}
+            >
+              <LinearGradient
+                colors={loading || !isConnected ? ['#adb5bd', '#6c757d'] : ['#667eea', '#764ba2']}
+                style={styles.buttonGradient}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+              >
+                {loading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <>
+                    <Ionicons name="log-in-outline" size={20} color="#fff" />
+                    <Text style={styles.buttonText}>Sign In</Text>
+                  </>
+                )}
+              </LinearGradient>
+            </TouchableOpacity>
+            
+            <View style={styles.dividerContainer}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>OR CONTINUE WITH</Text>
+              <View style={styles.dividerLine} />
+            </View>
+            
+            <TouchableOpacity 
+              style={[styles.googleButton, loading && styles.buttonDisabled]} 
+              onPress={handleGoogleLogin}
+              disabled={loading}
+            >
+              <View style={styles.googleButtonContent}>
+                <Ionicons name="logo-google" size={22} color="#db4437" />
+                <Text style={styles.googleButtonText}>Continue with Google</Text>
+              </View>
+            </TouchableOpacity>
+
+          </Animated.View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
+  gradientBackground: {
+    flex: 1,
+  },
   container: { 
-    flex: 1, 
-    backgroundColor: '#f0f4f7' 
+    flex: 1,
   },
   scrollContainer: { 
     flexGrow: 1, 
     justifyContent: 'center', 
-    padding: 20 
+    padding: 20,
   },
   contentContainer: {
     backgroundColor: '#ffffff',
-    padding: 30,
-    borderRadius: 15,
+    padding: 20,
+    borderRadius: 25,
     shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.3,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  logoContainer: {
+    alignItems: 'center',
+    marginBottom: 30,
+  },
+  logoCircle: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 15,
+    shadowColor: '#667eea',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.4,
     shadowRadius: 10,
-    elevation: 5,
+    elevation: 8,
   },
   logo: {
-    fontSize: 48,
+    fontSize: 36,
     fontWeight: 'bold',
     textAlign: 'center',
-    marginBottom: 10,
-    color: '#34495e',
+    marginBottom: 5,
+    color: '#667eea',
+    letterSpacing: 2,
+  },
+  subtitle: {
+    fontSize: 12,
+    color: '#6c757d',
+    textAlign: 'center',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
   },
   title: {
-    fontSize: 22,
-    fontWeight: '600',
+    fontSize: 24,
+    fontWeight: '700',
     textAlign: 'center',
-    marginBottom: 20,
-    color: '#555',
+    marginBottom: 25,
+    color: '#2c3e50',
   },
   offlineNotice: {
     backgroundColor: '#fff3cd',
-    borderColor: '#ffeeba',
-    borderWidth: 1,
-    borderRadius: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: '#ffc107',
+    borderRadius: 12,
     padding: 15,
     marginBottom: 20,
+    flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
+    shadowColor: '#ffc107',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  offlineTextContainer: {
+    marginLeft: 12,
+    flex: 1,
   },
   offlineText: {
-    fontSize: 16,
-    fontWeight: '600',
-    textAlign: 'center',
+    fontSize: 15,
+    fontWeight: '700',
     color: '#856404',
+    marginBottom: 2,
   },
   offlineHint: {
     fontSize: 12,
     color: '#856404',
-    textAlign: 'center',
   },
   inputGroup: {
     width: '100%',
-    marginBottom: 15,
+    marginBottom: 20,
   },
   label: {
-    fontSize: 16,
-    color: '#34495e',
-    marginBottom: 5,
+    fontSize: 14,
+    color: '#495057',
+    marginBottom: 8,
     fontWeight: '600',
   },
-  input: {
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#ced4da',
-    borderRadius: 8,
-    paddingVertical: 12,
+  inputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f8f9fa',
+    borderWidth: 2,
+    borderColor: '#e9ecef',
+    borderRadius: 12,
     paddingHorizontal: 15,
-    fontSize: 16,
-    color: '#343a40',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
-    shadowRadius: 2,
+    shadowRadius: 3,
     elevation: 2,
   },
+  inputIcon: {
+    marginRight: 10,
+  },
+  input: {
+    flex: 1,
+    paddingVertical: 15,
+    fontSize: 16,
+    color: '#343a40',
+  },
+  eyeIcon: {
+    padding: 5,
+  },
   inputDisabled: {
-    backgroundColor: '#f8f9fa',
-    color: '#6c757d',
+    opacity: 0.6,
+  },
+  errorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    marginLeft: 5,
   },
   errorText: {
     color: '#dc3545',
     fontSize: 13,
-    marginTop: 5,
     marginLeft: 5,
+    fontWeight: '500',
   },
   button: {
-    backgroundColor: '#007bff',
-    paddingVertical: 15,
-    paddingHorizontal: 25,
-    borderRadius: 8,
     marginTop: 10,
     width: '100%',
+    borderRadius: 12,
+    overflow: 'hidden',
+    shadowColor: '#667eea',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  buttonGradient: {
+    paddingVertical: 16,
+    paddingHorizontal: 25,
+    flexDirection: 'row',
     alignItems: 'center',
-    shadowColor: '#007bff',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 5,
-    elevation: 5,
+    justifyContent: 'center',
+    gap: 10,
   },
   buttonDisabled: {
-    backgroundColor: '#adb5bd',
+    opacity: 0.6,
     shadowOpacity: 0,
     elevation: 0,
   },
   buttonText: {
     color: '#fff',
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: 'bold',
+    letterSpacing: 0.5,
   },
   dividerContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: 20,
+    marginVertical: 25,
   },
   dividerLine: {
     flex: 1,
     height: 1,
-    backgroundColor: '#ced4da',
+    backgroundColor: '#dee2e6',
   },
   dividerText: {
-    marginHorizontal: 10,
+    marginHorizontal: 15,
     color: '#6c757d',
-    fontSize: 14,
+    fontSize: 11,
     fontWeight: '600',
+    letterSpacing: 1,
   },
   googleButton: {
-    backgroundColor: '#db4437',
-    paddingVertical: 15,
+    backgroundColor: '#fff',
+    paddingVertical: 16,
     paddingHorizontal: 25,
-    borderRadius: 8,
+    borderRadius: 12,
     width: '100%',
     alignItems: 'center',
-    shadowColor: '#db4437',
+    borderWidth: 2,
+    borderColor: '#e9ecef',
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 5,
-    elevation: 5,
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    elevation: 4,
   },
   googleButtonContent: {
     flexDirection: 'row',
     alignItems: 'center',
-  },
-  googleIcon: {
-    marginRight: 10,
+    gap: 12,
   },
   googleButtonText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  linkText: {
-    color: '#007bff',
-    textAlign: 'center',
-    marginTop: 20,
-    fontSize: 14,
-    fontWeight: '500',
+    color: '#495057',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

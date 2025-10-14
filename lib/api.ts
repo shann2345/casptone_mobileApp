@@ -4,7 +4,7 @@ import * as SecureStore from 'expo-secure-store';
 import { establishTimeBaseline, getSavedServerTime, saveAssessmentDetailsToDb, saveServerTime, updateOnlineSync } from './localDb';
 
 export const API_BASE_URL = __DEV__ 
-  ? 'http://192.168.1.11:8000/api'  
+  ? 'http://192.168.1.17:8000/api'  
   : 'https://olinlms.com/api'; 
 
 const api = axios.create({

@@ -10,7 +10,7 @@ export default {
     "slug": "olin_app",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/logoo 1.png",
+    "icon": "./assets/images/LOGO.png",
     "scheme": packageName, // Use the package name as the scheme for consistency
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -21,7 +21,7 @@ export default {
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/logoo 1.png",
+        "foregroundImage": "./assets/images/LOGO.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
@@ -52,8 +52,8 @@ export default {
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/logo.png",
-          "imageWidth": 200,
+          "image": "./assets/images/Splash Screen.png",
+          "imageWidth": 300,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"
         }

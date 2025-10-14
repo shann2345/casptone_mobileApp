@@ -68,10 +68,24 @@ export default function ProfileScreen() {
   const [selectedImage, setSelectedImage] = useState<any>(null);
 
   useEffect(() => {
-    fetchProfileData();
-  }, []);
+    // Only fetch if we have internet connection
+    if (isInternetReachable !== null) {
+      fetchProfileData();
+    }
+  }, [isInternetReachable]);
 
   const fetchProfileData = async () => {
+    // Check network first
+    if (!isInternetReachable) {
+      console.log('⚠️ Offline - skipping profile data fetch');
+      setLoading(false);
+      Alert.alert(
+        'Offline Mode',
+        'You are currently offline. Profile data cannot be loaded. Please connect to the internet and try again.'
+      );
+      return;
+    }
+
     try {
       setLoading(true);
       const profileData = await getProfile();
@@ -101,6 +115,15 @@ export default function ProfileScreen() {
   };
 
   const handleRefresh = async () => {
+    // Check network first
+    if (!isInternetReachable) {
+      Alert.alert(
+        'Offline Mode',
+        'You are currently offline. Cannot refresh profile data.'
+      );
+      return;
+    }
+
     setRefreshing(true);
     await fetchProfileData();
     setRefreshing(false);
@@ -167,6 +190,15 @@ export default function ProfileScreen() {
   };
 
   const handleDeleteImage = async () => {
+    // Check network first
+    if (!isInternetReachable) {
+      Alert.alert(
+        'Offline Mode',
+        'You are currently offline. Cannot delete profile image. Please connect to the internet and try again.'
+      );
+      return;
+    }
+
     Alert.alert(
       "Delete Profile Image",
       "Are you sure you want to delete your profile image?",
@@ -198,6 +230,15 @@ export default function ProfileScreen() {
   };
 
   const handleUpdateProfile = async () => {
+    // Check network first
+    if (!isInternetReachable) {
+      Alert.alert(
+        'Offline Mode',
+        'You are currently offline. Cannot update profile. Please connect to the internet and try again.'
+      );
+      return;
+    }
+
     try {
       setIsUpdating(true);
       

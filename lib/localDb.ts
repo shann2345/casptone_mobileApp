@@ -1911,6 +1911,11 @@ export const deleteAssessmentDetails = async (assessmentId: number, userEmail: s
 
 {/* SERVER ONLY FOR OFFLINE USE */}
 
+
+const MAX_OFFLINE_TIME = 7 * 24 * 60 * 60 * 1000; // 7 days
+const ALLOWED_FORWARD_JUMP = 24 * 60 * 60 * 1000; // 24 hours
+const BACKWARD_TIME_LIMIT = -2 * 60 * 1000;       // -2 minutes
+
 export const saveServerTime = async (
   userEmail: string, 
   apiServerTime: string, 
@@ -1919,22 +1924,17 @@ export const saveServerTime = async (
   try {
     await initDb();
     const db = await getDb();
-    
+
     const serverTimeMs = new Date(apiServerTime).getTime();
     const deviceTimeMs = new Date(currentDeviceTime).getTime();
     const offset = serverTimeMs - deviceTimeMs;
-    
-    console.log('💾 Saving server time baseline and resetting 24-hour offline window.');
 
-    // This resets the user's entire time state, including the crucial last_online_sync
     await db.runAsync(
       `INSERT OR REPLACE INTO app_state 
-       (user_email, server_time, server_time_offset, last_time_check, time_check_sequence, last_online_sync, manipulation_detected, cumulative_forward_drift, last_drift_reset, recent_jumps_count, last_jump_reset, suspicious_pattern_count) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
-      [userEmail, apiServerTime, offset, deviceTimeMs, Date.now(), deviceTimeMs, 0, 0, deviceTimeMs, 0, deviceTimeMs, 0]
+      (user_email, server_time, server_time_offset, last_time_check, time_check_sequence, last_online_sync, manipulation_detected) 
+      VALUES (?, ?, ?, ?, ?, ?, ?);`,
+      [userEmail, apiServerTime, offset, deviceTimeMs, Date.now(), deviceTimeMs, 0]
     );
-    
-    console.log('✅ Server time baseline saved. Offline window reset.');
   } catch (error) {
     console.error('❌ Failed to save server time:', error);
     throw error;
@@ -1945,69 +1945,49 @@ export const getSavedServerTime = async (userEmail: string): Promise<string | nu
   try {
     await initDb();
     const db = await getDb();
-    
     const result = await db.getAllAsync(
       `SELECT * FROM app_state WHERE user_email = ?;`,
       [userEmail]
     );
-    
-    if (!result || result.length === 0) {
-      console.log('⚠️ No saved server time found for user');
-      return null;
-    }
-    
-    const record = result[0] as TimeCheckRecord;
-    
-    if (record.manipulation_detected === 1) {
-      console.log('🛑 Previous time manipulation detected - requiring online re-sync');
-      return null;
-    }
-    
+    if (!result || result.length === 0) return null;
+    const record = result[0];
+
+    if (record.manipulation_detected === 1) return null;
+
     const currentDeviceTime = Date.now();
     const lastCheckTime = record.last_time_check;
     const lastOnlineSync = record.last_online_sync;
     const serverTimeOffset = record.server_time_offset;
-    
-    const timeSinceLastCheck = currentDeviceTime - lastCheckTime;
+    const timeDiff = currentDeviceTime - lastCheckTime;
     const timeSinceLastOnlineSync = currentDeviceTime - lastOnlineSync;
-    
-    // --- SIMPLE OFFLINE RULES ---
-    const MAX_OFFLINE_TIME = 24 * 60 * 60 * 1000; // 24 hours
-    const BACKWARD_TIME_LIMIT = -2 * 60 * 1000;  // 2 minutes backward
-    
-    // Rule 1: Backward time manipulation (INSTANT BLOCK)
-    if (timeSinceLastCheck < BACKWARD_TIME_LIMIT) {
-      console.log('🛑 Backward time manipulation detected - INSTANT BLOCK');
+
+    // --- Manipulation Checks ---
+    if (timeDiff < BACKWARD_TIME_LIMIT) {
       await flagTimeManipulation(userEmail, 'Backward time jump detected');
       return null;
     }
-    
-    // Rule 2: 24-hour offline limit exceeded
-    // This rule naturally penalizes forward time jumps, as `currentDeviceTime` will be larger,
-    // making `timeSinceLastOnlineSync` larger and consuming the 24-hour budget faster.
-    if (timeSinceLastOnlineSync > MAX_OFFLINE_TIME) {
-      console.log(`🛑 24-hour offline limit exceeded (${Math.round(timeSinceLastOnlineSync / 3600000)} hours)`);
-      await flagTimeManipulation(userEmail, '24-hour offline limit exceeded');
+    if (timeDiff > ALLOWED_FORWARD_JUMP) {
+      await flagTimeManipulation(userEmail, 'Forward time jump exceeded 24 hours');
       return null;
     }
-    
-    // If all checks pass, update the last check time
+    if (timeSinceLastOnlineSync > MAX_OFFLINE_TIME) {
+      await flagTimeManipulation(userEmail, '7-day offline limit exceeded');
+      return null;
+    }
+
+    // --- Update last check time ---
     await db.runAsync(
       `UPDATE app_state SET last_time_check = ? WHERE user_email = ?;`,
       [currentDeviceTime, userEmail]
     );
-    
-    const calculatedServerTime = currentDeviceTime + serverTimeOffset;
-    const remainingOfflineHours = (MAX_OFFLINE_TIME - timeSinceLastOnlineSync) / 3600000;
-    
-    console.log(`✅ Time validation passed. Remaining offline time: ~${remainingOfflineHours.toFixed(1)} hours.`);
-    return new Date(calculatedServerTime).toISOString();
-    
+    // --- Return calculated server time ---
+    return new Date(currentDeviceTime + serverTimeOffset).toISOString();
   } catch (error) {
     console.error('❌ Failed to get saved server time:', error);
     return null;
   }
 };
+
 
 export const resetTimeCheckData = async (userEmail: string): Promise<void> => {
   try {
@@ -2034,66 +2014,39 @@ export const detectTimeManipulation = async (
   try {
     await initDb();
     const db = await getDb();
-    
     const result = await db.getAllAsync(
       `SELECT * FROM app_state WHERE user_email = ?;`,
       [userEmail]
     );
-    
-    if (!result || result.length === 0) {
-      console.log('📊 No time baseline found - allowing access as it may be the first run.');
-      return { isValid: true };
-    }
-    
-    const record = result[0] as TimeCheckRecord;
-    
+    if (!result || result.length === 0) return { isValid: true };
+
+    const record = result[0];
     if (record.manipulation_detected === 1) {
-      console.log('❌ Previous manipulation detected - blocking access');
-      return { 
-        isValid: false, 
-        reason: 'Time manipulation was previously detected. Please connect to the internet to restore access.',
-        requiresOnlineSync: true
-      };
+      return { isValid: false, reason: 'Time manipulation was previously detected. Please connect to the internet to restore access.', requiresOnlineSync: true };
     }
-    
+
     const currentDeviceTime = Date.now();
     const lastCheckTime = record.last_time_check;
     const lastOnlineSync = record.last_online_sync;
-    
-    const timeSinceLastCheck = currentDeviceTime - lastCheckTime;
+    const timeDiff = currentDeviceTime - lastCheckTime;
     const timeSinceLastOnlineSync = currentDeviceTime - lastOnlineSync;
-    
-    const MAX_OFFLINE_TIME = 24 * 60 * 60 * 1000; // 24 hours
-    const BACKWARD_TIME_LIMIT = -2 * 60 * 1000;  // 2 minutes backward
-    
-    // Rule 1: Backward time manipulation
-    if (timeSinceLastCheck < BACKWARD_TIME_LIMIT) {
-      console.log('❌ Backward time manipulation detected');
+
+    if (timeDiff < BACKWARD_TIME_LIMIT) {
       await flagTimeManipulation(userEmail, 'Backward time manipulation');
-      return { 
-        isValid: false, 
-        reason: 'Device time was moved backward. Connect to the internet to restore access.',
-        requiresOnlineSync: true
-      };
+      return { isValid: false, reason: 'Device time was moved backward. Connect to the internet to restore access.', requiresOnlineSync: true };
     }
-    
-    // Rule 2: 24-hour offline limit exceeded
+    if (timeDiff > ALLOWED_FORWARD_JUMP) {
+      await flagTimeManipulation(userEmail, 'Forward time jump exceeded 24 hours');
+      return { isValid: false, reason: 'Device time was moved forward more than 24 hours. Connect to the internet to restore access.', requiresOnlineSync: true };
+    }
     if (timeSinceLastOnlineSync > MAX_OFFLINE_TIME) {
-        console.log('❌ 24-hour offline limit exceeded');
-        await flagTimeManipulation(userEmail, '24-hour offline limit exceeded');
-        return {
-            isValid: false,
-            reason: 'Your 24-hour offline access has expired. Please connect to the internet to reset it.',
-            requiresOnlineSync: true
-        };
+      await flagTimeManipulation(userEmail, '7-day offline limit exceeded');
+      return { isValid: false, reason: 'Your 7-day offline access has expired. Please connect to the internet to reset it.', requiresOnlineSync: true };
     }
 
-    console.log('✅ Time validation passed');
     return { isValid: true };
-    
   } catch (error) {
     console.error('❌ Error in time manipulation detection:', error);
-    // Fail safe: if detection logic fails, allow access but log error.
     return { isValid: true };
   }
 };
@@ -2105,34 +2058,23 @@ export const getOfflineTimeStatus = async (userEmail: string): Promise<{
 } | null> => {
   try {
     const db = await getDb();
-    const record = await db.getFirstAsync<TimeCheckRecord>(
+    const record = await db.getFirstAsync(
       `SELECT * FROM app_state WHERE user_email = ?;`,
       [userEmail]
     );
+    if (!record) return null;
+    if (record.manipulation_detected === 1) return { remainingHours: 0, totalHours: 168, isBlocked: true };
 
-    if (!record) {
-      return null; // No baseline, so no status to show
-    }
-
-    if (record.manipulation_detected === 1) {
-      return { remainingHours: 0, totalHours: 24, isBlocked: true };
-    }
-
-    const MAX_OFFLINE_TIME = 24 * 60 * 60 * 1000;
     const currentDeviceTime = Date.now();
     const timeSinceLastOnlineSync = currentDeviceTime - record.last_online_sync;
-
     if (timeSinceLastOnlineSync >= MAX_OFFLINE_TIME) {
-      // If they've already exceeded the time, cap remaining at 0
-       return { remainingHours: 0, totalHours: 24, isBlocked: true };
+      return { remainingHours: 0, totalHours: 168, isBlocked: true };
     }
-
     const remainingTimeMs = MAX_OFFLINE_TIME - timeSinceLastOnlineSync;
-    const remainingHours = remainingTimeMs / 3600000; // convert ms to hours
-
+    const remainingHours = remainingTimeMs / 3600000;
     return {
-      remainingHours: Math.max(0, remainingHours), // Ensure it doesn't go negative
-      totalHours: 24,
+      remainingHours: Math.max(0, remainingHours),
+      totalHours: 168,
       isBlocked: false,
     };
   } catch (error) {
@@ -2148,15 +2090,10 @@ export const flagTimeManipulation = async (
   try {
     await initDb();
     const db = await getDb();
-    
-    console.log(`🚨 FLAGGING time manipulation for user ${userEmail}: ${reason}`);
-    
     await db.runAsync(
       `UPDATE app_state SET manipulation_detected = 1 WHERE user_email = ?;`,
       [userEmail]
     );
-    
-    console.log('🚨 Time manipulation flagged - user must go online to restore access');
   } catch (error) {
     console.error('❌ Failed to flag time manipulation:', error);
   }
@@ -2166,28 +2103,15 @@ export const clearManipulationFlag = async (userEmail: string): Promise<void> =>
   try {
     await initDb();
     const db = await getDb();
-    
-    console.log(`✅ Clearing manipulation flag for user: ${userEmail}`);
-    
-    const currentTime = Date.now();
-    
     await db.runAsync(
-      `UPDATE app_state SET 
-        manipulation_detected = 0,
-        cumulative_forward_drift = 0,
-        last_drift_reset = ?,
-        recent_jumps_count = 0,
-        last_jump_reset = ?,
-        suspicious_pattern_count = 0
-       WHERE user_email = ?;`,
-      [currentTime, currentTime, userEmail]
+      `UPDATE app_state SET manipulation_detected = 0 WHERE user_email = ?;`,
+      [userEmail]
     );
-    
-    console.log('✅ All manipulation counters cleared');
   } catch (error) {
     console.error('❌ Failed to clear manipulation flag:', error);
   }
 };
+
 export const updateOnlineSync = async (userEmail: string): Promise<void> => {
   try {
     await initDb();

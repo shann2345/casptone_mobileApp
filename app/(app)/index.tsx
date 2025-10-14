@@ -42,6 +42,7 @@ interface Course {
   instructor: {
     id: number;
     name: string;
+    given_name: string;
   };
 }
 
@@ -177,7 +178,7 @@ export default function HomeScreen() {
                 totalHours: status.totalHours,
               });
             } else {
-              setOfflineStatus({ remainingHours: 0, totalHours: 24 }); // Show 0 if blocked
+              setOfflineStatus({ remainingHours: 0, totalHours: 168 }); // Show 0 if blocked
             }
           }
         } catch (e) {
@@ -281,6 +282,19 @@ export default function HomeScreen() {
       setTimeout(() => setSyncStatus(''), 3000);
     }
   };
+
+  function formatRemainingTime(remainingHours: number): string {
+    const totalMinutes = Math.floor(remainingHours * 60);
+    const days = Math.floor(totalMinutes / (24 * 60));
+    const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
+    const minutes = totalMinutes % 60;
+
+    let parts = [];
+    if (days > 0) parts.push(`${days} day${days !== 1 ? 's' : ''}`);
+    if (hours > 0) parts.push(`${hours} hour${hours !== 1 ? 's' : ''}`);
+    if (minutes > 0 || parts.length === 0) parts.push(`${minutes} minute${minutes !== 1 ? 's' : ''}`);
+    return parts.join(', ');
+  }
 
   useEffect(() => {
     const syncSubmissions = async () => {
@@ -441,7 +455,7 @@ export default function HomeScreen() {
     try {
       const userData = await getUserData();
       if (userData && userData.name && userData.email) {
-        setUserName(userData.name);
+        setUserName(userData.given_name || userData.name || 'Guest');
         userEmail = userData.email;
       } else {
         console.warn('User data or name not found in local storage. Redirecting to login.');
@@ -825,7 +839,7 @@ export default function HomeScreen() {
       <Text style={styles.courseResultTitle}>{item.title}</Text>
       <Text style={styles.courseResultCode}>Description: {item.description}</Text>
       <Text style={styles.courseResultDetails}>Program: {item.program?.name || 'N/A'}</Text>
-      <Text style={styles.courseResultDetails}>Instructor: {item.instructor?.name || 'N/A'}</Text>
+      <Text style={styles.courseResultDetails}>Instructor: {item.instructor?.given_name || 'N/A'}</Text>
 
       <TouchableOpacity
         style={[
@@ -1036,7 +1050,7 @@ export default function HomeScreen() {
             {offlineStatus && !netInfo?.isInternetReachable && (
               <View style={styles.offlineTimerContainer}>
                 <Text style={styles.offlineTimerText}>
-                  Offline Time: {offlineStatus.remainingHours.toFixed(1)} / {offlineStatus.totalHours} hrs left
+                  Offline Time: {formatRemainingTime(offlineStatus.remainingHours)} left
                 </Text>
                 <View style={styles.progressBarBackground}>
                   <View
@@ -1350,54 +1364,62 @@ const styles = StyleSheet.create({
   },
   // Enhanced Header Styles
   header: {
-    paddingTop: 30,
-    paddingBottom: 30,
-    paddingHorizontal: 20,
-    borderBottomLeftRadius: 30,
-    borderBottomRightRadius: 30,
+    paddingTop: 50,
+    paddingBottom: 35,
+    paddingHorizontal: 25,
+    borderBottomLeftRadius: 35,
+    borderBottomRightRadius: 35,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    elevation: 12,
   },
   headerContent: {
     alignItems: 'center',
   },
   welcomeText: {
-    fontSize: 24,
-    fontWeight: '300',
+    fontSize: 18,
+    fontWeight: '400',
     color: '#fff',
-    opacity: 0.9,
+    opacity: 0.95,
+    letterSpacing: 0.5,
   },
   userNameText: {
-    fontSize: 32,
+    fontSize: 36,
     fontWeight: 'bold',
     color: '#fff',
-    marginVertical: 5,
+    marginVertical: 8,
+    textShadowColor: 'rgba(0, 0, 0, 0.2)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4,
   },
   subText: {
-    fontSize: 16,
+    fontSize: 15,
     color: '#fff',
-    opacity: 0.8,
+    opacity: 0.9,
     textAlign: 'center',
     marginTop: 5,
+    fontWeight: '300',
   },
   offlineNotice: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    borderRadius: 20,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    marginTop: 15,
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+    borderRadius: 25,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    marginTop: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
   },
   offlineText: {
     color: '#fff',
     fontSize: 14,
-    fontWeight: '600',
-    marginLeft: 5,
+    fontWeight: '700',
+    marginLeft: 8,
+    letterSpacing: 0.3,
   },
   downloadIndicator: {
     flexDirection: 'row',
@@ -1416,73 +1438,79 @@ const styles = StyleSheet.create({
   // Enhanced Search Button
   searchButton: {
     marginHorizontal: 20,
-    marginTop: -20,
-    borderRadius: 25,
+    marginTop: -25,
+    borderRadius: 30,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    elevation: 10,
   },
   searchButtonGradient: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    borderRadius: 25,
+    paddingVertical: 18,
+    paddingHorizontal: 25,
+    borderRadius: 30,
   },
   searchIcon: {
-    marginRight: 12,
+    marginRight: 15,
   },
   searchButtonText: {
     color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 17,
+    fontWeight: '700',
+    letterSpacing: 0.5,
   },
   // Enhanced Stats Section
   statsSection: {
     flexDirection: 'row',
     justifyContent: 'space-around',
     paddingHorizontal: 20,
-    paddingVertical: 25,
+    paddingVertical: 30,
   },
   statCard: {
     backgroundColor: '#fff',
-    borderRadius: 15,
-    paddingVertical: 20,
-    paddingHorizontal: 15,
+    borderRadius: 20,
+    paddingVertical: 22,
+    paddingHorizontal: 18,
     alignItems: 'center',
     minWidth: width * 0.25,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 5,
+    borderWidth: 1,
+    borderColor: '#f0f0f0',
   },
   statNumber: {
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: 'bold',
-    color: '#2c3e50',
-    marginTop: 8,
+    color: '#667eea',
+    marginTop: 10,
   },
   statLabel: {
     fontSize: 12,
     color: '#7f8c8d',
     textAlign: 'center',
-    marginTop: 4,
+    marginTop: 6,
+    fontWeight: '600',
   },
   // Enhanced Ad Section
   adContainer: {
     marginHorizontal: 20,
-    marginBottom: 10,
+    marginBottom: 15,
     backgroundColor: '#fff',
-    borderRadius: 15,
+    borderRadius: 20,
     overflow: 'hidden',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 5,
+    borderWidth: 1,
+    borderColor: '#f0f0f0',
   },
   adContent: {
     justifyContent: 'center',
@@ -1533,67 +1561,78 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: 25,
   },
   sectionTitle: {
-    fontSize: 24,
+    fontSize: 26,
     fontWeight: 'bold',
     color: '#2c3e50',
+    letterSpacing: 0.3,
   },
   scrollButtons: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 10,
   },
   scrollButton: {
     backgroundColor: '#fff',
-    borderRadius: 20,
-    padding: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    borderRadius: 25,
+    padding: 10,
+    shadowColor: '#667eea',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 4,
+    borderWidth: 1,
+    borderColor: '#e9ecef',
   },
   // Enhanced Course Cards
   enrolledCourseCard: {
     marginRight: 15,
-    borderRadius: 20,
+    borderRadius: 25,
     overflow: 'hidden',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 10,
   },
   courseCardGradient: {
-    width: 180,
-    height: 200,
-    padding: 20,
+    width: 200,
+    height: 220,
+    padding: 25,
     justifyContent: 'space-between',
     alignItems: 'center',
   },
   enrolledCourseCardTitle: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: 'bold',
     color: '#fff',
     textAlign: 'center',
-    lineHeight: 20,
+    lineHeight: 22,
+    textShadowColor: 'rgba(0, 0, 0, 0.15)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
   },
   enrolledCourseCardCode: {
-    fontSize: 12,
-    color: 'rgba(255, 255, 255, 0.8)',
+    fontSize: 13,
+    color: 'rgba(255, 255, 255, 0.9)',
     textAlign: 'center',
+    marginTop: 5,
+    fontWeight: '600',
   },
   statusBadge: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    borderRadius: 12,
-    paddingVertical: 4,
-    paddingHorizontal: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+    borderRadius: 15,
+    paddingVertical: 6,
+    paddingHorizontal: 15,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
   },
   enrolledCourseCardStatus: {
     fontSize: 11,
     color: '#fff',
-    fontWeight: '600',
+    fontWeight: '700',
+    letterSpacing: 0.5,
   },
   // Loading States
   loadingContainer: {
@@ -1608,10 +1647,11 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   loadingText: {
-    marginTop: 15,
-    fontSize: 16,
+    marginTop: 20,
+    fontSize: 18,
     color: '#fff',
-    fontWeight: '500',
+    fontWeight: '600',
+    letterSpacing: 0.5,
   },
   loadingCoursesContainer: {
     paddingVertical: 40,
@@ -1626,28 +1666,32 @@ const styles = StyleSheet.create({
   // No Courses State
   noCoursesContainer: {
     backgroundColor: '#fff',
-    borderRadius: 20,
-    padding: 40,
+    borderRadius: 25,
+    padding: 45,
     alignItems: 'center',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 5,
+    borderWidth: 1,
+    borderColor: '#f0f0f0',
   },
   noCoursesText: {
-    fontSize: 18,
-    fontWeight: '600',
+    fontSize: 20,
+    fontWeight: '700',
     color: '#2c3e50',
     textAlign: 'center',
-    marginTop: 15,
+    marginTop: 18,
+    letterSpacing: 0.3,
   },
   noCoursesSubText: {
-    fontSize: 14,
+    fontSize: 15,
     color: '#7f8c8d',
-    marginTop: 8,
+    marginTop: 10,
     textAlign: 'center',
-    lineHeight: 20,
+    lineHeight: 22,
+    fontWeight: '400',
   },
   horizontalFlatListContent: {
     paddingVertical: 5,
@@ -1655,7 +1699,7 @@ const styles = StyleSheet.create({
   // Modal Styles (Enhanced)
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -1663,24 +1707,24 @@ const styles = StyleSheet.create({
     width: '90%',
     maxHeight: '80%',
     backgroundColor: '#fff',
-    borderRadius: 20,
-    padding: 25,
+    borderRadius: 25,
+    padding: 30,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.3,
-    shadowRadius: 12,
-    elevation: 10,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.4,
+    shadowRadius: 20,
+    elevation: 15,
   },
   enrollmentModalContent: {
     width: '80%',
     backgroundColor: '#fff',
-    borderRadius: 20,
-    padding: 25,
+    borderRadius: 25,
+    padding: 30,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.3,
-    shadowRadius: 12,
-    elevation: 10,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.4,
+    shadowRadius: 20,
+    elevation: 15,
     alignItems: 'center',
   },
   enrollmentText: {
@@ -1706,79 +1750,86 @@ const styles = StyleSheet.create({
   },
   closeButton: {
     position: 'absolute',
-    top: 15,
-    right: 15,
+    top: 20,
+    right: 20,
     zIndex: 1,
+    backgroundColor: '#f8f9fa',
+    borderRadius: 20,
+    padding: 8,
   },
   modalTitle: {
-    fontSize: 26,
+    fontSize: 28,
     fontWeight: 'bold',
     color: '#2c3e50',
-    marginBottom: 25,
+    marginBottom: 28,
     textAlign: 'center',
+    letterSpacing: 0.3,
   },
   searchInput: {
     borderWidth: 2,
     borderColor: '#e9ecef',
     backgroundColor: '#f8f9fa',
-    borderRadius: 12,
-    padding: 15,
+    borderRadius: 15,
+    padding: 16,
     fontSize: 16,
-    marginBottom: 20,
+    marginBottom: 22,
     color: '#343a40',
     width: '100%',
   },
   modalSearchButton: {
     backgroundColor: '#667eea',
-    padding: 15,
-    borderRadius: 12,
+    padding: 16,
+    borderRadius: 15,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#667eea',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    elevation: 8,
     width: '100%',
   },
   modalSearchButtonText: {
     color: '#fff',
     fontSize: 18,
     fontWeight: 'bold',
+    letterSpacing: 0.5,
   },
   searchResultsContainer: {
     marginTop: 25,
     maxHeight: 350,
   },
   searchResultsTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 'bold',
     color: '#2c3e50',
-    marginBottom: 15,
+    marginBottom: 18,
+    letterSpacing: 0.3,
   },
   courseResultCard: {
     backgroundColor: '#f8f9fa',
-    borderRadius: 15,
-    padding: 20,
+    borderRadius: 18,
+    padding: 22,
     marginBottom: 15,
     borderWidth: 1,
     borderColor: '#e9ecef',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 3,
   },
   courseResultTitle: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: 'bold',
     color: '#2c3e50',
-    marginBottom: 5,
+    marginBottom: 6,
   },
   courseResultCode: {
     fontSize: 14,
-    color: '#7f8c8d',
-    marginBottom: 3,
+    color: '#667eea',
+    marginBottom: 4,
+    fontWeight: '600',
   },
   offlineTimerContainer: {
     width: '80%',
@@ -1817,20 +1868,21 @@ const styles = StyleSheet.create({
   },
   enrollButton: {
     backgroundColor: '#28a745',
-    padding: 12,
-    borderRadius: 8,
-    marginTop: 15,
+    padding: 14,
+    borderRadius: 12,
+    marginTop: 18,
     alignItems: 'center',
     shadowColor: '#28a745',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 4,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 6,
+    elevation: 6,
   },
   enrollButtonText: {
     color: '#fff',
     fontWeight: 'bold',
-    fontSize: 14,
+    fontSize: 15,
+    letterSpacing: 0.5,
   },
   noResultsContainer: {
     paddingVertical: 30,
