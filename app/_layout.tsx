@@ -7,6 +7,7 @@ import { ActivityIndicator, View } from 'react-native';
 import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/useColorScheme';
+import { AppProvider } from '../context/AppContext';
 import { NetworkProvider } from '../context/NetworkContext';
 import { OAuthProvider } from '../context/OAuthContext'; // NEW IMPORT
 import api, { getAuthToken, getUserData, initializeAuth } from '../lib/api';
@@ -96,41 +97,43 @@ export default function RootLayout() {
   }
 
   return (
-    <NetworkProvider>
-      <OAuthProvider> {/* NEW: Wrap with OAuthProvider */}
-        <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-          <Stack initialRouteName={initialRoute}>
-            <Stack.Screen
-              name="(auth)/login"
-              options={{
-                headerShown: false,
-                title: 'Login',
-              }}
-            />
-            <Stack.Screen
-              name="(auth)/signup"
-              options={{
-                headerShown: false,
-                title: 'Sign Up',
-              }}
-            />
-            <Stack.Screen
-              name="(auth)/verify-notice"
-              options={{
-                headerShown: false,
-                title: 'Verification Notice',
-              }}
-            />
-            <Stack.Screen
-              name="(app)"
-              options={{
-                headerShown: false,
-              }}
-            />
-          </Stack>
-          <StatusBar style="auto" />
-        </ThemeProvider>
-      </OAuthProvider>
-    </NetworkProvider>
+    <AppProvider>
+      <NetworkProvider>
+        <OAuthProvider> {/* NEW: Wrap with OAuthProvider */}
+          <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+            <Stack initialRouteName={initialRoute}>
+              <Stack.Screen
+                name="(auth)/login"
+                options={{
+                  headerShown: false,
+                  title: 'Login',
+                }}
+              />
+              <Stack.Screen
+                name="(auth)/signup"
+                options={{
+                  headerShown: false,
+                  title: 'Sign Up',
+                }}
+              />
+              <Stack.Screen
+                name="(auth)/verify-notice"
+                options={{
+                  headerShown: false,
+                  title: 'Verification Notice',
+                }}
+              />
+              <Stack.Screen
+                name="(app)"
+                options={{
+                  headerShown: false,
+                }}
+              />
+            </Stack>
+            <StatusBar style="auto" />
+          </ThemeProvider>
+        </OAuthProvider>
+      </NetworkProvider>
+    </AppProvider>
   );
 }

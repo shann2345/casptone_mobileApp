@@ -7,22 +7,23 @@ import { ActivityIndicator, Alert, Animated, Dimensions, FlatList, Modal, Refres
 import { useNetworkStatus } from '../../context/NetworkContext';
 import api, { clearAuthToken, getAuthToken, getServerTime, getUserData, syncOfflineQuiz, syncOfflineSubmission } from '../../lib/api';
 import {
-    deleteOfflineQuizAttempt,
-    deleteOfflineSubmission,
-    downloadAllQuizQuestions,
-    getAssessmentsNeedingSync,
-    getAssessmentsWithoutDetails,
-    getCompletedOfflineQuizzes,
-    getDb,
-    getEnrolledCoursesFromDb,
-    getUnsyncedSubmissions,
-    initDb,
-    resetTimeCheckData,
-    saveCourseDetailsToDb,
-    saveCourseToDb,
-    saveServerTime,
-    syncAllAssessmentDetails,
-    updateTimeSync
+  deleteOfflineQuizAttempt,
+  deleteOfflineSubmission,
+  downloadAllQuizQuestions,
+  getAssessmentsNeedingSync,
+  getAssessmentsWithoutDetails,
+  getCompletedOfflineQuizzes,
+  getDb,
+  getEnrolledCoursesFromDb,
+  getOfflineTimeStatus,
+  getUnsyncedSubmissions,
+  initDb,
+  resetTimeCheckData,
+  saveCourseDetailsToDb,
+  saveCourseToDb,
+  saveServerTime,
+  syncAllAssessmentDetails,
+  updateTimeSync
 } from '../../lib/localDb';
 import { showOfflineModeWarningIfNeeded } from '../../lib/offlineWarning';
 const { width, height } = Dimensions.get('window');
@@ -73,6 +74,7 @@ export default function HomeScreen() {
   const enrolledCoursesFlatListRef = useRef<FlatList<EnrolledCourse>>(null);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(50)).current;
+  const [offlineStatus, setOfflineStatus] = useState<{ remainingHours: number; totalHours: number } | null>(null);
 
   // NEW: State for enrollment modal
   const [isEnrollModalVisible, setIsEnrollModalVisible] = useState<boolean>(false);
@@ -161,6 +163,35 @@ export default function HomeScreen() {
     isMounted = false;
   };
 }, []);
+
+  useEffect(() => {
+    const updateOfflineStatus = async () => {
+      if (netInfo?.isInternetReachable === false && isInitialized) {
+        try {
+          const userData = await getUserData();
+          if (userData?.email) {
+            const status = await getOfflineTimeStatus(userData.email);
+            if (status && !status.isBlocked) {
+              setOfflineStatus({
+                remainingHours: status.remainingHours,
+                totalHours: status.totalHours,
+              });
+            } else {
+              setOfflineStatus({ remainingHours: 0, totalHours: 24 }); // Show 0 if blocked
+            }
+          }
+        } catch (e) {
+          console.error('Failed to update offline status', e);
+          setOfflineStatus(null);
+        }
+      } else {
+        // Clear status when online
+        setOfflineStatus(null);
+      }
+    };
+
+    updateOfflineStatus();
+  }, [netInfo?.isInternetReachable, isInitialized, isRefreshing]);
 
   // Enhanced smart sync assessment data with retry logic and better status tracking
   const autoDownloadAssessmentData = async (userEmail: string, forceRefresh: boolean = false) => {
@@ -1001,6 +1032,22 @@ export default function HomeScreen() {
                 <Text style={styles.offlineText}>Offline Mode</Text>
               </View>
             )}
+
+            {offlineStatus && !netInfo?.isInternetReachable && (
+              <View style={styles.offlineTimerContainer}>
+                <Text style={styles.offlineTimerText}>
+                  Offline Time: {offlineStatus.remainingHours.toFixed(1)} / {offlineStatus.totalHours} hrs left
+                </Text>
+                <View style={styles.progressBarBackground}>
+                  <View
+                    style={[
+                      styles.progressBarForeground,
+                      { width: `${(offlineStatus.remainingHours / offlineStatus.totalHours) * 100}%` },
+                    ]}
+                  />
+                </View>
+              </View>
+            )}
             
             {syncStatus && (
               <View style={styles.downloadIndicator}>
@@ -1732,6 +1779,29 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#7f8c8d',
     marginBottom: 3,
+  },
+  offlineTimerContainer: {
+    width: '80%',
+    marginTop: 15,
+    alignItems: 'center',
+  },
+  offlineTimerText: {
+    color: '#fff',
+    fontSize: 12,
+    opacity: 0.9,
+    marginBottom: 5,
+  },
+  progressBarBackground: {
+    height: 6,
+    width: '100%',
+    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  progressBarForeground: {
+    height: '100%',
+    backgroundColor: '#fff',
+    borderRadius: 3,
   },
   courseResultDetails: {
     fontSize: 13,

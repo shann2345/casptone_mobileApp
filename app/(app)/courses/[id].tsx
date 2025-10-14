@@ -287,49 +287,49 @@ export default function CourseDetailsScreen() {
       }
     } else {
       // OFFLINE MODE: Show proactive warning and use cached data with STRICT time validation
-      console.log('⚠️ Offline: Entering offline mode with strict time monitoring');
+        console.log('⚠️ Offline: Entering offline mode with strict time monitoring');
 
-      // PROACTIVE WARNING: Use the imported function
-      await showOfflineModeWarningIfNeeded();
+        // PROACTIVE WARNING: Use the imported function
+        await showOfflineModeWarningIfNeeded();
 
-      // Double-check manipulation status in offline mode
-      const canAccess = await canAccessOfflineContent(userEmail);
-      if (!canAccess) {
-        setTimeManipulationDetected(true);
-        setServerTime(null);
-        Alert.alert(
-          '🚨 Access Blocked',
-          '⚠️ Time manipulation was detected. You must connect to the internet to restore access.\n\nWARNING: Do not attempt to manipulate your device time. This will only extend the lockout period.',
-          [{ text: 'Understood' }]
-        );
-        setCourseDetail(null); // Block content
-      } else {
-        setTimeManipulationDetected(false);
-        
-        // Get calculated offline server time
-        const calculatedServerTime = await getSavedServerTime(userEmail);
-        if (calculatedServerTime) {
-          const serverTimeDate = new Date(calculatedServerTime);
-          setServerTime(serverTimeDate);
-          console.log('✅ Using calculated offline server time with strict monitoring:', serverTimeDate.toISOString());
-        }
-
-        // Load offline course data
-        const offlineData = await getCourseDetailsFromDb(Number(courseId), userEmail);
-        if (offlineData) {
-          setCourseDetail(offlineData);
+        // Double-check manipulation status in offline mode
+        const canAccess = await canAccessOfflineContent(userEmail);
+        if (!canAccess) {
+          setTimeManipulationDetected(true);
+          setServerTime(null);
+          Alert.alert(
+            '🚨 Access Blocked',
+            'Your 24-hour offline access window has expired, or time manipulation was detected. You must connect to the internet to restore access.',
+            [{ text: 'Understood' }]
+          );
+          setCourseDetail(null); 
         } else {
-          Alert.alert('Offline Error', 'No offline content available for this course.');
+          setTimeManipulationDetected(false);
+          
+          // Get calculated offline server time
+          const calculatedServerTime = await getSavedServerTime(userEmail);
+          if (calculatedServerTime) {
+            const serverTimeDate = new Date(calculatedServerTime);
+            setServerTime(serverTimeDate);
+            console.log('✅ Using calculated offline server time with strict monitoring:', serverTimeDate.toISOString());
+          }
+
+          // Load offline course data
+          const offlineData = await getCourseDetailsFromDb(Number(courseId), userEmail);
+          if (offlineData) {
+            setCourseDetail(offlineData);
+          } else {
+            Alert.alert('Offline Error', 'No offline content available for this course.');
+          }
         }
       }
+    } catch (error) {
+      console.error('Failed to fetch course details:', error);
+      Alert.alert('Error', 'Unable to load course details.');
+    } finally {
+      setLoading(false);
     }
-  } catch (error) {
-    console.error('Failed to fetch course details:', error);
-    Alert.alert('Error', 'Unable to load course details.');
-  } finally {
-    setLoading(false);
-  }
-};
+  };
 
 
   const handleRefresh = useCallback(async () => {

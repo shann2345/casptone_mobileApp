@@ -412,28 +412,50 @@ export default function AssessmentDetailsScreen() {
       return;
     }
 
-    try {
-      console.log('Starting quiz attempt and saving locally...');
-      await startOfflineQuiz(parseInt(assessmentId as string), userEmail);
-
-      Alert.alert('Success', 'Your quiz has been started and saved locally. You can proceed to attempt it now.', [
+    // Add warning dialog before starting the quiz
+    Alert.alert(
+      'Important Notice',
+      `Please read carefully before starting:\n\n` +
+      `1. Once you start the quiz, you must complete it in one session.\n` +
+      `2. Specially if the assessment has due date.\n` +
+      `3. Do not leave or close the quiz page before submitting.\n` +
+      `4. Abandoning the quiz without submitting may result in lost answers.\n` +
+      `5. Make sure you have enough time to complete the quiz (${assessmentDetail.duration_minutes} minutes).\n\n` +
+      `Are you ready to start?`,
+      [
         {
-          text: 'OK',
-          onPress: () =>
-            router.replace({
-              pathname: '/courses/assessments/[assessmentId]/attempt-quiz',
-              params: { 
-                assessmentId: assessmentDetail.id.toString(), 
-                userEmail, 
-                isOffline: 'true'
-              },
-            }),
+          text: 'Cancel',
+          style: 'cancel'
         },
-      ]);
-    } catch (error) {
-      console.error('Error starting quiz attempt:', error);
-      Alert.alert('Error', 'Failed to start quiz attempt locally.');
-    }
+        {
+          text: 'Start Quiz',
+          onPress: async () => {
+            try {
+              console.log('Starting quiz attempt and saving locally...');
+              await startOfflineQuiz(parseInt(assessmentId as string), userEmail);
+
+              Alert.alert('Quiz Started', 'Good luck! Remember to submit your answers before leaving the quiz.', [
+                {
+                  text: 'OK',
+                  onPress: () =>
+                    router.replace({
+                      pathname: '/courses/assessments/[assessmentId]/attempt-quiz',
+                      params: { 
+                        assessmentId: assessmentDetail.id.toString(), 
+                        userEmail, 
+                        isOffline: 'true'
+                      },
+                    }),
+                },
+              ]);
+            } catch (error) {
+              console.error('Error starting quiz attempt:', error);
+              Alert.alert('Error', 'Failed to start quiz attempt locally.');
+            }
+          }
+        }
+      ]
+    );
   };
 
   const handleSubmitAssignment = async () => {

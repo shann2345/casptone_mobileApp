@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useApp } from '../../../../../context/AppContext';
 import { useNetworkStatus } from '../../../../../context/NetworkContext';
 import api, { getUserData, syncOfflineQuiz } from '../../../../../lib/api';
 import { deleteOfflineQuizAttempt, detectTimeManipulation, getCompletedOfflineQuizzes, getCurrentServerTime, getDb, getOfflineQuizAnswers, getOfflineQuizAttempt, getOfflineQuizAttemptStatus, getQuizQuestionsFromDb, submitOfflineQuiz, updateOfflineQuizAnswers, updateTimeSync } from '../../../../../lib/localDb';
@@ -86,6 +87,7 @@ export default function AttemptQuizScreen() {
   const [timeManipulationDetected, setTimeManipulationDetected] = useState(false);
   const [autoSubmitting, setAutoSubmitting] = useState(false); // Track auto-submission
   const [shuffledQuestions, setShuffledQuestions] = useState<SubmittedQuestion[]>([]);
+  const { restartApp } = useApp();
 
   // Update the ref whenever studentAnswers state changes
   useEffect(() => {
@@ -971,13 +973,10 @@ export default function AttemptQuizScreen() {
           if (!isAutoSubmission) {
             Alert.alert(
               'Quiz Submitted Offline',
-              'Your quiz has been saved locally. It will be synced with the server when you are back online.',
-              [{ 
-                text: 'OK', 
-                onPress: () => {
-                  router.replace(`/courses/assessments/${assessmentId}`);
-                }
-              }]
+              'Your quiz has been saved locally. The app will now restart to finalize the process.',
+              [
+                { text: 'OK', onPress: () => restartApp() }
+              ]
             );
           }
         }
