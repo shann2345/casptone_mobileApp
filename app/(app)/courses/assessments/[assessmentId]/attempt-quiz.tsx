@@ -797,11 +797,9 @@ export default function AttemptQuizScreen() {
   
   setIsSyncing(true);
   try {
-    // ✅ Only sync if this is an offline quiz that's completed and hasn't been synced yet
     if (isOffline === 'true' && submittedAssessment.status === 'completed') {
       console.log('🔄 Attempting to sync completed offline quiz...');
       
-      // ✅ FIRST CHECK if there's actually data to sync
       const user = await getUserData();
       const userEmail = user?.email;
       
@@ -810,7 +808,6 @@ export default function AttemptQuizScreen() {
         return;
       }
 
-      // ✅ Check if there are actually completed offline quizzes to sync
       const completedQuizzes = await getCompletedOfflineQuizzes(userEmail);
       const hasQuizToSync = completedQuizzes.some(quiz => 
         quiz.assessment_id === parseInt(assessmentId as string)
@@ -821,31 +818,26 @@ export default function AttemptQuizScreen() {
         return;
       }
       
-      // ✅ Check if already syncing to prevent duplicate attempts
       if (savingAnswers.has(-1)) {
         console.log('⏳ Sync already in progress, skipping...');
         return;
       }
       
-      setSavingAnswers(new Set([...Array.from(savingAnswers), -1])); // Use -1 as special ID for full submission
+      setSavingAnswers(new Set([...Array.from(savingAnswers), -1]));
       
-      // Format the answers from our state - ensure all required fields
       const formattedAnswersForSync = Object.keys(studentAnswers).reduce((acc, questionId) => {
         const questionData = studentAnswers[questionId];
         acc[questionId] = {
           ...questionData,
-          submitted_answer: questionData.submitted_answer || questionData.answer?.toString() || '' // ✅ Ensure submitted_answer exists
+          submitted_answer: questionData.submitted_answer || questionData.answer?.toString() || ''
         };
         return acc;
       }, {} as any);
       
       const answersJson = JSON.stringify(formattedAnswersForSync);
-      
-      // Get start and end times
       const startTime = submittedAssessment.started_at;
       const endTime = submittedAssessment.completed_at || new Date().toISOString();
       
-      // Attempt to sync with server
       const syncSuccess = await syncOfflineQuiz(
         parseInt(assessmentId as string),
         answersJson,
@@ -855,15 +847,35 @@ export default function AttemptQuizScreen() {
       
       if (syncSuccess) {
         console.log('✅ Offline quiz successfully synced with server');
-        // ✅ CLEAN UP LOCAL DATA AFTER SUCCESSFUL SYNC
+        
+        // ✅ DELETE LOCAL DATA
         await deleteOfflineQuizAttempt(parseInt(assessmentId as string), userEmail);
         console.log('🧹 Local offline attempt data cleaned up after sync');
-        router.replace(`/courses/assessments/${assessmentId}`);
+        
+        // ✅ IMPORTANT: Show success message and navigate back
+        Alert.alert(
+          'Sync Complete',
+          'Your offline quiz has been successfully synced with the server.',
+          [
+            { 
+              text: 'OK', 
+              onPress: () => {
+                // Navigate back to assessment details page
+                // This will trigger a refresh and show the updated status
+                router.replace(`/courses/assessments/${assessmentId}`);
+              }
+            }
+          ]
+        );
       } else {
         console.error('❌ Failed to sync offline quiz');
+        Alert.alert(
+          'Sync Failed',
+          'Failed to sync your offline quiz. Please try again.',
+          [{ text: 'OK' }]
+        );
       }
       
-      // Remove from saving state
       setSavingAnswers(prevState => {
         const newSet = new Set(prevState);
         newSet.delete(-1);
@@ -872,6 +884,11 @@ export default function AttemptQuizScreen() {
     }
   } catch (error) {
     console.error('Error syncing completed offline quiz:', error);
+    Alert.alert(
+      'Sync Error',
+      'An error occurred while syncing. Please try again.',
+      [{ text: 'OK' }]
+    );
     setSavingAnswers(prevState => {
       const newSet = new Set(prevState);
       newSet.delete(-1);
@@ -971,13 +988,26 @@ export default function AttemptQuizScreen() {
           setSubmittedAssessment(prev => prev ? { ...prev, status: 'completed', completed_at: new Date().toISOString() } : null);
           
           if (!isAutoSubmission) {
+            // Show alert requiring app restart for offline completion
             Alert.alert(
-              'Quiz Submitted Offline',
-              'Your quiz has been saved locally. The app will now restart to finalize the process.',
+              '✅ Quiz Completed Offline',
+              'Your quiz has been saved locally and marked as completed.\n\n⚠️ The app needs to restart to properly save your offline progress.\n\nPress OK to restart the app now.',
               [
-                { text: 'OK', onPress: () => restartApp() }
-              ]
+                {
+                  text: 'OK',
+                  onPress: () => {
+                    console.log('🔄 Restarting app to save offline quiz...');
+                    // Use the restartApp function from AppContext to force app restart
+                    restartApp();
+                  }
+                }
+              ],
+              { cancelable: false } // Prevent dismissing the alert
             );
+          } else {
+            // For auto-submission, restart without additional alert
+            console.log('🔄 Auto-submission complete, restarting app...');
+            restartApp();
           }
         }
       } else {

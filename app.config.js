@@ -52,8 +52,8 @@ export default {
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/Splash Screen.png",
-          "imageWidth": 300,
+          "image": "./assets/images/splash-icon-dark.png",
+          "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"
         }

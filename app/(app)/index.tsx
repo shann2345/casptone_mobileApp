@@ -454,8 +454,8 @@ export default function HomeScreen() {
     let userEmail = '';
     try {
       const userData = await getUserData();
-      if (userData && userData.name && userData.email) {
-        setUserName(userData.given_name || userData.name || 'Guest');
+      if (userData && userData.email) {
+        setUserName(userData.given_name || 'Guest');
         userEmail = userData.email;
       } else {
         console.warn('User data or name not found in local storage. Redirecting to login.');
@@ -1036,7 +1036,7 @@ export default function HomeScreen() {
           style={styles.header}
         >
           <Animated.View style={[styles.headerContent, { transform: [{ translateY: slideAnim }] }]}>
-            <Text style={styles.welcomeText}>Welcome back!</Text>
+            <Text style={styles.welcomeText}>Welcome</Text>
             <Text style={styles.userNameText}>{userName}</Text>
             <Text style={styles.subText}>Ready to continue your learning journey?</Text>
             
@@ -1379,7 +1379,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   welcomeText: {
-    fontSize: 18,
+    fontSize: 13,
     fontWeight: '400',
     color: '#fff',
     opacity: 0.95,
@@ -1395,7 +1395,7 @@ const styles = StyleSheet.create({
     textShadowRadius: 4,
   },
   subText: {
-    fontSize: 15,
+    fontSize: 10,
     color: '#fff',
     opacity: 0.9,
     textAlign: 'center',

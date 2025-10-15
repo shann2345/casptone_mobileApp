@@ -1,5 +1,4 @@
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -400,13 +399,10 @@ export default function CourseDetailsScreen() {
   if (loading) {
     return (
       <View style={styles.container}>
-        <LinearGradient
-          colors={['#02135eff', '#7979f1ff']}
-          style={styles.loadingGradient}
-        >
-          <ActivityIndicator size="large" color="#fff" />
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#1967d2" />
           <Text style={styles.loadingText}>Loading course details...</Text>
-        </LinearGradient>
+        </View>
       </View>
     );
   }
@@ -414,57 +410,59 @@ export default function CourseDetailsScreen() {
   if (!courseDetail) {
     return (
       <View style={styles.container}>
-        <LinearGradient
-          colors={['#02135eff', '#7979f1ff']}
-          style={styles.loadingGradient}
-        >
-          <Ionicons name="alert-circle" size={64} color="#fff" />
+        <View style={styles.errorContainer}>
+          <Ionicons name="alert-circle-outline" size={64} color="#5f6368" />
           <Text style={styles.errorText}>Course not found or an error occurred.</Text>
-        </LinearGradient>
+        </View>
       </View>
     );
   }
 
   const renderHeader = () => (
     <View>
-      {/* Enhanced Header with Gradient */}
-      <LinearGradient
-        colors={['#02135eff', '#7979f1ff']}
-        style={[styles.headerContainer, timeManipulationDetected && styles.disabledHeader]}
-      >
+      {/* LMS-Style Header */}
+      <View style={[styles.headerContainer, timeManipulationDetected && styles.disabledHeader]}>
         <View style={styles.headerContent}>
           <Text style={styles.courseTitle}>{courseDetail?.title || 'Course Access Blocked'}</Text>
-          <Text style={styles.courseCode}>{courseDetail?.description}</Text>
+          <Text style={styles.courseCode}>{courseDetail?.course_code}</Text>
           
           {!timeManipulationDetected && courseDetail && (
             <>
               <View style={styles.instructorInfo}>
-                <Ionicons name="person" size={16} color="rgba(255,255,255,0.8)" />
-                <Text style={styles.instructorText}>
-                  {courseDetail.instructor.name} ({courseDetail.instructor.email})
-                </Text>
+                <View style={styles.instructorAvatar}>
+                  <Ionicons name="person-outline" size={16} color="#5f6368" />
+                </View>
+                <View style={styles.instructorDetails}>
+                  <Text style={styles.instructorName}>{courseDetail.instructor.name}</Text>
+                  <Text style={styles.instructorEmail}>{courseDetail.instructor.email}</Text>
+                </View>
               </View>
               
-              {/* <View style={styles.courseStats}>
-                <View style={styles.statItem}>
-                  <Text style={styles.statValue}>{courseDetail.credits}</Text>
-                  <Text style={styles.statLabel}>Credits</Text>
+              <View style={styles.courseMetaRow}>
+                <View style={styles.metaItem}>
+                  <Ionicons name="book-outline" size={16} color="#5f6368" />
+                  <Text style={styles.metaText}>{courseDetail.credits} Credits</Text>
                 </View>
-                <View style={styles.statItem}>
-                  <Text style={styles.statValue}>{courseDetail.sorted_content.length}</Text>
-                  <Text style={styles.statLabel}>Items</Text>
+                <View style={styles.metaDivider} />
+                <View style={styles.metaItem}>
+                  <Ionicons name="list-outline" size={16} color="#5f6368" />
+                  <Text style={styles.metaText}>{courseDetail.sorted_content.length} Items</Text>
                 </View>
-                <View style={styles.statItem}>
-                  <Text style={styles.statValue}>{courseDetail.status}</Text>
-                  <Text style={styles.statLabel}>Status</Text>
+                <View style={styles.metaDivider} />
+                <View style={styles.metaItem}>
+                  <View style={[styles.statusBadge, courseDetail.status === 'active' && styles.statusBadgeActive]}>
+                    <Text style={[styles.statusText, courseDetail.status === 'active' && styles.statusTextActive]}>
+                      {courseDetail.status}
+                    </Text>
+                  </View>
                 </View>
-              </View> */}
+              </View>
             </>
           )}
           
           {timeManipulationDetected && (
             <View style={styles.timeManipulationWarning}>
-              <Ionicons name="warning" size={24} color="#fff" />
+              <Ionicons name="warning-outline" size={32} color="#d93025" />
               <Text style={styles.warningText}>TIME MANIPULATION DETECTED</Text>
               <Text style={styles.warningSubText}>
                 Your access has been blocked due to device time manipulation.
@@ -477,12 +475,12 @@ export default function CourseDetailsScreen() {
           
           {!netInfo?.isInternetReachable && !timeManipulationDetected && (
             <View style={styles.offlineNotice}>
-              <Ionicons name="cloud-offline" size={14} color="#fff" />
+              <Ionicons name="cloud-offline-outline" size={16} color="#5f6368" />
               <Text style={styles.offlineText}>Working offline</Text>
             </View>
           )}
         </View>
-      </LinearGradient>
+      </View>
     </View>
   );
 
@@ -497,12 +495,14 @@ export default function CourseDetailsScreen() {
       return (
         <View style={[styles.topicCard, timeManipulationDetected && styles.disabledCard]}>
           <View style={styles.topicHeader}>
-            <View style={[styles.iconContainer, { backgroundColor: getItemColor('topic') + '15' }]}>
-              <Ionicons name={getItemIcon('topic')} size={24} color={getItemColor('topic')} />
+            <View style={styles.topicIconContainer}>
+              <Ionicons name="folder-open-outline" size={20} color="#e37400" />
             </View>
             <View style={styles.topicInfo}>
               <Text style={styles.topicTitle}>{topic.title}</Text>
-              <Text style={styles.topicDescription}>{topic.description}</Text>
+              {topic.description && (
+                <Text style={styles.topicDescription}>{topic.description}</Text>
+              )}
             </View>
           </View>
 
@@ -516,7 +516,7 @@ export default function CourseDetailsScreen() {
                   <TouchableOpacity
                     key={material.id}
                     style={[
-                      styles.itemCardNested,
+                      styles.nestedItemCard,
                       !available && styles.unavailableCard,
                       timeManipulationDetected && styles.disabledCard
                     ]}
@@ -536,46 +536,30 @@ export default function CourseDetailsScreen() {
                       }
                     }}
                     disabled={disabled}
-                    activeOpacity={0.8}
+                    activeOpacity={0.7}
                   >
-                    <View style={styles.nestedItemHeader}>
-                      <View style={[styles.iconContainerSmall, { backgroundColor: getItemColor('material') + '15' }]}>
-                        <Ionicons name={getItemIcon('material')} size={16} color={getItemColor('material')} />
-                      </View>
-                      <View style={styles.nestedItemInfo}>
-                        <Text style={styles.itemTitleNested}>{material.title}</Text>
-                        <Text style={styles.itemTypeNested}>
-                          Material {!available && '(Not Available Yet)'}
-                          {timeManipulationDetected && ' (Time Sync Required)'}
-                        </Text>
-                      </View>
-                      {!available && !timeManipulationDetected && (
-                        <View style={styles.availabilityBadge}>
-                          <Text style={styles.availabilityText}>Locked</Text>
+                    <View style={styles.nestedItemContent}>
+                      <View style={styles.nestedItemLeft}>
+                        <View style={styles.materialIcon}>
+                          <Ionicons name="document-text-outline" size={16} color="#1967d2" />
                         </View>
-                      )}
-                    </View>
-                    
-                    {material.content && (
-                      <Text style={styles.itemDetailNested}>
-                        {material.content.substring(0, 100)}...
-                      </Text>
-                    )}
-                    
-                    <View style={styles.itemFooter}>
-                      <Text style={styles.itemDateNested}>
-                        Created: {formatDate(material.created_at)}
-                      </Text>
-                      {material.available_at && !available && !timeManipulationDetected && (
-                        <Text style={[styles.availableDateText, styles.additionalDateInfo]}>
-                          Available: {formatDate(material.available_at)}
-                        </Text>
-                      )}
-                      {material.unavailable_at && (
-                        <Text style={[styles.availableDateText, styles.additionalDateInfo]}>
-                          Unavailable: {formatDate(material.unavailable_at)}
-                        </Text>
-                      )}
+                        <View style={styles.nestedItemTextContainer}>
+                          <Text style={styles.nestedItemTitle}>{material.title}</Text>
+                          <Text style={styles.nestedItemMeta}>
+                            Material • {formatDate(material.created_at)}
+                          </Text>
+                        </View>
+                      </View>
+                      
+                      <View style={styles.nestedItemRight}>
+                        {!available && !timeManipulationDetected ? (
+                          <View style={styles.lockedBadge}>
+                            <Ionicons name="lock-closed" size={14} color="#5f6368" />
+                          </View>
+                        ) : (
+                          <Ionicons name="chevron-forward" size={18} color="#dadce0" />
+                        )}
+                      </View>
                     </View>
                   </TouchableOpacity>
                 );
@@ -590,10 +574,10 @@ export default function CourseDetailsScreen() {
                   <TouchableOpacity
                     key={assessment.id}
                     style={[
-                      styles.itemCardNested,
+                      styles.nestedItemCard,
                       !available && styles.unavailableCard,
                       timeManipulationDetected && styles.disabledCard,
-                      isHighlighted && styles.highlightedCardNested,
+                      isHighlighted && styles.highlightedCard,
                     ]}
                     onPress={() => {
                       if (timeManipulationDetected) {
@@ -616,42 +600,37 @@ export default function CourseDetailsScreen() {
                       }
                     }}
                     disabled={disabled}
-                    activeOpacity={0.8}
+                    activeOpacity={0.7}
                   >
-                    <View style={styles.nestedItemHeader}>
-                      <View style={[styles.iconContainerSmall, { backgroundColor: getItemColor('assessment') + '15' }]}>
-                        <Ionicons name={getItemIcon('assessment')} size={16} color={getItemColor('assessment')} />
-                      </View>
-                      <View style={styles.nestedItemInfo}>
-                        <Text style={styles.itemTitleNested}>{assessment.title}</Text>
-                        <Text style={styles.itemTypeNested}>
-                          Assessment
-                          {assessment.access_code && ' (Code Required)'}
-                          {!available && ' (Not Available)'}
-                          {timeManipulationDetected && ' (Time Sync Required)'}
-                        </Text>
-                      </View>
-                      {assessment.access_code && (
-                        <View style={styles.codeRequiredBadge}>
-                          <Ionicons name="key" size={12} color="#fff" />
+                    <View style={styles.nestedItemContent}>
+                      <View style={styles.nestedItemLeft}>
+                        <View style={styles.assessmentIcon}>
+                          <Ionicons name="school-outline" size={16} color="#d93025" />
                         </View>
-                      )}
-                    </View>
-                    
-                    <View style={styles.itemFooter}>
-                      <Text style={styles.itemDateNested}>
-                        Created: {formatDate(assessment.created_at)}
-                      </Text>
-                      {assessment.available_at && !available && !timeManipulationDetected && (
-                        <Text style={[styles.availableDateText, styles.additionalDateInfo]}>
-                          Available: {formatDate(assessment.available_at)}
-                        </Text>
-                      )}
-                      {assessment.unavailable_at && (
-                        <Text style={[styles.availableDateText, styles.additionalDateInfo]}>
-                          Unavailable: {formatDate(assessment.unavailable_at)}
-                        </Text>
-                      )}
+                        <View style={styles.nestedItemTextContainer}>
+                          <View style={styles.assessmentTitleRow}>
+                            <Text style={styles.nestedItemTitle}>{assessment.title}</Text>
+                            {assessment.access_code && (
+                              <View style={styles.keyBadge}>
+                                <Ionicons name="key-outline" size={10} color="#e37400" />
+                              </View>
+                            )}
+                          </View>
+                          <Text style={styles.nestedItemMeta}>
+                            Assessment • {formatDate(assessment.created_at)}
+                          </Text>
+                        </View>
+                      </View>
+                      
+                      <View style={styles.nestedItemRight}>
+                        {!available && !timeManipulationDetected ? (
+                          <View style={styles.lockedBadge}>
+                            <Ionicons name="lock-closed" size={14} color="#5f6368" />
+                          </View>
+                        ) : (
+                          <Ionicons name="chevron-forward" size={18} color="#dadce0" />
+                        )}
+                      </View>
                     </View>
                   </TouchableOpacity>
                 );
@@ -688,43 +667,35 @@ export default function CourseDetailsScreen() {
             }
           }}
           disabled={disabled}
-          activeOpacity={0.8}
+          activeOpacity={0.7}
         >
-          <View style={styles.itemHeader}>
-            <View style={[styles.iconContainer, { backgroundColor: getItemColor('material') + '15' }]}>
-              <Ionicons name={getItemIcon('material')} size={24} color={getItemColor('material')} />
-            </View>
-            <View style={styles.itemInfo}>
-              <Text style={styles.itemTitle}>{material.title}</Text>
-              <Text style={styles.itemType}>
-                Independent Material
-                {!available && ' (Not Available Yet)'}
-                {timeManipulationDetected && ' (Time Sync Required)'}
-              </Text>
-            </View>
-            {!available && !timeManipulationDetected && (
-              <View style={styles.availabilityBadge}>
-                <Text style={styles.availabilityText}>Locked</Text>
+          <View style={styles.itemContent}>
+            <View style={styles.itemLeft}>
+              <View style={styles.materialIconLarge}>
+                <Ionicons name="document-text-outline" size={20} color="#1967d2" />
               </View>
-            )}
-          </View>
-          
-          {material.content && (
-            <Text style={styles.itemDetail}>{material.content.substring(0, 150)}...</Text>
-          )}
-          
-          <View style={styles.itemFooter}>
-            <Text style={styles.itemDate}>Created: {formatDate(material.created_at)}</Text>
-            {material.available_at && !available && !timeManipulationDetected && (
-              <Text style={[styles.availableDateText, styles.additionalDateInfo]}>
-                Available: {formatDate(material.available_at)}
-              </Text>
-            )}
-            {material.unavailable_at && (
-              <Text style={[styles.availableDateText, styles.additionalDateInfo]}>
-                Unavailable: {formatDate(material.unavailable_at)}
-              </Text>
-            )}
+              <View style={styles.itemTextContainer}>
+                <Text style={styles.itemTitle}>{material.title}</Text>
+                <Text style={styles.itemMeta}>
+                  Material • {formatDate(material.created_at)}
+                </Text>
+                {material.content && (
+                  <Text style={styles.itemPreview} numberOfLines={2}>
+                    {material.content}
+                  </Text>
+                )}
+              </View>
+            </View>
+            
+            <View style={styles.itemRight}>
+              {!available && !timeManipulationDetected ? (
+                <View style={styles.lockedBadge}>
+                  <Ionicons name="lock-closed" size={16} color="#5f6368" />
+                </View>
+              ) : (
+                <Ionicons name="chevron-forward" size={20} color="#dadce0" />
+              )}
+            </View>
           </View>
         </TouchableOpacity>
       );
@@ -763,47 +734,37 @@ export default function CourseDetailsScreen() {
             }
           }}
           disabled={disabled}
-          activeOpacity={0.8}
+          activeOpacity={0.7}
         >
-          <View style={styles.itemHeader}>
-            <View style={[styles.iconContainer, { backgroundColor: getItemColor('assessment') + '15' }]}>
-              <Ionicons name={getItemIcon('assessment')} size={24} color={getItemColor('assessment')} />
-            </View>
-            <View style={styles.itemInfo}>
-              <Text style={styles.itemTitle}>{assessment.title}</Text>
-              <Text style={styles.itemType}>
-                Independent Assessment
-                {assessment.access_code && ' (Code Required)'}
-                {!available && ' (Not Available)'}
-                {timeManipulationDetected && ' (Time Sync Required)'}
-              </Text>
-            </View>
-            <View style={styles.itemBadges}>
-              {assessment.access_code && (
-                <View style={styles.codeRequiredBadge}>
-                  <Ionicons name="key" size={12} color="#fff" />
+          <View style={styles.itemContent}>
+            <View style={styles.itemLeft}>
+              <View style={styles.assessmentIconLarge}>
+                <Ionicons name="school-outline" size={20} color="#d93025" />
+              </View>
+              <View style={styles.itemTextContainer}>
+                <View style={styles.assessmentTitleRow}>
+                  <Text style={styles.itemTitle}>{assessment.title}</Text>
+                  {assessment.access_code && (
+                    <View style={styles.keyBadge}>
+                      <Ionicons name="key-outline" size={12} color="#e37400" />
+                    </View>
+                  )}
                 </View>
-              )}
-              {!available && !timeManipulationDetected && (
-                <View style={styles.availabilityBadge}>
-                  <Text style={styles.availabilityText}>Locked</Text>
+                <Text style={styles.itemMeta}>
+                  Assessment • {formatDate(assessment.created_at)}
+                </Text>
+              </View>
+            </View>
+            
+            <View style={styles.itemRight}>
+              {!available && !timeManipulationDetected ? (
+                <View style={styles.lockedBadge}>
+                  <Ionicons name="lock-closed" size={16} color="#5f6368" />
                 </View>
+              ) : (
+                <Ionicons name="chevron-forward" size={20} color="#dadce0" />
               )}
             </View>
-          </View>
-          
-          <View style={styles.itemFooter}>
-            <Text style={styles.itemDate}>Created: {formatDate(assessment.created_at)}</Text>
-            {assessment.available_at && !available && !timeManipulationDetected && (
-              <Text style={[styles.availableDateText, styles.additionalDateInfo]}>
-                Available: {formatDate(assessment.available_at)}
-              </Text>
-            )}
-            {assessment.unavailable_at && (
-              <Text style={[styles.availableDateText, styles.additionalDateInfo]}>
-                Unavailable: {formatDate(assessment.unavailable_at)}
-              </Text>
-            )}
           </View>
         </TouchableOpacity>
       );
@@ -840,7 +801,7 @@ export default function CourseDetailsScreen() {
         showsVerticalScrollIndicator={false}
       />
 
-      {/* Enhanced Modal */}
+      {/* LMS-Style Modal */}
       <Modal
         animationType="fade"
         transparent={true}
@@ -853,34 +814,47 @@ export default function CourseDetailsScreen() {
       >
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, timeManipulationDetected && styles.disabledCard]}>
-            <LinearGradient
-              colors={['#02135eff', '#7979f1ff']}
-              style={styles.modalHeader}
-            >
-              <Ionicons name="key" size={32} color="#fff" />
+            <View style={styles.modalHeader}>
+              <View style={styles.modalIconContainer}>
+                <Ionicons name="key-outline" size={24} color="#1967d2" />
+              </View>
               <Text style={styles.modalTitle}>Access Code Required</Text>
-            </LinearGradient>
+              <TouchableOpacity 
+                style={styles.modalCloseButton}
+                onPress={() => {
+                  setAccessCodeModalVisible(false);
+                  setEnteredAccessCode('');
+                  setAccessCodeError(null);
+                }}
+              >
+                <Ionicons name="close" size={24} color="#5f6368" />
+              </TouchableOpacity>
+            </View>
             
             <View style={styles.modalBody}>
               {currentAssessment && (
                 <Text style={styles.modalAssessmentTitle}>
-                  "{currentAssessment.title}"
+                  {currentAssessment.title}
                 </Text>
               )}
               
               {timeManipulationDetected ? (
-                <Text style={styles.timeManipulationModalText}>
-                  Time synchronization required to access assessments.
-                </Text>
+                <View style={styles.modalWarning}>
+                  <Ionicons name="warning-outline" size={20} color="#d93025" />
+                  <Text style={styles.timeManipulationModalText}>
+                    Time synchronization required to access assessments.
+                  </Text>
+                </View>
               ) : (
                 <Text style={styles.modalSubtitle}>
-                  Please enter the access code to continue with this assessment.
+                  Please enter the access code to continue
                 </Text>
               )}
               
               <TextInput
                 style={[styles.input, timeManipulationDetected && styles.disabledInput]}
                 placeholder="Enter access code"
+                placeholderTextColor="#9aa0a6"
                 value={enteredAccessCode}
                 onChangeText={setEnteredAccessCode}
                 secureTextEntry
@@ -889,7 +863,10 @@ export default function CourseDetailsScreen() {
               />
               
               {accessCodeError && (
-                <Text style={styles.errorTextModal}>{accessCodeError}</Text>
+                <View style={styles.errorContainer}>
+                  <Ionicons name="alert-circle-outline" size={16} color="#d93025" />
+                  <Text style={styles.errorTextModal}>{accessCodeError}</Text>
+                </View>
               )}
               
               <View style={styles.modalButtons}>
@@ -901,7 +878,7 @@ export default function CourseDetailsScreen() {
                     setAccessCodeError(null);
                   }}
                 >
-                  <Text style={styles.buttonText}>Cancel</Text>
+                  <Text style={styles.cancelButtonText}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[
@@ -912,12 +889,7 @@ export default function CourseDetailsScreen() {
                   onPress={handleAccessCodeSubmit}
                   disabled={timeManipulationDetected}
                 >
-                  <LinearGradient
-                    colors={timeManipulationDetected ? ['#ccc', '#ccc'] : ['#02135eff', '#7979f1ff']}
-                    style={styles.submitButtonGradient}
-                  >
-                    <Text style={styles.buttonText}>Submit</Text>
-                  </LinearGradient>
+                  <Text style={styles.submitButtonText}>Submit</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -928,497 +900,480 @@ export default function CourseDetailsScreen() {
   );
 }
 
-// Enhanced styles matching index.tsx design
+// LMS-Style design with proper spacing
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f8f9fa',
   },
-  
-  // Loading State (matching index.tsx)
-  loadingGradient: {
+  loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 40,
+    backgroundColor: '#f8f9fa',
   },
   loadingText: {
-    marginTop: 24,
-    fontSize: 20,
-    color: '#fff',
-    fontWeight: '700',
-    textAlign: 'center',
-    letterSpacing: 0.4,
+    marginTop: 16,
+    fontSize: 16,
+    color: '#5f6368',
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 32,
+    backgroundColor: '#f8f9fa',
   },
   errorText: {
-    marginTop: 24,
-    fontSize: 20,
-    color: '#fff',
-    fontWeight: '700',
+    marginTop: 16,
+    fontSize: 16,
+    color: '#5f6368',
     textAlign: 'center',
-    letterSpacing: 0.4,
   },
-
-  // Enhanced Header (matching index.tsx gradient)
   headerContainer: {
-    paddingTop: 50,
-    paddingBottom: 35,
-    paddingHorizontal: 24,
-    borderBottomLeftRadius: 35,
-    borderBottomRightRadius: 35,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.35,
-    shadowRadius: 12,
-    elevation: 12,
-    marginBottom: 25,
-  },
-  disabledHeader: {
-    opacity: 0.7,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
   },
   headerContent: {
-    alignItems: 'center',
+    padding: 20,
   },
   courseTitle: {
-    fontSize: 30,
-    fontWeight: 'bold',
-    color: '#fff',
-    textAlign: 'center',
-    marginBottom: 10,
-    letterSpacing: 0.5,
+    fontSize: 24,
+    fontWeight: '500',
+    color: '#202124',
+    marginBottom: 4,
   },
   courseCode: {
-    fontSize: 17,
-    color: 'rgba(255,255,255,0.9)',
-    marginBottom: 18,
-    textAlign: 'center',
+    fontSize: 14,
+    color: '#5f6368',
+    marginBottom: 16,
   },
   instructorInfo: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 22,
+    marginBottom: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: '#f8f9fa',
+    borderRadius: 8,
+  },
+  instructorAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#e8eaed',
     justifyContent: 'center',
-  },
-  instructorText: {
-    fontSize: 15,
-    color: 'rgba(255,255,255,0.95)',
-    marginLeft: 10,
-    fontWeight: '500',
-  },
-  courseStats: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    width: '100%',
-  },
-  statItem: {
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.25)',
-    borderRadius: 18,
-    paddingVertical: 14,
-    paddingHorizontal: 24,
-    minWidth: 90,
+    marginRight: 12,
   },
-  statValue: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#fff',
-    letterSpacing: 0.3,
+  instructorDetails: {
+    flex: 1,
   },
-  statLabel: {
-    fontSize: 13,
-    color: 'rgba(255,255,255,0.9)',
-    marginTop: 5,
+  instructorName: {
+    fontSize: 14,
     fontWeight: '500',
+    color: '#202124',
+  },
+  instructorEmail: {
+    fontSize: 12,
+    color: '#5f6368',
+    marginTop: 2,
+  },
+  courseMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  metaItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  metaText: {
+    fontSize: 13,
+    color: '#5f6368',
+    marginLeft: 4,
+  },
+  metaDivider: {
+    width: 1,
+    height: 16,
+    backgroundColor: '#dadce0',
+    marginHorizontal: 12,
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    backgroundColor: '#e8eaed',
+  },
+  statusBadgeActive: {
+    backgroundColor: '#e6f4ea',
+  },
+  statusText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#5f6368',
+    textTransform: 'capitalize',
+  },
+  statusTextActive: {
+    color: '#137333',
+  },
+  timeManipulationWarning: {
+    padding: 16,
+    backgroundColor: '#fce8e6',
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  warningText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#d93025',
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  warningSubText: {
+    fontSize: 13,
+    color: '#5f6368',
+    marginTop: 4,
+    textAlign: 'center',
   },
   offlineNotice: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
-    borderRadius: 22,
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    marginTop: 18,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: '#f1f3f4',
+    borderRadius: 16,
+    marginTop: 8,
   },
   offlineText: {
-    color: '#fff',
-    fontSize: 15,
-    fontWeight: '700',
-    marginLeft: 8,
-    letterSpacing: 0.3,
-  },
-  timeManipulationWarning: {
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
-    borderRadius: 22,
-    padding: 24,
-    marginTop: 18,
-    alignItems: 'center',
-  },
-  warningText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    marginTop: 12,
-    marginBottom: 10,
-    letterSpacing: 0.4,
-  },
-  warningSubText: {
-    color: '#fff',
-    fontSize: 15,
-    textAlign: 'center',
-    opacity: 0.95,
-    lineHeight: 22,
-    marginBottom: 6,
+    fontSize: 12,
+    color: '#5f6368',
+    marginLeft: 6,
     fontWeight: '500',
   },
-
-  // Section Header
+  disabledHeader: {
+    opacity: 0.6,
+  },
+  sectionListContent: {
+    paddingBottom: 24,
+  },
   sectionHeader: {
-    backgroundColor: '#fff',
-    paddingVertical: 18,
-    paddingHorizontal: 24,
-    marginTop: 12,
-    marginHorizontal: 20,
-    borderRadius: 18,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.12,
-    shadowRadius: 6,
-    elevation: 4,
+    backgroundColor: '#f8f9fa',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
   },
   sectionTitle: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#2c3e50',
-    letterSpacing: 0.3,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#5f6368',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
-
-  // Enhanced Cards (matching index.tsx)
   topicCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 22,
-    padding: 24,
-    marginHorizontal: 20,
-    marginBottom: 18,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 5 },
-    shadowOpacity: 0.12,
-    shadowRadius: 10,
-    elevation: 6,
-  },
-  itemCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 20,
-    padding: 20,
-    marginHorizontal: 20,
-    marginBottom: 15,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  highlightedCard: {
-    borderColor: '#7979f1ff',
-    borderWidth: 3,
-    shadowColor: '#7979f1ff',
-    shadowOpacity: 0.7,
-    shadowRadius: 12,
-    elevation: 15,
-    transform: [{ scale: 1.02 }],
-  },
-  highlightedCardNested: {
-    borderColor: '#7979f1ff',
-    borderWidth: 2.5,
-    backgroundColor: '#f0f0ff',
-    transform: [{ scale: 1.02 }],
-    shadowColor: '#7979f1ff',
-    shadowOpacity: 0.5,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  disabledCard: {
-    backgroundColor: '#f5f5f5',
-    opacity: 0.7,
-  },
-  unavailableCard: {
-    backgroundColor: '#f8f9fa',
-    borderColor: '#dee2e6',
+    backgroundColor: '#fff',
+    marginHorizontal: 16,
+    marginTop: 12,
+    borderRadius: 8,
     borderWidth: 1,
+    borderColor: '#e0e0e0',
+    overflow: 'hidden',
   },
-
-  // Item Headers and Content
   topicHeader: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginBottom: 15,
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f3f4',
   },
-  itemHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginBottom: 12,
-  },
-  nestedItemHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginBottom: 8,
-  },
-  iconContainer: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
+  topicIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#fef7e0',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 18,
-  },
-  iconContainerSmall: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 14,
+    marginRight: 12,
   },
   topicInfo: {
     flex: 1,
   },
-  itemInfo: {
-    flex: 1,
-  },
-  nestedItemInfo: {
-    flex: 1,
-  },
   topicTitle: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#2c3e50',
-    marginBottom: 6,
-    letterSpacing: 0.3,
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#202124',
   },
   topicDescription: {
-    fontSize: 15,
-    color: '#7f8c8d',
-    lineHeight: 22,
-  },
-  itemTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#2c3e50',
-    marginBottom: 6,
-    letterSpacing: 0.3,
-  },
-  itemTitleNested: {
-    fontSize: 17,
-    fontWeight: '600',
-    color: '#34495e',
-    marginBottom: 4,
-  },
-  itemType: {
-    fontSize: 15,
-    color: '#7f8c8d',
-    fontStyle: 'italic',
-  },
-  itemTypeNested: {
-    fontSize: 14,
-    color: '#6c7a89',
-    fontStyle: 'italic',
-  },
-  itemDetail: {
-    fontSize: 14,
-    color: '#555',
-    lineHeight: 20,
-    marginBottom: 12,
-  },
-  itemDetailNested: {
     fontSize: 13,
-    color: '#555',
-    lineHeight: 18,
-    marginBottom: 8,
-  },
-
-  // Badges and Status
-  itemBadges: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  availabilityBadge: {
-    backgroundColor: '#e74c3c',
-    borderRadius: 14,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-  },
-  availabilityText: {
-    color: '#fff',
-    fontSize: 13,
-    fontWeight: 'bold',
-    letterSpacing: 0.2,
-  },
-  codeRequiredBadge: {
-    backgroundColor: '#f39c12',
-    borderRadius: 14,
-    padding: 8,
-  },
-
-  // Footer and Dates
-  itemFooter: {
-    marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#f1f3f4',
-  },
-  itemDate: {
-    fontSize: 13,
-    color: '#95a5a6',
-  },
-  itemDateNested: {
-    fontSize: 12,
-    color: '#95a5a6',
-  },
-  availableDateText: {
-    fontSize: 12,
-    color: '#e74c3c',
-    fontWeight: '500',
-  },
-  additionalDateInfo: {
+    color: '#5f6368',
     marginTop: 4,
   },
-
-  // Nested Items
   nestedItemsContainer: {
-    marginTop: 18,
-    paddingLeft: 18,
-    borderLeftWidth: 3.5,
-    borderLeftColor: '#e8f0fe',
+    backgroundColor: '#fafafa',
   },
-  itemCardNested: {
-    backgroundColor: '#f8f9fa',
-    borderRadius: 18,
-    padding: 18,
-    marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    elevation: 3,
+  nestedItemCard: {
+    backgroundColor: '#fff',
+    marginHorizontal: 12,
+    marginVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#e8eaed',
   },
-
-  sectionListContent: {
-    paddingBottom: 30,
+  nestedItemContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 12,
   },
-
-  // Enhanced Modal (matching index.tsx style)
-  modalOverlay: {
+  nestedItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
     flex: 1,
+  },
+  nestedItemTextContainer: {
+    flex: 1,
+  },
+  nestedItemTitle: {
+    fontSize: 14,
+    fontWeight: '400',
+    color: '#202124',
+  },
+  nestedItemMeta: {
+    fontSize: 12,
+    color: '#5f6368',
+    marginTop: 2,
+  },
+  nestedItemRight: {
+    marginLeft: 12,
+  },
+  materialIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#e8f0fe',
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    marginRight: 12,
+  },
+  assessmentIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#fce8e6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  assessmentTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  keyBadge: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#fef7e0',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 6,
+  },
+  lockedBadge: {
+    padding: 6,
+    borderRadius: 6,
+    backgroundColor: '#f1f3f4',
+  },
+  itemCard: {
+    backgroundColor: '#fff',
+    marginHorizontal: 16,
+    marginTop: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  itemContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+  },
+  itemLeft: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    flex: 1,
+  },
+  itemTextContainer: {
+    flex: 1,
+  },
+  itemTitle: {
+    fontSize: 16,
+    fontWeight: '400',
+    color: '#202124',
+  },
+  itemMeta: {
+    fontSize: 13,
+    color: '#5f6368',
+    marginTop: 4,
+  },
+  itemPreview: {
+    fontSize: 13,
+    color: '#80868b',
+    marginTop: 8,
+    lineHeight: 18,
+  },
+  itemRight: {
+    marginLeft: 16,
+  },
+  materialIconLarge: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#e8f0fe',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  assessmentIconLarge: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#fce8e6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  unavailableCard: {
+    opacity: 0.6,
+  },
+  disabledCard: {
+    opacity: 0.4,
+  },
+  highlightedCard: {
+    borderColor: '#1967d2',
+    borderWidth: 2,
+    backgroundColor: '#e8f0fe',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   modalContent: {
-    width: '90%',
+    width: '85%',
+    maxWidth: 400,
     backgroundColor: '#fff',
-    borderRadius: 25,
+    borderRadius: 12,
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.35,
-    shadowRadius: 15,
-    elevation: 12,
   },
   modalHeader: {
-    padding: 30,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 20,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  modalIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#e8f0fe',
+    justifyContent: 'center',
     alignItems: 'center',
   },
   modalTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginTop: 12,
-    letterSpacing: 0.4,
+    flex: 1,
+    fontSize: 18,
+    fontWeight: '500',
+    color: '#202124',
+    marginLeft: 12,
+  },
+  modalCloseButton: {
+    padding: 4,
   },
   modalBody: {
-    padding: 28,
+    padding: 20,
   },
   modalAssessmentTitle: {
-    fontSize: 19,
-    color: '#2c3e50',
-    textAlign: 'center',
-    marginBottom: 18,
-    fontWeight: '700',
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#202124',
+    marginBottom: 12,
   },
   modalSubtitle: {
-    fontSize: 15,
-    color: '#7f8c8d',
-    textAlign: 'center',
-    marginBottom: 24,
-    lineHeight: 22,
+    fontSize: 14,
+    color: '#5f6368',
+    marginBottom: 20,
+  },
+  modalWarning: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    backgroundColor: '#fce8e6',
+    borderRadius: 8,
+    marginBottom: 16,
   },
   timeManipulationModalText: {
-    fontSize: 15,
-    color: '#e74c3c',
-    marginBottom: 18,
-    textAlign: 'center',
-    fontWeight: 'bold',
+    flex: 1,
+    fontSize: 13,
+    color: '#d93025',
+    marginLeft: 8,
   },
   input: {
-    borderWidth: 2.5,
-    borderColor: '#e9ecef',
-    backgroundColor: '#f8f9fa',
-    borderRadius: 14,
-    padding: 18,
-    fontSize: 17,
-    marginBottom: 18,
-    color: '#343a40',
+    borderWidth: 1,
+    borderColor: '#dadce0',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 14,
+    color: '#202124',
+    backgroundColor: '#fff',
   },
   disabledInput: {
-    backgroundColor: '#f5f5f5',
-    color: '#999',
-    borderColor: '#e74c3c',
+    backgroundColor: '#f1f3f4',
+    color: '#9aa0a6',
+  },
+  errorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    padding: 8,
+  },
+  errorTextModal: {
+    flex: 1,
+    fontSize: 13,
+    color: '#d93025',
+    marginLeft: 6,
   },
   modalButtons: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 18,
-    marginTop: 12,
+    marginTop: 24,
+    gap: 12,
   },
   button: {
     flex: 1,
-    borderRadius: 14,
-    overflow: 'hidden',
-  },
-  submitButton: {
-    shadowColor: '#667eea',
-    shadowOffset: { width: 0, height: 5 },
-    shadowOpacity: 0.35,
-    shadowRadius: 10,
-    elevation: 8,
-  },
-  submitButtonGradient: {
-    paddingVertical: 18,
+    paddingVertical: 12,
+    borderRadius: 8,
     alignItems: 'center',
-    justifyContent: 'center',
-  },
-  disabledButton: {
-    opacity: 0.5,
   },
   cancelButton: {
-    backgroundColor: '#6c757d',
-    paddingVertical: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: '#f8f9fa',
   },
-  buttonText: {
+  cancelButtonText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#5f6368',
+  },
+  submitButton: {
+    backgroundColor: '#1967d2',
+  },
+  submitButtonText: {
+    fontSize: 14,
+    fontWeight: '500',
     color: '#fff',
-    fontSize: 17,
-    fontWeight: 'bold',
-    letterSpacing: 0.3,
   },
-  errorTextModal: {
-    color: '#e74c3c',
-    fontSize: 15,
-    marginBottom: 12,
-    textAlign: 'center',
-    fontWeight: '600',
+  disabledButton: {
+    backgroundColor: '#e8eaed',
   },
 });

@@ -5,7 +5,6 @@ import { useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import React, { useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   Animated,
   KeyboardAvoidingView,
@@ -13,9 +12,8 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
-  View,
+  View
 } from 'react-native';
 
 import { useNetworkStatus } from '../../context/NetworkContext';
@@ -261,7 +259,7 @@ export default function LoginScreen() {
               </Animated.View>
             )}
             
-            <View style={styles.inputGroup}>
+            {/* <View style={styles.inputGroup}>
               <Text style={styles.label}>
                 <Ionicons name="mail-outline" size={16} color="#495057" /> Email
               </Text>
@@ -318,9 +316,9 @@ export default function LoginScreen() {
                   <Text style={styles.errorText}>{errors.password}</Text>
                 </View>
               )}
-            </View>
+            </View> */}
             
-            <TouchableOpacity
+            {/* <TouchableOpacity
               style={[styles.button, (loading || !isConnected) && styles.buttonDisabled]}
               onPress={handleLogin}
               disabled={loading || !isConnected}
@@ -346,7 +344,7 @@ export default function LoginScreen() {
               <View style={styles.dividerLine} />
               <Text style={styles.dividerText}>OR CONTINUE WITH</Text>
               <View style={styles.dividerLine} />
-            </View>
+            </View> */}
             
             <TouchableOpacity 
               style={[styles.googleButton, loading && styles.buttonDisabled]} 
@@ -390,7 +388,7 @@ const styles = StyleSheet.create({
   },
   logoContainer: {
     alignItems: 'center',
-    marginBottom: 30,
+    marginBottom: 10,
   },
   logoCircle: {
     width: 100,
@@ -406,7 +404,7 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
   logo: {
-    fontSize: 36,
+    fontSize: 30,
     fontWeight: 'bold',
     textAlign: 'center',
     marginBottom: 5,

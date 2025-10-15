@@ -85,19 +85,16 @@ export default function CoursesLayout() {
           }}
         />
         <Stack.Screen
-          name="[id]"
           options={{
             // Title will be set dynamically by the screen
           }}
         />
         <Stack.Screen
-          name="materials/[materialId]"
           options={{
             // Title will be set dynamically by the screen
           }}
         />
         <Stack.Screen
-          name="assessments/[assessmentId]"
           options={{
             // Title will be set dynamically by the screen
           }}

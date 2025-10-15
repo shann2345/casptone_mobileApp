@@ -12,17 +12,16 @@ export const showOfflineModeWarningIfNeeded = async (): Promise<void> => {
     
     if (!lastWarningTime || (currentTime - parseInt(lastWarningTime)) > WARNING_COOLDOWN) {
       Alert.alert(
-        `Offline Mode - 7 Day Access`,
-        `SIMPLE OFFLINE RULES:\n\n` + 
-        `You have 7 days (168 hours) of offline access\n` +
-        `Timer resets when you go online\n` +
-        `All features work normally offline\n\n` +
-        `TIME MANIPULATION:\n\n` +
-        `  Backward time = INSTANT BLOCK\n` +
-        `  (Even 2 minutes backwards)\n\n` +
-        `  Forward time > 24 hours = INSTANT BLOCK\n` +
-        `  (Normal sleep/usage under 24 hours is allowed)\n\n` +
-        `  Connect to internet anytime to reset your 7 days.`,
+        `📶Offline Mode Instruction`,
+        `You can use the app without an internet connection. Here’s what you need to know:\n\n` +
+        `✅ **7-Day Access**\n` +
+        `You have 168 hours of offline use. All features will work normally.\n\n` +
+        `🔄 **Reset Your Timer**\n` +
+        `Simply connect to the internet anytime to reset your 7-day offline timer.\n\n` +
+        `⚠️ **Important: Device Clock Rules**\n` +
+        `To ensure fairness, please do not manually change your device's date and time.\n\n` +
+        `  ● **Moving time backward:** Results in an **instant block**.\n` +
+        `  ● **Moving time forward > 24 hours:** Also results in an **instant block**.`,
         [
           {
             text: "Don't Show Again Today",
@@ -31,7 +30,7 @@ export const showOfflineModeWarningIfNeeded = async (): Promise<void> => {
             }
           },
           {
-            text: 'Understood',
+            text: 'I Understand',
             style: 'default'
           }
         ]
@@ -39,10 +38,10 @@ export const showOfflineModeWarningIfNeeded = async (): Promise<void> => {
     }
   } catch (error) {
     console.error('Error showing offline warning:', error);
-    // Fallback to showing the warning without storage
+    // Fallback alert with consistent and essential information
     Alert.alert(
-      'Offline Mode - 24 Hour Access',
-      '24-hour offline access window. Forward time manipulation reduces your remaining time. Backward time manipulation blocks access instantly. Connect to internet to reset.',
+      'Offline Mode Notice',
+      'You have 7 days of offline access. To avoid being locked out, please do not adjust your device\'s clock. Connect to the internet to reset your timer.',
       [{ text: 'Understood' }]
     );
   }
@@ -58,6 +57,7 @@ export const clearWarningHistory = async (): Promise<void> => {
 
 export const resetWarningCooldown = async (): Promise<void> => {
   try {
+    // Setting to '0' ensures the warning will show on the next check
     await AsyncStorage.setItem(WARNING_KEY, '0');
   } catch (error) {
     console.error('Error resetting warning cooldown:', error);

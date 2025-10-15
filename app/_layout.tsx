@@ -9,7 +9,7 @@ import 'react-native-reanimated';
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { AppProvider } from '../context/AppContext';
 import { NetworkProvider } from '../context/NetworkContext';
-import { OAuthProvider } from '../context/OAuthContext'; // NEW IMPORT
+import { OAuthProvider } from '../context/OAuthContext';
 import api, { getAuthToken, getUserData, initializeAuth } from '../lib/api';
 import { initDb } from '../lib/localDb';
 
@@ -20,7 +20,7 @@ export default function RootLayout() {
   });
   
   const [isInitializing, setIsInitializing] = useState(true);
-  const [initialRoute, setInitialRoute] = useState<string>('(auth)/login');
+  const [initialRoute, setInitialRoute] = useState<string | null>(null);
 
   useEffect(() => {
     const initializeApp = async () => {
@@ -52,7 +52,7 @@ export default function RootLayout() {
             const isVerified = verificationResponse.data.is_verified;
             
             if (isVerified) {
-              console.log('🏁 User is verified - Redirecting to app dashboard');
+              console.log('✅ User is verified - Redirecting to app dashboard');
               setInitialRoute('(app)');
             } else {
               console.log('⚠️ User is not verified - Redirecting to verify-notice');
@@ -60,12 +60,12 @@ export default function RootLayout() {
             }
           } catch (error) {
             console.error('❌ Error checking verification status:', error);
-            console.log('🏁 Cannot verify status - Redirecting to verify-notice');
+            console.log('🔄 Cannot verify status - Redirecting to verify-notice');
             setInitialRoute('(auth)/verify-notice');
           }
         } else {
           console.log('❌ No existing authentication found');
-          console.log('🏁 Redirecting to login');
+          console.log('🔄 Redirecting to login');
           setInitialRoute('(auth)/login');
         }
       } catch (error) {
@@ -81,7 +81,8 @@ export default function RootLayout() {
     }
   }, [loaded]);
 
-  if (!loaded || isInitializing) {
+  // Show loading screen until both fonts are loaded AND initialization is complete
+  if (!loaded || isInitializing || initialRoute === null) {
     return (
       <NetworkProvider>
         <View style={{ 
@@ -99,35 +100,34 @@ export default function RootLayout() {
   return (
     <AppProvider>
       <NetworkProvider>
-        <OAuthProvider> {/* NEW: Wrap with OAuthProvider */}
+        <OAuthProvider>
           <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-            <Stack initialRouteName={initialRoute}>
+            <Stack 
+              initialRouteName={initialRoute}
+              screenOptions={{
+                headerShown: false,
+              }}
+            >
               <Stack.Screen
                 name="(auth)/login"
                 options={{
-                  headerShown: false,
                   title: 'Login',
                 }}
               />
               <Stack.Screen
                 name="(auth)/signup"
                 options={{
-                  headerShown: false,
                   title: 'Sign Up',
                 }}
               />
               <Stack.Screen
                 name="(auth)/verify-notice"
                 options={{
-                  headerShown: false,
                   title: 'Verification Notice',
                 }}
               />
               <Stack.Screen
                 name="(app)"
-                options={{
-                  headerShown: false,
-                }}
               />
             </Stack>
             <StatusBar style="auto" />
