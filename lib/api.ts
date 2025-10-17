@@ -7,6 +7,22 @@ export const API_BASE_URL = __DEV__
   ? 'http://192.168.1.17:8000/api'  
   : 'https://olinlms.com/api'; 
 
+// Type definitions for offline sync
+interface UnsyncedSubmission {
+  id: number;
+  assessment_id: number;
+  file_uri: string;
+  original_filename: string;
+  submitted_at: string;
+}
+
+interface UnsyncedQuiz {
+  assessment_id: number;
+  answers: string;
+  started_at: string;
+  completed_at: string;
+}
+
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {
@@ -40,9 +56,107 @@ api.interceptors.request.use(
   }
 );
 
-// Response interceptor to handle 401 Unauthenticated errors
+// Global flag to prevent multiple simultaneous syncs
+let isSyncing = false;
+let lastSyncAttempt = 0;
+const SYNC_COOLDOWN = 30000; // 30 seconds between sync attempts
+
+// Centralized offline sync manager
+const performOfflineSync = async () => {
+  // Prevent multiple simultaneous syncs
+  if (isSyncing) {
+    console.log('⏳ Sync already in progress, skipping...');
+    return;
+  }
+
+  // Check cooldown period
+  const now = Date.now();
+  if (now - lastSyncAttempt < SYNC_COOLDOWN) {
+    console.log('⏰ Sync cooldown active, skipping...');
+    return;
+  }
+
+  try {
+    isSyncing = true;
+    lastSyncAttempt = now;
+    
+    const userData = await getUserData();
+    if (!userData?.email) {
+      console.log('⚠️ No user data found for sync');
+      return;
+    }
+
+    console.log('🔄 Starting automatic offline sync...');
+    
+    // Import sync functions from localDb
+    const { getUnsyncedSubmissions, getCompletedOfflineQuizzes } = await import('./localDb');
+    
+    // Get unsynced items
+    const unsyncedSubmissions = await getUnsyncedSubmissions(userData.email) as UnsyncedSubmission[];
+    const unsyncedQuizzes = await getCompletedOfflineQuizzes(userData.email) as UnsyncedQuiz[];
+    
+    console.log(`📤 Found ${unsyncedSubmissions.length} unsynced submissions and ${unsyncedQuizzes.length} unsynced quizzes`);
+    
+    let successCount = 0;
+    let failCount = 0;
+    
+    // Sync file submissions
+    for (const submission of unsyncedSubmissions) {
+      try {
+        console.log(`📤 Syncing submission for assessment ${submission.assessment_id}...`);
+        await syncOfflineSubmission(
+          submission.assessment_id,
+          submission.file_uri,
+          submission.original_filename,
+          submission.submitted_at
+        );
+        successCount++;
+      } catch (error) {
+        console.error(`❌ Failed to sync submission ${submission.id}:`, error);
+        failCount++;
+      }
+    }
+    
+    // Sync quiz attempts
+    for (const quiz of unsyncedQuizzes) {
+      try {
+        console.log(`📤 Syncing quiz for assessment ${quiz.assessment_id}...`);
+        await syncOfflineQuiz(
+          quiz.assessment_id,
+          quiz.answers,
+          quiz.started_at,
+          quiz.completed_at
+        );
+        successCount++;
+      } catch (error) {
+        console.error(`❌ Failed to sync quiz ${quiz.assessment_id}:`, error);
+        failCount++;
+      }
+    }
+    
+    if (successCount > 0 || failCount > 0) {
+      console.log(`✅ Sync complete: ${successCount} successful, ${failCount} failed`);
+    }
+    
+  } catch (error) {
+    console.error('❌ Error during offline sync:', error);
+  } finally {
+    isSyncing = false;
+  }
+};
+
+// Response interceptor to handle 401 Unauthenticated errors and trigger sync
 api.interceptors.response.use(
-  (response) => response,
+  async (response) => {
+    // Trigger sync on successful responses (only when online)
+    if (response.status >= 200 && response.status < 300) {
+      // Don't await - let it run in background
+      performOfflineSync().catch(err => {
+        console.error('⚠️ Background sync error:', err);
+      });
+    }
+    return response;
+  },
   async (error) => {
     const originalRequest = error.config;
     if (error.response?.status === 401 && !originalRequest._retry) {
@@ -613,6 +727,79 @@ const formatAnswersForSync = (answersJson: string): any[] => {
     console.error('Error formatting answers for sync:', e);
     return [];
   }
+};
+
+// Export manual sync function for explicit calls
+export const manualSync = async (): Promise<{ success: number; failed: number }> => {
+  try {
+    const userData = await getUserData();
+    if (!userData?.email) {
+      console.log('⚠️ No user data found for manual sync');
+      return { success: 0, failed: 0 };
+    }
+
+    console.log('🔄 Starting manual offline sync...');
+    
+    // Import sync functions from localDb
+    const { getUnsyncedSubmissions, getCompletedOfflineQuizzes } = await import('./localDb');
+    
+    // Get unsynced items
+    const unsyncedSubmissions = await getUnsyncedSubmissions(userData.email) as UnsyncedSubmission[];
+    const unsyncedQuizzes = await getCompletedOfflineQuizzes(userData.email) as UnsyncedQuiz[];
+    
+    console.log(`📤 Found ${unsyncedSubmissions.length} unsynced submissions and ${unsyncedQuizzes.length} unsynced quizzes`);
+    
+    let successCount = 0;
+    let failCount = 0;
+    
+    // Sync file submissions
+    for (const submission of unsyncedSubmissions) {
+      try {
+        console.log(`📤 Syncing submission for assessment ${submission.assessment_id}...`);
+        await syncOfflineSubmission(
+          submission.assessment_id,
+          submission.file_uri,
+          submission.original_filename,
+          submission.submitted_at
+        );
+        successCount++;
+      } catch (error) {
+        console.error(`❌ Failed to sync submission ${submission.id}:`, error);
+        failCount++;
+      }
+    }
+    
+    // Sync quiz attempts
+    for (const quiz of unsyncedQuizzes) {
+      try {
+        console.log(`📤 Syncing quiz for assessment ${quiz.assessment_id}...`);
+        await syncOfflineQuiz(
+          quiz.assessment_id,
+          quiz.answers,
+          quiz.started_at,
+          quiz.completed_at
+        );
+        successCount++;
+      } catch (error) {
+        console.error(`❌ Failed to sync quiz ${quiz.assessment_id}:`, error);
+        failCount++;
+      }
+    }
+    
+    console.log(`✅ Manual sync complete: ${successCount} successful, ${failCount} failed`);
+    return { success: successCount, failed: failCount };
+    
+  } catch (error) {
+    console.error('❌ Error during manual sync:', error);
+    return { success: 0, failed: 0 };
+  }
+};
+
+// Reset sync state (useful for testing or after errors)
+export const resetSyncState = () => {
+  isSyncing = false;
+  lastSyncAttempt = 0;
+  console.log('🔄 Sync state reset');
 };
 
 export default api;

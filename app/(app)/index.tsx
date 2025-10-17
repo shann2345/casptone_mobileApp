@@ -1,8 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Animated, Dimensions, FlatList, Modal, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Dimensions, FlatList, Modal, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import { useNetworkStatus } from '../../context/NetworkContext';
 import api, { clearAuthToken, getAuthToken, getServerTime, getUserData, syncOfflineQuiz, syncOfflineSubmission } from '../../lib/api';
@@ -25,7 +24,7 @@ import {
   syncAllAssessmentDetails,
   updateTimeSync
 } from '../../lib/localDb';
-import { showOfflineModeWarningIfNeeded } from '../../lib/offlineWarning';
+import { showOfflineModeGuide, showOfflineModeWarningIfNeeded } from '../../lib/offlineWarning';
 const { width, height } = Dimensions.get('window');
 
 interface Course {
@@ -70,11 +69,8 @@ export default function HomeScreen() {
   const [assessmentsNeedingDetails, setAssessmentsNeedingDetails] = useState<number>(0);
   const [isAdVisible, setIsAdVisible] = useState<boolean>(false);
   const adContentHeight = 80;
-  const adHeight = useRef(new Animated.Value(0)).current;
   const {isConnected, netInfo } = useNetworkStatus();
   const enrolledCoursesFlatListRef = useRef<FlatList<EnrolledCourse>>(null);
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const slideAnim = useRef(new Animated.Value(50)).current;
   const [offlineStatus, setOfflineStatus] = useState<{ remainingHours: number; totalHours: number } | null>(null);
 
   // NEW: State for enrollment modal
@@ -121,19 +117,6 @@ export default function HomeScreen() {
           console.log('✅ Home screen database initialized');
           if (isMounted) {
             setIsInitialized(true);
-            // Start entrance animation
-            Animated.parallel([
-              Animated.timing(fadeAnim, {
-                toValue: 1,
-                duration: 1000,
-                useNativeDriver: true,
-              }),
-              Animated.timing(slideAnim, {
-                toValue: 0,
-                duration: 800,
-                useNativeDriver: true,
-              }),
-            ]).start();
           }
           break; // Success, exit retry loop
         } catch (initError) {
@@ -454,8 +437,8 @@ export default function HomeScreen() {
     let userEmail = '';
     try {
       const userData = await getUserData();
-      if (userData && userData.email) {
-        setUserName(userData.given_name || 'Guest');
+      if (userData && userData.name && userData.email) {
+        setUserName(userData.given_name || userData.name || 'Guest');
         userEmail = userData.email;
       } else {
         console.warn('User data or name not found in local storage. Redirecting to login.');
@@ -839,7 +822,7 @@ export default function HomeScreen() {
       <Text style={styles.courseResultTitle}>{item.title}</Text>
       <Text style={styles.courseResultCode}>Description: {item.description}</Text>
       <Text style={styles.courseResultDetails}>Program: {item.program?.name || 'N/A'}</Text>
-      <Text style={styles.courseResultDetails}>Instructor: {item.instructor?.given_name || 'N/A'}</Text>
+      <Text style={styles.courseResultDetails}>Instructor: {item.instructor?.name || 'N/A'}</Text>
 
       <TouchableOpacity
         style={[
@@ -864,12 +847,12 @@ export default function HomeScreen() {
           params: { courseId: item.id.toString() },
         });
       }}
+      activeOpacity={0.7}
     >
-      <LinearGradient
-        colors={['#02135eff', '#7979f1ff']}
-        style={styles.courseCardGradient}
-      >
-        <Ionicons name="book-outline" size={32} color="#fff" />
+      <View style={styles.enrolledCourseCardHeader}>
+        <Ionicons name="book-outline" size={28} color="#1967d2" />
+      </View>
+      <View style={styles.enrolledCourseCardBody}>
         <Text style={styles.enrolledCourseCardTitle} numberOfLines={2}>{item.title}</Text>
         <Text style={styles.enrolledCourseCardCode} numberOfLines={1}>{item.course_code}</Text>
         {item.pivot && (
@@ -877,7 +860,7 @@ export default function HomeScreen() {
             <Text style={styles.enrolledCourseCardStatus}>{item.pivot.status}</Text>
           </View>
         )}
-      </LinearGradient>
+      </View>
     </TouchableOpacity>
   );
 
@@ -895,11 +878,6 @@ export default function HomeScreen() {
 
   const toggleAd = () => {
     setIsAdVisible(!isAdVisible);
-    Animated.timing(adHeight, {
-      toValue: isAdVisible ? 0 : adContentHeight,
-      duration: 300,
-      useNativeDriver: false,
-    }).start();
   };
 
   const handleAdButtonPress = async () => {
@@ -1005,19 +983,14 @@ export default function HomeScreen() {
   if (!isInitialized) {
     return (
       <View style={[styles.container, styles.loadingContainer]}>
-        <LinearGradient
-          colors={['#02135eff', '#7979f1ff']}
-          style={styles.loadingGradient}
-        >
-          <ActivityIndicator size="large" color="#fff" />
-          <Text style={styles.loadingText}>Initializing...</Text>
-        </LinearGradient>
+        <ActivityIndicator size="large" color="#1967d2" />
+        <Text style={styles.loadingText}>Initializing...</Text>
       </View>
     );
   }
 
   return (
-    <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
+    <View style={styles.container}>
       <ScrollView 
         style={styles.scrollView}
         refreshControl={
@@ -1030,21 +1003,29 @@ export default function HomeScreen() {
           />
         }
       >
-        {/* Enhanced Header with Gradient */}
-        <LinearGradient
-          colors={['#02135eff', '#7979f1ff']}
-          style={styles.header}
-        >
-          <Animated.View style={[styles.headerContent, { transform: [{ translateY: slideAnim }] }]}>
+        {/* LMS-Style Header */}
+        <View style={styles.header}>
+          <View style={styles.headerContent}>
             <Text style={styles.welcomeText}>Welcome</Text>
             <Text style={styles.userNameText}>{userName}</Text>
             <Text style={styles.subText}>Ready to continue your learning journey?</Text>
             
             {!netInfo?.isInternetReachable && (
               <View style={styles.offlineNotice}>
-                <Ionicons name="cloud-offline-outline" size={18} color="#fff" />
+                <Ionicons name="cloud-offline-outline" size={16} color="#5f6368" />
                 <Text style={styles.offlineText}>Offline Mode</Text>
               </View>
+            )}
+
+            {!netInfo?.isInternetReachable && (
+              <TouchableOpacity 
+                style={styles.offlineGuideButton} 
+                onPress={() => showOfflineModeGuide()}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="information-circle" size={20} color="#1967d2" />
+                <Text style={styles.offlineGuideButtonText}>View Offline Mode Guide</Text>
+              </TouchableOpacity>
             )}
 
             {offlineStatus && !netInfo?.isInternetReachable && (
@@ -1065,15 +1046,15 @@ export default function HomeScreen() {
             
             {syncStatus && (
               <View style={styles.downloadIndicator}>
-                <ActivityIndicator size="small" color="#fff" />
+                <ActivityIndicator size="small" color="#1967d2" />
                 <Text style={styles.downloadText}>{syncStatus}</Text>
               </View>
             )}
 
-          </Animated.View>
-        </LinearGradient>
+          </View>
+        </View>
 
-        {/* Enhanced Search Button */}
+        {/* LMS-Style Search Button */}
         <TouchableOpacity
           style={[
             styles.searchButton,
@@ -1082,13 +1063,8 @@ export default function HomeScreen() {
           onPress={handleSearchPress}
           disabled={!netInfo?.isInternetReachable}
         >
-          <LinearGradient
-            colors={netInfo?.isInternetReachable ? ['#4facfe', '#00f2fe'] : ['#ccc', '#999']}
-            style={styles.searchButtonGradient}
-          >
-            <Ionicons name="search" size={20} color="#fff" style={styles.searchIcon} />
-            <Text style={styles.searchButtonText}>Discover new courses</Text>
-          </LinearGradient>
+          <Ionicons name="search" size={20} color="#fff" style={styles.searchIcon} />
+          <Text style={styles.searchButtonText}>Discover new courses</Text>
         </TouchableOpacity>
 
         {/* Enhanced Stats Section */}
@@ -1109,86 +1085,78 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* Enhanced Ad Section */}
+        {/* LMS-Style Download Section */}
         <View style={styles.adContainer}>
-          <Animated.View style={[styles.adContent, { height: adHeight }]}>
+          {isAdVisible && (
+            <View style={styles.adContent}>
               <View style={styles.adButtonContainer}>
-                  {/* The existing Download Button */}
-                  <TouchableOpacity 
-                      style={[
-                          styles.adButton, 
-                          isDownloadingData && styles.adButtonDownloading,
-                          !netInfo?.isInternetReachable && styles.disabledButton,
-                          styles.flex1 // Add a new style to make it take up half the space
-                      ]} 
-                      onPress={handleAdButtonPress}
-                      disabled={isDownloadingData || isRefreshing || !netInfo?.isInternetReachable}
-                  >
-                      <LinearGradient
-                          colors={isDownloadingData ? ['#17a2b8', '#138496'] : ['#28a745', '#20c997']}
-                          style={styles.adButtonGradient}
-                      >
-                          {isDownloadingData ? (
-                              <View style={styles.downloadProgressContainer}>
-                                  <ActivityIndicator color="#fff" size="small" />
-                                  <Text style={styles.adButtonText}>
-                                      Downloading... ({downloadProgress.current}/{downloadProgress.total})
-                                  </Text>
-                              </View>
-                          ) : (
-                              <View style={styles.adButtonInnerContainer}>
-                                  <Ionicons name="cloud-download" size={20} color="#fff" />
-                                  <Text style={styles.adButtonText}>
-                                      {assessmentsNeedingDetails > 0 
-                                          ? `Smart Download (${assessmentsNeedingDetails})`
-                                          : lastSyncTime 
-                                            ? 'Update Available Data'
-                                            : 'Download All Data'
-                                      }
-                                  </Text>
-                              </View>
-                          )}
-                      </LinearGradient>
-                  </TouchableOpacity>
+                {/* The existing Download Button */}
+                <TouchableOpacity 
+                  style={[
+                    styles.adButton, 
+                    isDownloadingData && styles.adButtonDownloading,
+                    !netInfo?.isInternetReachable && styles.disabledButton,
+                    styles.flex1
+                  ]} 
+                  onPress={handleAdButtonPress}
+                  disabled={isDownloadingData || isRefreshing || !netInfo?.isInternetReachable}
+                >
+                  {isDownloadingData ? (
+                    <View style={styles.downloadProgressContainer}>
+                      <ActivityIndicator color="#fff" size="small" />
+                      <Text style={styles.adButtonText}>
+                        Downloading... ({downloadProgress.current}/{downloadProgress.total})
+                      </Text>
+                    </View>
+                  ) : (
+                    <View style={styles.adButtonInnerContainer}>
+                      <Ionicons name="cloud-download" size={20} color="#fff" />
+                      <Text style={styles.adButtonText}>
+                        {assessmentsNeedingDetails > 0 
+                          ? `Smart Download (${assessmentsNeedingDetails})`
+                          : lastSyncTime 
+                            ? 'Update Available Data'
+                            : 'Download All Data'
+                        }
+                      </Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
 
-                  {/* NEW: The Update Button */}
-                  <TouchableOpacity
-                      style={[
-                          styles.adButton,
-                          (isRefreshing || isDownloadingData) && styles.adButtonDownloading,
-                          !netInfo?.isInternetReachable && styles.disabledButton,
-                          styles.flex1 // Add a new style to make it take up half the space
-                      ]}
-                      onPress={handleRefresh}
-                      disabled={isRefreshing || isDownloadingData || !netInfo?.isInternetReachable}
-                  >
-                      <LinearGradient
-                          colors={isRefreshing ? ['#17a2b8', '#138496'] : ['#667eea', '#764ba2']}
-                          style={styles.adButtonGradient}
-                      >
-                          {isRefreshing ? (
-                              <View style={styles.downloadProgressContainer}>
-                                  <ActivityIndicator color="#fff" size="small" />
-                                  <Text style={styles.adButtonText}>Updating...</Text>
-                              </View>
-                          ) : (
-                              <View style={styles.adButtonInnerContainer}>
-                                  <Ionicons name="sync-circle" size={20} color="#fff" />
-                                  <Text style={styles.adButtonText}>Update All</Text>
-                              </View>
-                          )}
-                      </LinearGradient>
-                  </TouchableOpacity>
+                {/* The Update Button */}
+                <TouchableOpacity
+                  style={[
+                    styles.adButton,
+                    (isRefreshing || isDownloadingData) && styles.adButtonDownloading,
+                    !netInfo?.isInternetReachable && styles.disabledButton,
+                    styles.flex1
+                  ]}
+                  onPress={handleRefresh}
+                  disabled={isRefreshing || isDownloadingData || !netInfo?.isInternetReachable}
+                >
+                  {isRefreshing ? (
+                    <View style={styles.downloadProgressContainer}>
+                      <ActivityIndicator color="#fff" size="small" />
+                      <Text style={styles.adButtonText}>Updating...</Text>
+                    </View>
+                  ) : (
+                    <View style={styles.adButtonInnerContainer}>
+                      <Ionicons name="sync-circle" size={20} color="#fff" />
+                      <Text style={styles.adButtonText}>Update All</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
               </View>
-          </Animated.View>
+            </View>
+          )}
           <TouchableOpacity style={styles.adToggle} onPress={toggleAd}>
-              <Ionicons
-                  name={isAdVisible ? 'chevron-up' : 'chevron-down'}
-                  size={24}
-                  color="#667eea"
-              />
+            <Ionicons
+              name={isAdVisible ? 'chevron-up' : 'chevron-down'}
+              size={24}
+              color="#1967d2"
+            />
           </TouchableOpacity>
-      </View>
+        </View>
 
         {/* Enhanced Courses Section */}
         <View style={styles.coursesSection}>
@@ -1225,7 +1193,6 @@ export default function HomeScreen() {
           )}
         </View>
 
-        {/* Search Modal - keeping existing implementation */}
         <Modal
           animationType="slide"
           transparent={true}
@@ -1276,26 +1243,34 @@ export default function HomeScreen() {
                   You must be online to search for new courses.
                 </Text>
               )}
-              {!isLoadingSearch && hasSearched && searchResults.length > 0 && (
-                <View style={styles.searchResultsContainer}>
-                  <Text style={styles.searchResultsTitle}>Matching Courses:</Text>
-                  <FlatList
-                    data={searchResults}
-                    keyExtractor={(item) => item.id.toString()}
-                    renderItem={renderCourseItem}
-                    contentContainerStyle={styles.flatListContent}
-                  />
-                </View>
-              )}
+
+              {/* Loading State */}
               {isLoadingSearch && (
                 <View style={styles.loadingContainer}>
                   <ActivityIndicator size="large" color="#667eea" />
                   <Text style={styles.loadingText}>Searching...</Text>
                 </View>
               )}
-              {!isLoadingSearch && hasSearched && searchResults.length === 0 && (
-                <View style={styles.noResultsContainer}>
-                  <Text style={styles.noResultsText}>No courses found for "{searchQuery}".</Text>
+
+              {/* Search Results - Only show after search is complete */}
+              {!isLoadingSearch && hasSearched && (
+                <View style={styles.searchResultsContainer}>
+                  {searchResults.length > 0 ? (
+                    <ScrollView style={{maxHeight: height * 0.45}} contentContainerStyle={styles.flatListContent}>
+                      <Text style={styles.searchResultsTitle}>Matching Courses ({searchResults.length}):</Text>
+                      {searchResults.map((item) => (
+                        <View key={item.id.toString()}>{renderCourseItem({item})}</View>
+                      ))}
+                    </ScrollView>
+                  ) : (
+                    <View style={styles.noResultsContainer}>
+                      <Ionicons name="search-outline" size={48} color="#ccc" />
+                      <Text style={styles.noResultsText}>No courses found for "{searchQuery}"</Text>
+                      <Text style={[styles.noResultsText, { fontSize: 12, marginTop: 8 }]}>
+                        Try searching with a different course title or code
+                      </Text>
+                    </View>
+                  )}
                 </View>
               )}
             </View>
@@ -1350,7 +1325,7 @@ export default function HomeScreen() {
           </View>
         </Modal>
       </ScrollView>
-    </Animated.View>
+    </View>
   );
 }
 
@@ -1359,551 +1334,451 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f8f9fa',
   },
+  loadingContainer: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#5f6368',
+  },
   scrollView: {
     flex: 1,
   },
-  // Enhanced Header Styles
   header: {
-    paddingTop: 50,
-    paddingBottom: 35,
-    paddingHorizontal: 25,
-    borderBottomLeftRadius: 35,
-    borderBottomRightRadius: 35,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    elevation: 12,
+    backgroundColor: '#fff',
+    paddingTop: 48,
+    paddingHorizontal: 20,
+    paddingBottom: 24,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
   },
   headerContent: {
-    alignItems: 'center',
+    gap: 8,
   },
   welcomeText: {
-    fontSize: 13,
-    fontWeight: '400',
-    color: '#fff',
-    opacity: 0.95,
-    letterSpacing: 0.5,
+    fontSize: 14,
+    color: '#5f6368',
   },
   userNameText: {
-    fontSize: 36,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginVertical: 8,
-    textShadowColor: 'rgba(0, 0, 0, 0.2)',
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 4,
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#202124',
   },
   subText: {
-    fontSize: 10,
-    color: '#fff',
-    opacity: 0.9,
-    textAlign: 'center',
-    marginTop: 5,
-    fontWeight: '300',
+    fontSize: 14,
+    color: '#5f6368',
+    marginTop: 4,
   },
   offlineNotice: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
-    borderRadius: 25,
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    marginTop: 18,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.3)',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: '#f1f3f4',
+    borderRadius: 16,
+    marginTop: 12,
   },
   offlineText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '700',
-    marginLeft: 8,
-    letterSpacing: 0.3,
-  },
-  downloadIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    borderRadius: 20,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    marginTop: 10,
-  },
-  downloadText: {
-    color: '#fff',
     fontSize: 12,
-    marginLeft: 8,
-  },
-  // Enhanced Search Button
-  searchButton: {
-    marginHorizontal: 20,
-    marginTop: -25,
-    borderRadius: 30,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    elevation: 10,
-  },
-  searchButtonGradient: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 18,
-    paddingHorizontal: 25,
-    borderRadius: 30,
-  },
-  searchIcon: {
-    marginRight: 15,
-  },
-  searchButtonText: {
-    color: '#fff',
-    fontSize: 17,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
-  // Enhanced Stats Section
-  statsSection: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingHorizontal: 20,
-    paddingVertical: 30,
-  },
-  statCard: {
-    backgroundColor: '#fff',
-    borderRadius: 20,
-    paddingVertical: 22,
-    paddingHorizontal: 18,
-    alignItems: 'center',
-    minWidth: width * 0.25,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 5,
-    borderWidth: 1,
-    borderColor: '#f0f0f0',
-  },
-  statNumber: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#667eea',
-    marginTop: 10,
-  },
-  statLabel: {
-    fontSize: 12,
-    color: '#7f8c8d',
-    textAlign: 'center',
-    marginTop: 6,
-    fontWeight: '600',
-  },
-  // Enhanced Ad Section
-  adContainer: {
-    marginHorizontal: 20,
-    marginBottom: 15,
-    backgroundColor: '#fff',
-    borderRadius: 20,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 5,
-    borderWidth: 1,
-    borderColor: '#f0f0f0',
-  },
-  adContent: {
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 15,
-  },
-  adButton: {
-    borderRadius: 10,
-    overflow: 'hidden',
-    width: '100%',
-  },
-  adButtonGradient: {
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  adButtonContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10, // Add gap for spacing between buttons
-  },
-  adButtonText: {
-    color: '#fff',
-    fontWeight: '600',
-    fontSize: 14,
-    marginLeft: 8,
-    textAlign: 'center',
-  },
-  adToggle: {
-    paddingVertical: 12,
-    alignItems: 'center',
-    backgroundColor: '#f8f9fa',
-  },
-  downloadProgressContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  adButtonDownloading: {
-    opacity: 0.8,
-  },
-  // Enhanced Courses Section
-  coursesSection: {
-    paddingHorizontal: 20,
-    paddingBottom: 30,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 25,
-  },
-  sectionTitle: {
-    fontSize: 26,
-    fontWeight: 'bold',
-    color: '#2c3e50',
-    letterSpacing: 0.3,
-  },
-  scrollButtons: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  scrollButton: {
-    backgroundColor: '#fff',
-    borderRadius: 25,
-    padding: 10,
-    shadowColor: '#667eea',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
-    elevation: 4,
-    borderWidth: 1,
-    borderColor: '#e9ecef',
-  },
-  // Enhanced Course Cards
-  enrolledCourseCard: {
-    marginRight: 15,
-    borderRadius: 25,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.35,
-    shadowRadius: 10,
-    elevation: 10,
-  },
-  courseCardGradient: {
-    width: 200,
-    height: 220,
-    padding: 25,
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  enrolledCourseCardTitle: {
-    fontSize: 17,
-    fontWeight: 'bold',
-    color: '#fff',
-    textAlign: 'center',
-    lineHeight: 22,
-    textShadowColor: 'rgba(0, 0, 0, 0.15)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
-  },
-  enrolledCourseCardCode: {
-    fontSize: 13,
-    color: 'rgba(255, 255, 255, 0.9)',
-    textAlign: 'center',
-    marginTop: 5,
-    fontWeight: '600',
-  },
-  statusBadge: {
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
-    borderRadius: 15,
-    paddingVertical: 6,
-    paddingHorizontal: 15,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.3)',
-  },
-  enrolledCourseCardStatus: {
-    fontSize: 11,
-    color: '#fff',
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
-  // Loading States
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingGradient: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    width: '100%',
-  },
-  loadingText: {
-    marginTop: 20,
-    fontSize: 18,
-    color: '#fff',
-    fontWeight: '600',
-    letterSpacing: 0.5,
-  },
-  loadingCoursesContainer: {
-    paddingVertical: 40,
-    alignItems: 'center',
-  },
-  loadingCoursesText: {
-    marginTop: 15,
-    fontSize: 16,
-    color: '#7f8c8d',
+    color: '#5f6368',
+    marginLeft: 6,
     fontWeight: '500',
   },
-  // No Courses State
-  noCoursesContainer: {
-    backgroundColor: '#fff',
-    borderRadius: 25,
-    padding: 45,
+  offlineGuideButton: {
+    flexDirection: 'row',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 5,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: '#e8f0fe',
+    borderRadius: 8,
+    marginTop: 12,
     borderWidth: 1,
-    borderColor: '#f0f0f0',
+    borderColor: '#1967d2',
   },
-  noCoursesText: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#2c3e50',
-    textAlign: 'center',
-    marginTop: 18,
-    letterSpacing: 0.3,
-  },
-  noCoursesSubText: {
-    fontSize: 15,
-    color: '#7f8c8d',
-    marginTop: 10,
-    textAlign: 'center',
-    lineHeight: 22,
-    fontWeight: '400',
-  },
-  horizontalFlatListContent: {
-    paddingVertical: 5,
-  },
-  // Modal Styles (Enhanced)
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.65)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalContent: {
-    width: '90%',
-    maxHeight: '80%',
-    backgroundColor: '#fff',
-    borderRadius: 25,
-    padding: 30,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.4,
-    shadowRadius: 20,
-    elevation: 15,
-  },
-  enrollmentModalContent: {
-    width: '80%',
-    backgroundColor: '#fff',
-    borderRadius: 25,
-    padding: 30,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.4,
-    shadowRadius: 20,
-    elevation: 15,
-    alignItems: 'center',
-  },
-  enrollmentText: {
-    fontSize: 16,
-    color: '#495057',
-    textAlign: 'center',
-    marginBottom: 10,
-  },
-  enrollmentCodeHint: {
-    fontSize: 14,
-    color: '#6c757d',
-    textAlign: 'center',
-    marginBottom: 20,
-    fontStyle: 'italic',
-  },
-  cancelButton: {
-    marginTop: 15,
-    padding: 10,
-  },
-  cancelButtonText: {
-    color: '#dc3545',
-    fontWeight: 'bold',
-  },
-  closeButton: {
-    position: 'absolute',
-    top: 20,
-    right: 20,
-    zIndex: 1,
-    backgroundColor: '#f8f9fa',
-    borderRadius: 20,
-    padding: 8,
-  },
-  modalTitle: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#2c3e50',
-    marginBottom: 28,
-    textAlign: 'center',
-    letterSpacing: 0.3,
-  },
-  searchInput: {
-    borderWidth: 2,
-    borderColor: '#e9ecef',
-    backgroundColor: '#f8f9fa',
-    borderRadius: 15,
-    padding: 16,
-    fontSize: 16,
-    marginBottom: 22,
-    color: '#343a40',
-    width: '100%',
-  },
-  modalSearchButton: {
-    backgroundColor: '#667eea',
-    padding: 16,
-    borderRadius: 15,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#667eea',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
-    elevation: 8,
-    width: '100%',
-  },
-  modalSearchButtonText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-    letterSpacing: 0.5,
-  },
-  searchResultsContainer: {
-    marginTop: 25,
-    maxHeight: 350,
-  },
-  searchResultsTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#2c3e50',
-    marginBottom: 18,
-    letterSpacing: 0.3,
-  },
-  courseResultCard: {
-    backgroundColor: '#f8f9fa',
-    borderRadius: 18,
-    padding: 22,
-    marginBottom: 15,
-    borderWidth: 1,
-    borderColor: '#e9ecef',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    elevation: 3,
-  },
-  courseResultTitle: {
-    fontSize: 17,
-    fontWeight: 'bold',
-    color: '#2c3e50',
-    marginBottom: 6,
-  },
-  courseResultCode: {
-    fontSize: 14,
-    color: '#667eea',
-    marginBottom: 4,
+  offlineGuideButtonText: {
+    fontSize: 13,
+    color: '#1967d2',
+    marginLeft: 6,
     fontWeight: '600',
   },
   offlineTimerContainer: {
-    width: '80%',
-    marginTop: 15,
-    alignItems: 'center',
+    marginTop: 12,
+    padding: 12,
+    backgroundColor: '#fef7e0',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#fce8b2',
   },
   offlineTimerText: {
-    color: '#fff',
-    fontSize: 12,
-    opacity: 0.9,
-    marginBottom: 5,
+    fontSize: 13,
+    color: '#b7791f',
+    marginBottom: 8,
   },
   progressBarBackground: {
     height: 6,
-    width: '100%',
-    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+    backgroundColor: '#fce8b2',
     borderRadius: 3,
     overflow: 'hidden',
   },
   progressBarForeground: {
     height: '100%',
-    backgroundColor: '#fff',
+    backgroundColor: '#e37400',
     borderRadius: 3,
   },
-  courseResultDetails: {
-    fontSize: 13,
-    color: '#7f8c8d',
-    marginBottom: 2,
-  },
-  adButtonInnerContainer: { // New style for the inner content of the button
+  downloadIndicator: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginTop: 12,
+    padding: 12,
+    backgroundColor: '#e8f0fe',
+    borderRadius: 8,
   },
-  flex1: {
-    flex: 1, // This will make each button take up equal space
+  downloadText: {
+    fontSize: 13,
+    color: '#1967d2',
+    marginLeft: 8,
   },
-  enrollButton: {
-    backgroundColor: '#28a745',
-    padding: 14,
-    borderRadius: 12,
-    marginTop: 18,
+  searchButton: {
+    marginHorizontal: 16,
+    marginTop: 16,
+    marginBottom: 8,
+    backgroundColor: '#1967d2',
+    borderRadius: 8,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    flexDirection: 'row',
     alignItems: 'center',
-    shadowColor: '#28a745',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35,
-    shadowRadius: 6,
-    elevation: 6,
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
-  enrollButtonText: {
+  searchIcon: {
+    marginRight: 8,
+  },
+  searchButtonText: {
     color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 15,
-    letterSpacing: 0.5,
-  },
-  noResultsContainer: {
-    paddingVertical: 30,
-    alignItems: 'center',
-  },
-  noResultsText: {
     fontSize: 16,
-    color: '#7f8c8d',
-    textAlign: 'center',
-  },
-  flatListContent: {
-    paddingBottom: 10,
-  },
-  offlineModalHint: {
-    fontSize: 12,
-    color: '#dc3545',
-    textAlign: 'center',
-    marginTop: 15,
-    fontStyle: 'italic',
+    fontWeight: '500',
   },
   disabledButton: {
     opacity: 0.5,
+    backgroundColor: '#dadce0',
+  },
+  statsSection: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    gap: 12,
+  },
+  statCard: {
+    flex: 1,
+    backgroundColor: '#fff',
+    padding: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  statNumber: {
+    fontSize: 24,
+    fontWeight: '600',
+    color: '#202124',
+    marginTop: 8,
+  },
+  statLabel: {
+    fontSize: 12,
+    color: '#5f6368',
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  adContainer: {
+    marginHorizontal: 16,
+    marginBottom: 16,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    overflow: 'hidden',
+  },
+  adContent: {
+    padding: 12,
+  },
+  adButtonContainer: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  adButton: {
+    flex: 1,
+    backgroundColor: '#137333',
+    borderRadius: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  adButtonDownloading: {
+    backgroundColor: '#5f6368',
+  },
+  flex1: {
+    flex: 1,
+  },
+  downloadProgressContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  adButtonInnerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  adButtonText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  adToggle: {
+    paddingVertical: 8,
+    alignItems: 'center',
+    backgroundColor: '#f8f9fa',
+    borderTopWidth: 1,
+    borderTopColor: '#e0e0e0',
+  },
+  coursesSection: {
+    paddingHorizontal: 16,
+    marginBottom: 24,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: '500',
+    color: '#202124',
+  },
+  loadingCoursesContainer: {
+    padding: 32,
+    alignItems: 'center',
+  },
+  loadingCoursesText: {
+    marginTop: 16,
+    fontSize: 14,
+    color: '#5f6368',
+  },
+  horizontalFlatListContent: {
+    paddingRight: 16,
+  },
+  enrolledCourseCard: {
+    width: 200,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    marginRight: 12,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    overflow: 'hidden',
+  },
+  enrolledCourseCardHeader: {
+    height: 100,
+    backgroundColor: '#1967d2',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  enrolledCourseCardBody: {
+    padding: 12,
+  },
+  enrolledCourseCardTitle: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#202124',
+    marginBottom: 4,
+    minHeight: 40,
+  },
+  enrolledCourseCardCode: {
+    fontSize: 12,
+    color: '#5f6368',
+    marginBottom: 8,
+  },
+  statusBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#e8f0fe',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+    marginTop: 4,
+  },
+  enrolledCourseCardStatus: {
+    fontSize: 11,
+    color: '#1967d2',
+    fontWeight: '500',
+  },
+  noCoursesContainer: {
+    padding: 48,
+    alignItems: 'center',
+  },
+  noCoursesText: {
+    fontSize: 18,
+    fontWeight: '400',
+    color: '#5f6368',
+    marginTop: 16,
+  },
+  noCoursesSubText: {
+    fontSize: 14,
+    color: '#80868b',
+    textAlign: 'center',
+    marginTop: 8,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    width: width * 0.9,
+    maxHeight: height * 0.8,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 8,
+  },
+  closeButton: {
+    position: 'absolute',
+    top: 16,
+    right: 16,
+    zIndex: 1,
+  },
+  modalTitle: {
+    fontSize: 24,
+    fontWeight: '600',
+    color: '#202124',
+    marginBottom: 20,
+  },
+  searchInput: {
+    borderWidth: 1,
+    borderColor: '#dadce0',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+    marginBottom: 16,
+    backgroundColor: '#f8f9fa',
+  },
+  modalSearchButton: {
+    backgroundColor: '#1967d2',
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  modalSearchButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  offlineModalHint: {
+    fontSize: 13,
+    color: '#d93025',
+    textAlign: 'center',
+    marginTop: 8,
+  },
+  searchResultsContainer: {
+    marginTop: 16,
+    minHeight: 100,
+  },
+  searchResultsTitle: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#202124',
+    marginBottom: 12,
+  },
+  flatListContent: {
+    paddingBottom: 16,
+  },
+  courseResultCard: {
+    backgroundColor: '#fff',
+    padding: 16,
+    borderRadius: 8,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  courseResultTitle: {
+    fontSize: 18,
+    fontWeight: '500',
+    color: '#202124',
+    marginBottom: 8,
+  },
+  courseResultCode: {
+    fontSize: 14,
+    color: '#5f6368',
+    marginBottom: 4,
+  },
+  courseResultDetails: {
+    fontSize: 13,
+    color: '#5f6368',
+    marginTop: 4,
+  },
+  enrollButton: {
+    backgroundColor: '#1967d2',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    marginTop: 12,
+    alignItems: 'center',
+  },
+  enrollButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  noResultsContainer: {
+    padding: 32,
+    alignItems: 'center',
+  },
+  noResultsText: {
+    fontSize: 14,
+    color: '#5f6368',
+    textAlign: 'center',
+  },
+  enrollmentModalContent: {
+    width: width * 0.85,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 8,
+  },
+  enrollmentText: {
+    fontSize: 14,
+    color: '#5f6368',
+    marginBottom: 16,
+    lineHeight: 20,
+  },
+  cancelButton: {
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  cancelButtonText: {
+    color: '#5f6368',
+    fontSize: 14,
+    fontWeight: '500',
   },
 });

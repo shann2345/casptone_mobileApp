@@ -1,3 +1,4 @@
+import { usePendingSyncNotification } from '@/hooks/usePendingSyncNotification';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
@@ -73,6 +74,12 @@ export default function TodoScreen() {
     to_sync: 0,
     done: 0,
   });
+
+  // 🔔 Add pending sync notification hook (automatic detection)
+  const { hasPendingSync, manualCheck } = usePendingSyncNotification(
+    netInfo?.isInternetReachable ?? null,
+    'to-do'
+  );
 
   useEffect(() => {
     loadTodoItems();
@@ -323,6 +330,21 @@ export default function TodoScreen() {
     setIsLoading(false);
   };
 
+  const showToSyncTip = () => {
+    Alert.alert(
+      'Syncing Tip',
+      'If your submitted work remains in the "To sync" tab for a long time after reconnecting to the internet, please try **restarting the app** to initiate a manual sync.',
+      [{ text: 'Got it' }]
+    );
+  };
+
+  const handleCategoryPress = (categoryKey: string) => {
+    setSelectedCategory(categoryKey);
+    if (categoryKey === 'to_sync') {
+      showToSyncTip();
+    }
+  };
+
   const handleItemPress = (item: TodoItem) => {
     console.log('Navigating to assessment via course hierarchy with auto-scroll:', {
       courseId: item.course_id,
@@ -543,18 +565,31 @@ export default function TodoScreen() {
       <View style={styles.header}>
         <View style={styles.headerContent}>
           <Text style={styles.headerTitle}>To-do</Text>
-          <TouchableOpacity 
-            style={styles.refreshButton} 
-            onPress={handleManualRefresh}
-            disabled={isLoading}
-          >
-            <Ionicons 
-              name="refresh" 
-              size={24} 
-              color="#5f6368" 
-              style={[isLoading && { opacity: 0.5 }]}
-            />
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            {/* Show pending sync indicator */}
+            {hasPendingSync && netInfo?.isInternetReachable && (
+              <TouchableOpacity 
+                style={styles.syncIndicatorButton}
+                onPress={manualCheck}
+              >
+                <Ionicons name="cloud-upload" size={20} color="#e37400" />
+                <Text style={styles.syncIndicatorText}>Sync</Text>
+              </TouchableOpacity>
+            )}
+            
+            <TouchableOpacity 
+              style={styles.refreshButton} 
+              onPress={handleManualRefresh}
+              disabled={isLoading}
+            >
+              <Ionicons 
+                name="refresh" 
+                size={24} 
+                color="#5f6368" 
+                style={[isLoading && { opacity: 0.5 }]}
+              />
+            </TouchableOpacity>
+          </View>
         </View>
         
         {!netInfo?.isInternetReachable && (
@@ -578,7 +613,7 @@ export default function TodoScreen() {
                 styles.tab,
                 selectedCategory === category.key && styles.tabActive
               ]}
-              onPress={() => setSelectedCategory(category.key)}
+              onPress={() => handleCategoryPress(category.key)} // Use new handler
               activeOpacity={0.7}
             >
               <Text style={[
@@ -656,6 +691,22 @@ const styles = StyleSheet.create({
   },
   refreshButton: {
     padding: 8,
+  },
+  syncIndicatorButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fef7e0',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#e37400',
+  },
+  syncIndicatorText: {
+    fontSize: 12,
+    color: '#e37400',
+    fontWeight: '600',
+    marginLeft: 4,
   },
   offlineNotice: {
     flexDirection: 'row',

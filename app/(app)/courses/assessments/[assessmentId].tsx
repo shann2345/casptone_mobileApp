@@ -2,11 +2,11 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
+import { usePendingSyncNotification } from '@/hooks/usePendingSyncNotification';
 import { useNetworkStatus } from '../../../../context/NetworkContext';
 import api, { getUserData, syncOfflineSubmission } from '../../../../lib/api'; // Add syncOfflineSubmission here
 import {
@@ -80,6 +80,9 @@ export default function AssessmentDetailsScreen() {
   const [submissionLoading, setSubmissionLoading] = useState(false);
   const [hasDetailedData, setHasDetailedData] = useState<boolean>(false);
   const navigation = useNavigation();
+
+  // 🔔 Pending sync notification (automatic detection)
+  usePendingSyncNotification(netInfo?.isInternetReachable ?? null, 'assessment-details');
 
   const fetchAssessmentDetailsAndAttemptStatus = useCallback(async () => {
     if (!assessmentId) return;
@@ -359,9 +362,11 @@ export default function AssessmentDetailsScreen() {
 
     const user = await getUserData();
     const userEmail = user?.email;
+    const assessmentType = assessmentDetail.type || 'assessment';
+    const assessmentTypeCapitalized = assessmentType.charAt(0).toUpperCase() + assessmentType.slice(1);
 
     if (!userEmail) {
-      Alert.alert('Error', 'User not found. Cannot start quiz.');
+      Alert.alert('Error', `User not found. Cannot start ${assessmentType}.`);
       return;
     }
 
@@ -376,8 +381,8 @@ export default function AssessmentDetailsScreen() {
     const hasQuestions = await hasQuizQuestionsSaved(assessmentDetail.id, userEmail);
     if (!hasQuestions) {
       Alert.alert(
-        'Quiz Questions Not Downloaded',
-        'Please go online once to download the quiz questions before attempting. After that, you can start the quiz in online or offline mode.'
+        `${assessmentTypeCapitalized} Questions Not Downloaded`,
+        `Please go online once to download the ${assessmentType} questions before attempting. After that, you can start the ${assessmentType} in online or offline mode.`
       );
       return;
     }
@@ -385,8 +390,8 @@ export default function AssessmentDetailsScreen() {
     const existingAttempt = await getOfflineQuizAttempt(assessmentDetail.id, userEmail);
     if (existingAttempt) {
       Alert.alert(
-        'Resume Quiz',
-        'An in-progress quiz attempt was found in your local storage. Do you want to resume it?',
+        `Resume ${assessmentTypeCapitalized}`,
+        `An in-progress ${assessmentType} attempt was found in your local storage. Do you want to resume it?`,
         [
           {
             text: 'Cancel',
@@ -408,19 +413,19 @@ export default function AssessmentDetailsScreen() {
     }
 
     if (attemptStatus && attemptStatus.attempts_remaining !== null && attemptStatus.attempts_remaining <= 0) {
-      Alert.alert('Attempt Limit Reached', 'You have used all attempts for this quiz.');
+      Alert.alert('Attempt Limit Reached', `You have used all attempts for this ${assessmentType}.`);
       return;
     }
 
-    // Add warning dialog before starting the quiz
+    // Add warning dialog before starting the assessment
     Alert.alert(
       'Important Notice',
       `Please read carefully before starting:\n\n` +
-      `1. Once you start the quiz, you must complete it in one session.\n` +
+      `1. Once you start the ${assessmentType}, you must complete it in one session.\n` +
       `2. Specially if the assessment has due date.\n` +
-      `3. Do not leave or close the quiz page before submitting.\n` +
-      `4. Abandoning the quiz without submitting may result in lost answers.\n` +
-      `5. Make sure you have enough time to complete the quiz (${assessmentDetail.duration_minutes} minutes).\n\n` +
+      `3. Do not leave or close the ${assessmentType} page before submitting.\n` +
+      `4. Abandoning the ${assessmentType} without submitting may result in lost answers.\n` +
+      `5. Make sure you have enough time to complete the ${assessmentType} (${assessmentDetail.duration_minutes} minutes).\n\n` +
       `Are you ready to start?`,
       [
         {
@@ -428,13 +433,13 @@ export default function AssessmentDetailsScreen() {
           style: 'cancel'
         },
         {
-          text: 'Start Quiz',
+          text: `Start ${assessmentTypeCapitalized}`,
           onPress: async () => {
             try {
-              console.log('Starting quiz attempt and saving locally...');
+              console.log(`Starting ${assessmentType} attempt and saving locally...`);
               await startOfflineQuiz(parseInt(assessmentId as string), userEmail);
 
-              Alert.alert('Quiz Started', 'Good luck! Remember to submit your answers before leaving the quiz.', [
+              Alert.alert(`${assessmentTypeCapitalized} Started`, `Good luck! Remember to submit your answers before leaving the ${assessmentType}.`, [
                 {
                   text: 'OK',
                   onPress: () =>
@@ -449,8 +454,8 @@ export default function AssessmentDetailsScreen() {
                 },
               ]);
             } catch (error) {
-              console.error('Error starting quiz attempt:', error);
-              Alert.alert('Error', 'Failed to start quiz attempt locally.');
+              console.error(`Error starting ${assessmentType} attempt:`, error);
+              Alert.alert('Error', `Failed to start ${assessmentType} attempt locally.`);
             }
           }
         }
@@ -586,11 +591,13 @@ export default function AssessmentDetailsScreen() {
   const isAssessmentCurrentlyOpen = assessmentDetail ? isAssessmentOpen(assessmentDetail) : false;
 
   let isQuizAttemptButtonDisabled = false;
-  let quizButtonText = 'Start Quiz';
+  const assessmentType = assessmentDetail?.type || 'assessment';
+  const assessmentTypeCapitalized = assessmentType.charAt(0).toUpperCase() + assessmentType.slice(1);
+  let quizButtonText = `Start ${assessmentTypeCapitalized}`;
 
   if (assessmentDetail && (assessmentDetail.type === 'quiz' || assessmentDetail.type === 'exam')) {
     if (hasOfflineAttempt) {
-      quizButtonText = 'Resume Quiz';
+      quizButtonText = `Resume ${assessmentTypeCapitalized}`;
       isQuizAttemptButtonDisabled = false;
     } else if (!isAssessmentCurrentlyOpen) {
       isQuizAttemptButtonDisabled = true;
@@ -613,7 +620,7 @@ export default function AssessmentDetailsScreen() {
     if (assessmentDetail?.type === 'quiz' || assessmentDetail?.type === 'exam') {
       if (hasOfflineAttempt) {
         isQuizAttemptButtonDisabled = false;
-        quizButtonText = 'Resume Quiz (Offline)';
+        quizButtonText = 'Resume assessment (Offline)';
       } else if (!hasDetailedData) {
         isQuizAttemptButtonDisabled = true;
         quizButtonText = 'Download Assessment Details First (Offline)';
@@ -625,7 +632,7 @@ export default function AssessmentDetailsScreen() {
         quizButtonText = 'Assessment Unavailable (Offline)';
       } else {
         isQuizAttemptButtonDisabled = false;
-        quizButtonText = 'Start Quiz (Offline)';
+        quizButtonText = 'Start Assessment (Offline)';
       }
     } else {
       isQuizAttemptButtonDisabled = true;
@@ -679,13 +686,10 @@ export default function AssessmentDetailsScreen() {
   if (loading) {
     return (
       <View style={styles.container}>
-        <LinearGradient
-          colors={['#02135eff', '#7979f1ff']}
-          style={styles.loadingGradient}
-        >
-          <ActivityIndicator size="large" color="#fff" />
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#1967d2" />
           <Text style={styles.loadingText}>Loading assessment...</Text>
-        </LinearGradient>
+        </View>
       </View>
     );
   }
@@ -693,16 +697,13 @@ export default function AssessmentDetailsScreen() {
   if (error) {
     return (
       <View style={styles.container}>
-        <LinearGradient
-          colors={['#02135eff', '#7979f1ff']}
-          style={styles.loadingGradient}
-        >
-          <Ionicons name="alert-circle" size={64} color="#fff" />
+        <View style={styles.errorContainer}>
+          <Ionicons name="alert-circle" size={64} color="#d93025" />
           <Text style={styles.errorText}>{error}</Text>
           <TouchableOpacity style={styles.retryButton} onPress={fetchAssessmentDetailsAndAttemptStatus}>
             <Text style={styles.retryButtonText}>Retry</Text>
           </TouchableOpacity>
-        </LinearGradient>
+        </View>
       </View>
     );
   }
@@ -710,13 +711,10 @@ export default function AssessmentDetailsScreen() {
   if (!assessmentDetail) {
     return (
       <View style={styles.container}>
-        <LinearGradient
-          colors={['#02135eff', '#7979f1ff']}
-          style={styles.loadingGradient}
-        >
-          <Ionicons name="document" size={64} color="#fff" />
+        <View style={styles.errorContainer}>
+          <Ionicons name="document" size={64} color="#5f6368" />
           <Text style={styles.errorText}>Assessment not found.</Text>
-        </LinearGradient>
+        </View>
       </View>
     );
   }
@@ -729,24 +727,21 @@ export default function AssessmentDetailsScreen() {
       <Stack.Screen options={{ title: assessmentDetail.title || 'Assessment Details' }} />
       
       <ScrollView contentContainerStyle={styles.scrollViewContent} showsVerticalScrollIndicator={false}>
-        {/* Enhanced Header with Gradient */}
-        <LinearGradient
-          colors={['#02135eff', '#7979f1ff']}
-          style={styles.headerContainer}
-        >
+        {/* LMS-Style Header */}
+        <View style={styles.headerContainer}>
           <View style={styles.headerContent}>
             <View style={[
               styles.assessmentIconContainer,
-              { backgroundColor: getAssessmentColor(assessmentDetail.type) + '20' }
+              { backgroundColor: getAssessmentColor(assessmentDetail.type) + '30' }
             ]}>
               <Ionicons 
                 name={getAssessmentIcon(assessmentDetail.type)} 
                 size={32} 
-                color="#fff" 
+                color={getAssessmentColor(assessmentDetail.type)} 
               />
             </View>
             <Text style={styles.assessmentTitle}>{assessmentDetail.title}</Text>
-            <View style={styles.assessmentTypeBadge}>
+            <View style={[styles.assessmentTypeBadge, { backgroundColor: getAssessmentColor(assessmentDetail.type) }]}>
               <Text style={styles.assessmentTypeText}>
                 {assessmentDetail.type?.toUpperCase() || 'ASSESSMENT'}
               </Text>
@@ -758,11 +753,11 @@ export default function AssessmentDetailsScreen() {
           
           {!netInfo?.isInternetReachable && (
             <View style={styles.offlineNotice}>
-              <Ionicons name="cloud-offline" size={14} color="#fff" />
+              <Ionicons name="cloud-offline" size={14} color="#5f6368" />
               <Text style={styles.offlineText}>Working offline</Text>
             </View>
           )}
-        </LinearGradient>
+        </View>
 
         {/* Enhanced Details Section */}
         <View style={styles.sectionContainer}>
@@ -980,25 +975,16 @@ export default function AssessmentDetailsScreen() {
                 disabled={!isAssessmentCurrentlyOpen || !selectedFile || submissionLoading}
                 activeOpacity={0.8}
               >
-                <LinearGradient
-                  colors={
-                    (!isAssessmentCurrentlyOpen || !selectedFile || submissionLoading)
-                      ? ['#ccc', '#ccc']
-                      : ['#02135eff', '#7979f1ff']
-                  }
-                  style={styles.submitButtonGradient}
-                >
-                  {submissionLoading ? (
-                    <ActivityIndicator color="#fff" size="small" />
-                  ) : (
-                    <>
-                      <Ionicons name="cloud-upload" size={24} color="#fff" style={{ marginRight: 8 }} />
-                      <Text style={styles.submitButtonText}>
-                        {isAssessmentCurrentlyOpen ? `Submit ${assessmentDetail.type}` : 'Assessment Unavailable'}
-                      </Text>
-                    </>
-                  )}
-                </LinearGradient>
+                {submissionLoading ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <>
+                    <Ionicons name="cloud-upload" size={24} color="#fff" style={{ marginRight: 8 }} />
+                    <Text style={styles.submitButtonText}>
+                      {isAssessmentCurrentlyOpen ? `Submit ${assessmentDetail.type}` : 'Assessment Unavailable'}
+                    </Text>
+                  </>
+                )}
               </TouchableOpacity>
             </View>
           ) : (
@@ -1011,28 +997,19 @@ export default function AssessmentDetailsScreen() {
                 disabled={isQuizAttemptButtonDisabled}
                 activeOpacity={0.8}
               >
-                <LinearGradient
-                  colors={
-                    isQuizAttemptButtonDisabled
-                      ? ['#ccc', '#ccc']
-                      : ['#02135eff', '#7979f1ff']
-                  }
-                  style={styles.submitButtonGradient}
-                >
-                  {submissionLoading ? (
-                    <ActivityIndicator color="#fff" size="small" />
-                  ) : (
-                    <>
-                      <Ionicons 
-                        name={hasOfflineAttempt ? "play" : "play-circle"} 
-                        size={24} 
-                        color="#fff" 
-                        style={{ marginRight: 8 }} 
-                      />
-                      <Text style={styles.submitButtonText}>{quizButtonText}</Text>
-                    </>
-                  )}
-                </LinearGradient>
+                {submissionLoading ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <>
+                    <Ionicons 
+                      name={hasOfflineAttempt ? "play" : "play-circle"} 
+                      size={24} 
+                      color="#fff" 
+                      style={{ marginRight: 8 }} 
+                    />
+                    <Text style={styles.submitButtonText}>{quizButtonText}</Text>
+                  </>
+                )}
               </TouchableOpacity>
             </View>
           )}
@@ -1125,59 +1102,50 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f8f9fa',
   },
-  
-  // Loading and Error States
-  loadingGradient: {
+  loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 40,
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
   },
   loadingText: {
-    marginTop: 20,
-    fontSize: 18,
-    color: '#fff',
-    fontWeight: '500',
-    textAlign: 'center',
+    marginTop: 16,
+    fontSize: 16,
+    color: '#5f6368',
   },
   errorText: {
-    marginTop: 20,
-    fontSize: 18,
-    color: '#fff',
-    fontWeight: '500',
+    fontSize: 16,
+    color: '#d93025',
     textAlign: 'center',
-    lineHeight: 24,
+    marginVertical: 16,
   },
   retryButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    borderRadius: 20,
-    paddingVertical: 12,
+    backgroundColor: '#1967d2',
     paddingHorizontal: 24,
-    marginTop: 20,
+    paddingVertical: 12,
+    borderRadius: 8,
+    marginTop: 8,
   },
   retryButtonText: {
     color: '#fff',
     fontSize: 16,
-    fontWeight: 'bold',
+    fontWeight: '500',
   },
-
   scrollViewContent: {
-    paddingBottom: 30,
+    paddingBottom: 24,
   },
-
-  // Enhanced Header (matching index.tsx)
   headerContainer: {
+    backgroundColor: '#fff',
     paddingTop: 20,
-    paddingBottom: 30,
+    paddingBottom: 24,
     paddingHorizontal: 20,
-    borderBottomLeftRadius: 30,
-    borderBottomRightRadius: 30,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
-    marginBottom: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
   },
   headerContent: {
     alignItems: 'center',
@@ -1188,87 +1156,79 @@ const styles = StyleSheet.create({
     borderRadius: 32,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 15,
+    marginBottom: 12,
   },
   assessmentTitle: {
     fontSize: 24,
-    fontWeight: 'bold',
-    color: '#fff',
+    fontWeight: '600',
+    color: '#202124',
     textAlign: 'center',
-    marginBottom: 10,
-    lineHeight: 28,
+    marginBottom: 8,
   },
   assessmentTypeBadge: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    borderRadius: 20,
+    paddingHorizontal: 12,
     paddingVertical: 6,
-    paddingHorizontal: 16,
-    marginBottom: 15,
+    borderRadius: 16,
+    marginBottom: 12,
   },
   assessmentTypeText: {
     color: '#fff',
     fontSize: 12,
-    fontWeight: 'bold',
-    letterSpacing: 1,
+    fontWeight: '600',
+    letterSpacing: 0.5,
   },
   assessmentDescription: {
-    fontSize: 16,
-    color: 'rgba(255, 255, 255, 0.9)',
+    fontSize: 14,
+    color: '#5f6368',
     textAlign: 'center',
-    lineHeight: 22,
-    paddingHorizontal: 20,
+    lineHeight: 20,
   },
   offlineNotice: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    borderRadius: 20,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    marginTop: 15,
+    alignSelf: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: '#f1f3f4',
+    borderRadius: 16,
+    marginTop: 16,
+    gap: 6,
   },
   offlineText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-    marginLeft: 5,
+    fontSize: 12,
+    color: '#5f6368',
+    fontWeight: '500',
   },
-
-  // Enhanced Sections
   sectionContainer: {
-    backgroundColor: '#ffffff',
-    borderRadius: 20,
-    padding: 20,
-    marginHorizontal: 20,
-    marginBottom: 15,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
+    marginHorizontal: 16,
+    marginTop: 16,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
   },
   sectionHeader: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#2c3e50',
-    marginBottom: 15,
+    fontSize: 18,
+    fontWeight: '500',
+    color: '#202124',
+    marginBottom: 16,
   },
-
-  // Details Grid
   detailsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    marginBottom: 20,
+    gap: 12,
+    marginBottom: 16,
   },
   detailCard: {
+    flex: 1,
+    minWidth: '45%',
     backgroundColor: '#f8f9fa',
-    borderRadius: 15,
-    padding: 15,
+    padding: 12,
+    borderRadius: 8,
     alignItems: 'center',
-    width: '48%',
-    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
   },
   detailIconContainer: {
     width: 40,
@@ -1278,167 +1238,162 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
   },
   detailLabel: {
     fontSize: 12,
-    color: '#7f8c8d',
+    color: '#5f6368',
     marginBottom: 4,
-    textAlign: 'center',
   },
   detailValue: {
     fontSize: 16,
-    fontWeight: 'bold',
-    color: '#2c3e50',
-    textAlign: 'center',
+    fontWeight: '600',
+    color: '#202124',
   },
-
-  // Availability Information
   availabilityContainer: {
-    backgroundColor: '#f8f9fa',
-    borderRadius: 15,
-    padding: 15,
+    gap: 12,
   },
   availabilityItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    gap: 8,
+    paddingVertical: 8,
   },
   availabilityLabel: {
-    fontSize: 14,
-    color: '#7f8c8d',
-    marginLeft: 8,
-    marginRight: 8,
+    fontSize: 13,
+    color: '#5f6368',
     fontWeight: '500',
   },
   availabilityValue: {
-    fontSize: 14,
-    color: '#2c3e50',
+    fontSize: 13,
+    color: '#202124',
     flex: 1,
   },
-
-  // Action Cards
   actionCard: {
-    backgroundColor: '#f8f9fa',
-    borderRadius: 15,
-    padding: 15,
-    marginBottom: 10,
+    backgroundColor: '#1967d2',
+    borderRadius: 8,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#1967d2',
   },
   actionCardDisabled: {
-    opacity: 0.6,
+    backgroundColor: '#f1f3f4',
+    borderColor: '#e0e0e0',
   },
   actionCardContent: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 12,
   },
   actionCardIcon: {
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: '#2196F3',
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 15,
   },
   actionCardText: {
     flex: 1,
   },
   actionCardTitle: {
     fontSize: 16,
-    fontWeight: 'bold',
-    color: '#2c3e50',
+    fontWeight: '500',
+    color: '#fff',
     marginBottom: 4,
   },
   actionCardSubtitle: {
-    fontSize: 14,
-    color: '#7f8c8d',
+    fontSize: 13,
+    color: 'rgba(255, 255, 255, 0.8)',
   },
   disabledText: {
-    color: '#ccc',
+    color: '#9aa0a6',
   },
-
-  // Submission Card
+  offlineWarning: {
+    fontSize: 12,
+    color: '#d93025',
+    marginTop: 8,
+    textAlign: 'center',
+  },
   submissionCard: {
     backgroundColor: '#f8f9fa',
-    borderRadius: 15,
-    padding: 15,
-    borderLeftWidth: 4,
-    borderLeftColor: '#27ae60',
+    borderRadius: 8,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
   },
   submissionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 10,
+    gap: 12,
+    marginBottom: 12,
   },
   submissionIconContainer: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#27ae60',
+    backgroundColor: '#e6f4ea',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 12,
   },
   submissionInfo: {
     flex: 1,
   },
   submissionFileName: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#2c3e50',
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#202124',
     marginBottom: 4,
   },
   statusBadge: {
-    borderRadius: 12,
-    paddingVertical: 4,
-    paddingHorizontal: 8,
     alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
   },
   statusText: {
+    fontSize: 11,
     color: '#fff',
-    fontSize: 12,
-    fontWeight: 'bold',
+    fontWeight: '600',
   },
   submissionDate: {
-    fontSize: 14,
-    color: '#7f8c8d',
-    marginBottom: 10,
+    fontSize: 12,
+    color: '#5f6368',
+    marginBottom: 12,
   },
   downloadButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#e3f2fd',
-    borderRadius: 10,
-    padding: 10,
-    marginBottom: 5,
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    backgroundColor: '#e8f0fe',
+    borderRadius: 8,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: '#1967d2',
   },
   downloadButtonDisabled: {
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#f1f3f4',
+    borderColor: '#e0e0e0',
   },
   downloadButtonText: {
     fontSize: 14,
-    color: '#2196F3',
-    marginLeft: 8,
+    color: '#1967d2',
     fontWeight: '500',
   },
-
-  // File Picker
   filePickerCard: {
     backgroundColor: '#f8f9fa',
-    borderRadius: 15,
-    padding: 15,
-    marginBottom: 15,
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 16,
     borderWidth: 2,
-    borderColor: '#e9ecef',
+    borderColor: '#e0e0e0',
     borderStyle: 'dashed',
   },
   filePickerContent: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 12,
   },
   filePickerIcon: {
     width: 48,
@@ -1447,150 +1402,96 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 15,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
   },
   filePickerText: {
     flex: 1,
   },
   filePickerTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#2c3e50',
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#202124',
     marginBottom: 4,
   },
   filePickerSubtitle: {
-    fontSize: 14,
-    color: '#7f8c8d',
+    fontSize: 12,
+    color: '#5f6368',
   },
-
-  // Submit Button
   submitButton: {
-    borderRadius: 15,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
-  },
-  submitButtonDisabled: {
-    shadowOpacity: 0.1,
-    elevation: 2,
-  },
-  submitButtonGradient: {
+    backgroundColor: '#1967d2',
+    borderRadius: 8,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 16,
-    paddingHorizontal: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  submitButtonDisabled: {
+    backgroundColor: '#dadce0',
+    shadowOpacity: 0,
+    elevation: 0,
   },
   submitButtonText: {
-    fontSize: 16,
-    fontWeight: 'bold',
     color: '#fff',
-  },
-
-  // Warnings
-  offlineWarning: {
-    color: '#e74c3c',
-    fontSize: 12,
-    marginTop: 5,
-    fontStyle: 'italic',
-  },
-
-  // Submitted Assessment
-  submittedAssessmentContainer: {
-    backgroundColor: '#f1f8e9',
-    borderRadius: 15,
-    padding: 15,
-    marginTop: 20,
-  },
-  submittedAssessmentHeader: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#2c3e50',
-    marginBottom: 10,
-  },
-  submittedAssessmentDetails: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  submittedAssessmentLabel: {
-    fontSize: 14,
-    color: '#7f8c8d',
+    fontSize: 16,
     fontWeight: '500',
   },
-  submittedAssessmentValue: {
-    fontSize: 14,
-    color: '#2c3e50',
-    fontWeight: 'bold',
-  },
-  submittedAssessmentIcon: {
-    marginRight: 8,
+  offlineSubmissionContainer: {
+    padding: 24,
+    alignItems: 'center',
+    gap: 12,
   },
   offlineSubmissionText: {
     fontSize: 14,
-    color: '#7f8c8d',
-    fontStyle: 'italic',
+    color: '#5f6368',
     textAlign: 'center',
-    marginTop: 10,
+    lineHeight: 20,
   },
   submissionStatusContainer: {
-    backgroundColor: '#f8f9fa',
-    borderRadius: 15,
-    padding: 15,
+    gap: 12,
   },
   submissionStatusItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 12,
+    gap: 12,
+    paddingVertical: 8,
   },
   submissionLabel: {
     fontSize: 14,
-    color: '#7f8c8d',
+    color: '#5f6368',
     fontWeight: '500',
     minWidth: 60,
   },
   submissionValue: {
     fontSize: 14,
-    fontWeight: 'bold',
+    fontWeight: '600',
     flex: 1,
-    textAlign: 'right',
   },
   completionInfoContainer: {
-    marginTop: 10,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#e9ecef',
+    marginTop: 12,
+    padding: 12,
+    backgroundColor: '#e6f4ea',
+    borderRadius: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: '#137333',
   },
   completionInfoText: {
     fontSize: 13,
-    color: '#6c757d',
-    fontStyle: 'italic',
-    textAlign: 'center',
-  },
-  offlineSubmissionContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#f8f9fa',
-    borderRadius: 15,
-    padding: 15,
+    color: '#137333',
+    lineHeight: 18,
   },
   loadingSubmissionContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 20,
+    gap: 12,
+    padding: 16,
   },
   loadingSubmissionText: {
     fontSize: 14,
-    color: '#7f8c8d',
-    marginLeft: 8,
+    color: '#5f6368',
   },
 });

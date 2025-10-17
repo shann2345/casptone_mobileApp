@@ -7,10 +7,10 @@ const packageName = 'com.shannarlly.mobileappolin';
 export default {
   "expo": {
     "name": "Olin",
-    "slug": "olin_app",
+    "slug": "olin_app_2",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/LOGO.png",
+    "icon": "./assets/images/splash-icon-dark.png",
     "scheme": packageName, // Use the package name as the scheme for consistency
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -21,7 +21,7 @@ export default {
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/LOGO.png",
+        "foregroundImage": "./assets/images/splash-icon-dark.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
@@ -88,8 +88,11 @@ export default {
       // "eas": {
       //   "projectId": "824ee34b-3739-4280-82b8-dd7a8ba8e5ee"
       // }
+      // "eas": {
+      //   "projectId": "3438c390-06db-4c15-a5ab-b41868009b2a"
+      // }
       "eas": {
-        "projectId": "3438c390-06db-4c15-a5ab-b41868009b2a"
+        "projectId": "eeec91a6-0879-483f-bd94-fc0eb53e0c66"
       }
     }
   }

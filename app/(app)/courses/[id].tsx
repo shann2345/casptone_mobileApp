@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { showOfflineModeWarningIfNeeded } from '../../../lib/offlineWarning';
 // Import your API and database functions
+import { usePendingSyncNotification } from '@/hooks/usePendingSyncNotification';
 import { useNetworkStatus } from '../../../context/NetworkContext';
 import api, {
   getServerTime,
@@ -101,6 +102,9 @@ export default function CourseDetailsScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false); 
   const [highlightedAssessmentId, setHighlightedAssessmentId] = useState<number | null>(null);
   const sectionListRef = useRef<SectionList<CourseItem>>(null);
+
+  // 🔔 Pending sync notification (automatic detection)
+  usePendingSyncNotification(netInfo?.isInternetReachable ?? null, 'course-details');
 
   useEffect(() => {
     if (highlightAssessment && scrollToAssessment && courseDetail?.sorted_content) {

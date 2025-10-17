@@ -1,7 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Audio, ResizeMode, Video } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
-import { LinearGradient } from 'expo-linear-gradient';
 import * as MediaLibrary from 'expo-media-library';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import * as Sharing from 'expo-sharing';
@@ -21,9 +20,10 @@ import {
   View
 } from 'react-native';
 
+import { getCompletedOfflineQuizzes, getMaterialDetailsFromDb, getUnsyncedSubmissions } from '@/lib/localDb';
+import { syncAllOfflineData } from '@/lib/offlineSync';
 import { useNetworkStatus } from '../../../../context/NetworkContext';
 import api, { getAuthorizationHeader, getUserData, initializeAuth } from '../../../../lib/api';
-import { getMaterialDetailsFromDb } from '../../../../lib/localDb';
 
 interface MaterialDetail {
   id: number;
@@ -79,6 +79,37 @@ export default function MaterialDetailsScreen() {
       }
     };
   }, [materialId, netInfo?.isInternetReachable]);
+
+  useEffect(() => {
+    const submitOfflineAssessments = async () => {
+      if (netInfo?.isInternetReachable) {
+        console.log('🌐 Network detected, checking for offline assessments to submit...');
+        try {
+          const userData = await getUserData();
+          if (userData?.email) {
+            const unsyncedSubmissions = await getUnsyncedSubmissions(userData.email);
+            const completedOfflineQuizzes = await getCompletedOfflineQuizzes(userData.email);
+            
+            if (unsyncedSubmissions.length > 0 || completedOfflineQuizzes.length > 0) {
+              console.log(`📤 Found ${unsyncedSubmissions.length} file submissions and ${completedOfflineQuizzes.length} quizzes to sync`);
+              await syncAllOfflineData();
+              console.log('✅ Offline assessments synced successfully');
+              // Refresh data after sync
+              setTimeout(() => {
+                // Call the appropriate refresh function for each file
+                // For index.tsx: fetchCourses();
+                fetchMaterialDetails();
+              }, 1000);
+            }
+          }
+        } catch (error) {
+          console.error('❌ Error submitting offline assessments:', error);
+        }
+      }
+    };
+
+    submitOfflineAssessments();
+  }, [netInfo?.isInternetReachable]);
 
   const fetchMaterialDetails = async () => {
     setLoading(true);
@@ -526,11 +557,8 @@ export default function MaterialDetailsScreen() {
 
       return (
         <View style={styles.downloadPromptContainer}>
-          <LinearGradient
-            colors={['#4285f4', '#34a853']}
-            style={styles.downloadPromptGradient}
-          >
-            <Ionicons name={getFileIcon(fileType)} size={48} color="#fff" />
+          <View style={styles.downloadPromptContent}>
+            <Ionicons name={getFileIcon(fileType)} size={48} color="#1967d2" />
             <Text style={styles.downloadPromptTitle}>
               {isDownloading ? 'Downloading...' : 'Ready for Offline Access'}
             </Text>
@@ -543,7 +571,7 @@ export default function MaterialDetailsScreen() {
             
             {isDownloading ? (
               <View style={styles.progressContainer}>
-                <ActivityIndicator color="#fff" size="large" />
+                <ActivityIndicator color="#1967d2" size="large" />
                 <Text style={styles.progressText}>{downloadProgress}%</Text>
               </View>
             ) : (
@@ -552,13 +580,13 @@ export default function MaterialDetailsScreen() {
                 onPress={handleDownload}
                 disabled={isDownloading}
               >
-                <Ionicons name="download" size={20} color="#4285f4" />
+                <Ionicons name="download" size={20} color="#fff" />
                 <Text style={styles.downloadPromptButtonText}>
                   Download for Offline Access
                 </Text>
               </TouchableOpacity>
             )}
-          </LinearGradient>
+          </View>
         </View>
       );
     }
@@ -929,10 +957,12 @@ export default function MaterialDetailsScreen() {
         ) : codeContent ? (
           <ScrollView 
             style={styles.codeScrollContainer}
-            horizontal={true}
-            showsHorizontalScrollIndicator={true}
+            showsVerticalScrollIndicator={true}
           >
-            <ScrollView showsVerticalScrollIndicator={true}>
+            <ScrollView 
+              horizontal={true}
+              showsHorizontalScrollIndicator={true}
+            >
               <View style={styles.codeContainer}>
                 <Text style={styles.codeText} selectable={true}>
                   {codeContent}
@@ -1061,11 +1091,8 @@ export default function MaterialDetailsScreen() {
       <Stack.Screen options={{ title: materialDetail.title || 'Material Details' }} />
       <ScrollView contentContainerStyle={styles.scrollViewContent}>
 
-        {/* Header Section */}
-        <LinearGradient
-          colors={['#4285f4', '#34a853']}
-          style={styles.headerSection}
-        >
+        {/* LMS-Style Header Section */}
+        <View style={styles.headerSection}>
           <Text style={styles.materialTitle}>{materialDetail.title}</Text>
           {materialDetail.description && (
             <Text style={styles.materialDescription}>{materialDetail.description}</Text>
@@ -1106,7 +1133,7 @@ export default function MaterialDetailsScreen() {
               )}
             </View>
           )}
-        </LinearGradient>
+        </View>
 
         {/* Content Section */}
         {materialDetail.content && (
@@ -1186,218 +1213,318 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f8f9fa',
   },
-  centeredContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#f8f9fa',
-    padding: 20,
-  },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: '#f8f9fa',
   },
   loadingText: {
-    marginTop: 10,
+    marginTop: 16,
     fontSize: 16,
     color: '#5f6368',
+  },
+  centeredContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: '#f8f9fa',
   },
   errorText: {
     fontSize: 16,
     color: '#d93025',
     textAlign: 'center',
-    marginBottom: 15,
+    marginBottom: 20,
   },
   retryButton: {
-    backgroundColor: '#4285f4',
-    paddingVertical: 10,
-    paddingHorizontal: 20,
+    backgroundColor: '#1967d2',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
     borderRadius: 8,
   },
   retryButtonText: {
     color: '#fff',
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '500',
   },
   scrollViewContent: {
-    paddingBottom: 30,
+    paddingBottom: 24,
   },
-  
-  // Header Section
   headerSection: {
-    padding: 24,
-    paddingTop: 40,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
+    backgroundColor: '#1967d2',
+    padding: 20,
+    paddingTop: 24,
+    borderBottomLeftRadius: 16,
+    borderBottomRightRadius: 16,
   },
   materialTitle: {
     fontSize: 24,
-    fontWeight: 'bold',
+    fontWeight: '600',
     color: '#fff',
     marginBottom: 8,
-    textAlign: 'center',
   },
   materialDescription: {
-    fontSize: 16,
-    color: 'rgba(255, 255, 255, 0.9)',
-    lineHeight: 22,
-    textAlign: 'center',
-    marginBottom: 20,
+    fontSize: 14,
+    color: '#e8f0fe',
+    lineHeight: 20,
+    marginBottom: 16,
   },
   actionButtonsContainer: {
     flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 12,
+    gap: 8,
+    marginTop: 8,
   },
   headerActionButton: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
     paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 20,
+    paddingHorizontal: 12,
+    borderRadius: 8,
     gap: 6,
-  },
-  downloadedButton: {
-    backgroundColor: 'rgba(52, 168, 83, 0.3)', // Green tint for downloaded
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
   },
   headerActionButtonText: {
     color: '#fff',
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
   },
-
-  // Content Sections
+  downloadedButton: {
+    backgroundColor: '#137333',
+    borderColor: '#137333',
+  },
   contentSection: {
     backgroundColor: '#fff',
     margin: 16,
-    padding: 20,
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  detailsSection: {
-    backgroundColor: '#fff',
-    margin: 16,
-    marginTop: 0,
-    padding: 20,
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    padding: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
   },
   sectionHeader: {
-    fontSize: 18,
-    fontWeight: 'bold',
+    fontSize: 16,
+    fontWeight: '500',
     color: '#202124',
     marginBottom: 12,
   },
   materialContent: {
-    fontSize: 15,
+    fontSize: 14,
     color: '#5f6368',
     lineHeight: 22,
   },
-
-  // Download Prompt
+  linkClickableContainer: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 8,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  linkContentWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  linkIconWrapper: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#e8f0fe',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  linkTextContainer: {
+    flex: 1,
+  },
+  linkUrlText: {
+    fontSize: 14,
+    color: '#1967d2',
+    marginBottom: 4,
+    fontWeight: '500',
+  },
+  linkActionText: {
+    fontSize: 12,
+    color: '#5f6368',
+  },
   downloadPromptContainer: {
     margin: 16,
-    borderRadius: 12,
+    backgroundColor: '#fff',
+    borderRadius: 8,
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
   },
-  downloadPromptGradient: {
+  downloadPromptContent: {
     padding: 32,
     alignItems: 'center',
   },
   downloadPromptTitle: {
     fontSize: 20,
-    fontWeight: 'bold',
-    color: '#fff',
+    fontWeight: '500',
+    color: '#202124',
     marginTop: 16,
     marginBottom: 8,
   },
   downloadPromptText: {
     fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.9)',
+    color: '#5f6368',
     textAlign: 'center',
-    marginBottom: 20,
+    marginBottom: 24,
     lineHeight: 20,
   },
-  downloadPromptButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 24,
-    gap: 8,
-  },
-  downloadPromptButtonText: {
-    color: '#4285f4',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  
-  // Progress indicators
   progressContainer: {
     alignItems: 'center',
     gap: 12,
   },
   progressText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#1967d2',
   },
-
-  // Downloaded indicator
+  downloadPromptButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1967d2',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 8,
+    gap: 8,
+  },
+  downloadPromptButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  inlineViewerContainer: {
+    margin: 16,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  viewerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 12,
+    backgroundColor: '#f8f9fa',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  viewerTitle: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#202124',
+  },
+  viewerActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  actionButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#f8f9fa',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  documentHeaderInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  codeHeaderInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  imagePreview: {
+    width: '100%',
+    height: 300,
+    backgroundColor: '#f8f9fa',
+  },
   downloadedIndicator: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
     padding: 12,
-    backgroundColor: '#e8f5e8',
-    gap: 6,
+    backgroundColor: '#e6f4ea',
+    gap: 8,
   },
   downloadedText: {
     fontSize: 12,
-    color: '#34a853',
+    color: '#137333',
+    flex: 1,
+  },
+  videoPlayer: {
+    width: '100%',
+    height: 250,
+    backgroundColor: '#000',
+  },
+  audioPlayerContainer: {
+    padding: 48,
+    alignItems: 'center',
+    backgroundColor: '#f8f9fa',
+  },
+  audioFileName: {
+    fontSize: 16,
+    color: '#202124',
+    marginTop: 16,
+    marginBottom: 24,
+    textAlign: 'center',
+  },
+  playButton: {
+    width: 64,
+    height: 64,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  genericFileContainer: {
+    padding: 48,
+    alignItems: 'center',
+    backgroundColor: '#f8f9fa',
+  },
+  genericFileName: {
+    fontSize: 16,
+    color: '#202124',
+    marginTop: 16,
+    marginBottom: 24,
+    textAlign: 'center',
+  },
+  openFileButton: {
+    backgroundColor: '#1967d2',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 8,
+  },
+  openFileButtonText: {
+    color: '#fff',
+    fontSize: 14,
     fontWeight: '500',
   },
-
-  // Inline Viewers
-  inlineViewerContainer: {
-    backgroundColor: '#fff',
-    margin: 16,
-    borderRadius: 12,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-
   documentContainer: {
-    padding: 32,
+    padding: 24,
     alignItems: 'center',
+  },
+  documentIconContainer: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20,
   },
   documentTitle: {
     fontSize: 18,
-    fontWeight: '600',
+    fontWeight: '500',
     color: '#202124',
-    marginTop: 16,
-    marginBottom: 8,
     textAlign: 'center',
+    marginBottom: 8,
   },
   documentSubtext: {
     fontSize: 14,
@@ -1407,211 +1534,139 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   documentActions: {
-    gap: 12,
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  codeHeaderInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  loadingCodeContainer: {
-    padding: 32,
-    alignItems: 'center',
-    gap: 12,
-  },
-  loadingCodeText: {
-    fontSize: 14,
-    color: '#5f6368',
-  },
-  codeScrollContainer: {
-    maxHeight: 400,
-    backgroundColor: '#1e1e1e', // Dark background like VS Code
-  },
-  codeContainer: {
-    padding: 16,
-    backgroundColor: '#1e1e1e',
-    minWidth: '100%',
-  },
-  codeText: {
-    fontFamily: 'Courier New', // Monospace font
-    fontSize: 12,
-    lineHeight: 18,
-    color: '#d4d4d4', // Light text color
-    backgroundColor: 'transparent',
-  },
-  errorCodeContainer: {
-    padding: 32,
-    alignItems: 'center',
-    gap: 12,
-  },
-  errorCodeText: {
-    fontSize: 14,
-    color: '#ea4335',
-    textAlign: 'center',
-  },
-  documentHeaderInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  documentIconContainer: {
-    width: 100,
-    height: 100,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  fileInfoContainer: {
     width: '100%',
-    gap: 8,
-    marginBottom: 16,
-  },
-  fileInfoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    justifyContent: 'center',
-  },
-  fileInfoText: {
-    fontSize: 12,
-    color: '#5f6368',
-    textAlign: 'center',
-  },
-  retryCodeButton: {
-    backgroundColor: '#4285f4',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    marginTop: 8,
-  },
-  retryCodeButtonText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
+    gap: 12,
+    marginBottom: 20,
   },
   primaryDocumentButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#4285f4',
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 24,
+    justifyContent: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 8,
     gap: 8,
   },
   primaryDocumentButtonText: {
     color: '#fff',
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '500',
   },
   secondaryDocumentButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'transparent',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 20,
+    justifyContent: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    gap: 8,
+    backgroundColor: '#e8f0fe',
     borderWidth: 1,
-    borderColor: '#4285f4',
-    gap: 6,
+    borderColor: '#1967d2',
   },
   secondaryDocumentButtonText: {
-    color: '#4285f4',
-    fontSize: 14,
+    color: '#1967d2',
+    fontSize: 16,
     fontWeight: '500',
   },
-  tipContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  fileInfoContainer: {
+    width: '100%',
     backgroundColor: '#f8f9fa',
     padding: 12,
     borderRadius: 8,
     gap: 8,
-    maxWidth: '100%',
+    marginBottom: 12,
+  },
+  fileInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  fileInfoText: {
+    fontSize: 12,
+    color: '#5f6368',
+    flex: 1,
+  },
+  tipContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    paddingHorizontal: 8,
   },
   tipText: {
     fontSize: 12,
     color: '#5f6368',
     flex: 1,
-    lineHeight: 16,
+    lineHeight: 18,
   },
-  viewerHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e8eaed',
+  codeScrollContainer: {
+    maxHeight: 400,
   },
-  viewerTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#202124',
-  },
-  viewerActions: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  actionButton: {
-    padding: 8,
-    borderRadius: 8,
-    backgroundColor: '#f1f3f4',
-  },
-
-  // Image Viewer
-  imagePreview: {
-    width: '100%',
-    height: 250,
+  codeContainer: {
     backgroundColor: '#f8f9fa',
+    padding: 16,
+    minWidth: screenWidth - 32,
   },
-
-  // Video Viewer
-  videoPlayer: {
-    width: '100%',
-    height: 250,
+  codeText: {
+    fontFamily: 'monospace',
+    fontSize: 12,
+    color: '#202124',
+    lineHeight: 18,
   },
-
-  // Audio Viewer
-  audioPlayerContainer: {
-    padding: 32,
+  loadingCodeContainer: {
+    padding: 48,
     alignItems: 'center',
   },
-  audioFileName: {
-    fontSize: 16,
-    color: '#202124',
-    marginVertical: 16,
-    textAlign: 'center',
+  loadingCodeText: {
+    marginTop: 16,
+    fontSize: 14,
+    color: '#5f6368',
   },
-  playButton: {
-    marginTop: 8,
-  },
-
-  // Generic File Viewer
-  genericFileContainer: {
-    padding: 32,
+  errorCodeContainer: {
+    padding: 48,
     alignItems: 'center',
   },
-  genericFileName: {
-    fontSize: 16,
-    color: '#202124',
-    marginVertical: 16,
-    textAlign: 'center',
+  errorCodeText: {
+    marginTop: 16,
+    fontSize: 14,
+    color: '#d93025',
+    marginBottom: 24,
   },
-  openFileButton: {
-    backgroundColor: '#4285f4',
+  retryCodeButton: {
+    backgroundColor: '#1967d2',
     paddingVertical: 10,
     paddingHorizontal: 20,
     borderRadius: 8,
   },
-  openFileButtonText: {
+  retryCodeButtonText: {
     color: '#fff',
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
   },
-
-  // Full Screen Modal
+  detailsSection: {
+    backgroundColor: '#fff',
+    margin: 16,
+    marginTop: 0,
+    padding: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  detailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    gap: 12,
+  },
+  detailText: {
+    fontSize: 14,
+    color: '#5f6368',
+    flex: 1,
+  },
+  detailLabel: {
+    fontWeight: '500',
+    color: '#202124',
+  },
   fullScreenContainer: {
     flex: 1,
     backgroundColor: '#000',
@@ -1619,22 +1674,27 @@ const styles = StyleSheet.create({
   fullScreenHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    padding: 16,
     backgroundColor: 'rgba(0, 0, 0, 0.8)',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
   },
   fullScreenCloseButton: {
-    padding: 8,
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   fullScreenTitle: {
     flex: 1,
-    color: '#fff',
     fontSize: 16,
-    fontWeight: '600',
+    color: '#fff',
     marginHorizontal: 12,
+    fontWeight: '500',
   },
   fullScreenShareButton: {
-    padding: 8,
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   fullScreenContent: {
     flex: 1,
@@ -1649,63 +1709,6 @@ const styles = StyleSheet.create({
     height: screenHeight - 100,
   },
   fullScreenVideo: {
-    width: '100%',
-    height: '100%',
-  },
-
-  // Details
-  detailRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-    gap: 8,
-  },
-  detailText: {
-    fontSize: 14,
-    color: '#5f6368',
     flex: 1,
-  },
-  detailLabel: {
-    fontWeight: '600',
-    color: '#202124',
-  },
-  
-  // Link styles for external links
-  linkClickableContainer: {
-    backgroundColor: '#f8f9fa',
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: '#4285f4',
-    marginTop: 8,
-    overflow: 'hidden',
-  },
-  linkContentWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 16,
-  },
-  linkIconWrapper: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#e3f2fd',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 16,
-  },
-  linkTextContainer: {
-    flex: 1,
-    marginRight: 12,
-  },
-  linkUrlText: {
-    fontSize: 16,
-    color: '#4285f4',
-    fontWeight: '500',
-    marginBottom: 4,
-  },
-  linkActionText: {
-    fontSize: 12,
-    color: '#5f6368',
-    fontStyle: 'italic',
   },
 });

@@ -89,6 +89,10 @@ export default function AttemptQuizScreen() {
   const [shuffledQuestions, setShuffledQuestions] = useState<SubmittedQuestion[]>([]);
   const { restartApp } = useApp();
 
+  // ++ MODIFIED: Added helper variables for dynamic text ++
+  const assessmentType = submittedAssessment?.assessment?.type || 'assessment';
+  const assessmentTypeCapitalized = assessmentType.charAt(0).toUpperCase() + assessmentType.slice(1);
+
   // Update the ref whenever studentAnswers state changes
   useEffect(() => {
     studentAnswersRef.current = studentAnswers;
@@ -174,7 +178,7 @@ export default function AttemptQuizScreen() {
           });
           
           if (currentTime >= unavailableTime) {
-            console.log("🚨 Assessment unavailable time reached during quiz taking, auto-submitting");
+            console.log(`🚨 Assessment unavailable time reached during ${assessmentType} taking, auto-submitting`);
             await handleAutoSubmit('assessment_unavailable');
             return;
           }
@@ -235,7 +239,7 @@ export default function AttemptQuizScreen() {
               currentTime = new Date(serverTimeString).getTime();
               console.log("🕐 Using offline calculated server time:", new Date(currentTime).toISOString());
             } else {
-              console.warn("⚠️ No server time available, quiz cannot continue safely");
+              console.warn(`⚠️ No server time available, ${assessmentType} cannot continue safely`);
               setTimeLeft(0);
               await handleAutoSubmit('no_server_time');
               if (timerInterval) clearInterval(timerInterval);
@@ -369,30 +373,30 @@ export default function AttemptQuizScreen() {
       return;
     }
 
-    console.log(`🚨 Auto-submitting quiz due to: ${reason}`);
+    console.log(`🚨 Auto-submitting ${assessmentType} due to: ${reason}`);
     setAutoSubmitting(true);
 
     try {
       // Show appropriate alert based on reason
-      let alertTitle = "Quiz Auto-Submitted";
+      let alertTitle = `${assessmentTypeCapitalized} Auto-Submitted`;
       let alertMessage = "";
       
       switch (reason) {
         case 'time_up':
           alertTitle = "Time's Up!";
-          alertMessage = "Your quiz time has expired and has been automatically submitted.";
+          alertMessage = `Your ${assessmentType} time has expired and has been automatically submitted.`;
           break;
         case 'time_manipulation':
           alertTitle = "Security Alert";
-          alertMessage = "Time manipulation detected. Quiz has been automatically submitted for security reasons.";
+          alertMessage = `Time manipulation detected. ${assessmentTypeCapitalized} has been automatically submitted for security reasons.`;
           break;
         case 'no_server_time':
           alertTitle = "System Error";
-          alertMessage = "Unable to verify time. Quiz has been automatically submitted for security.";
+          alertMessage = `Unable to verify time. ${assessmentTypeCapitalized} has been automatically submitted for security.`;
           break;
         case 'timer_error':
           alertTitle = "Timer Error";
-          alertMessage = "Timer error detected. Quiz has been automatically submitted for security.";
+          alertMessage = `Timer error detected. ${assessmentTypeCapitalized} has been automatically submitted for security.`;
           break;
         case 'assessment_unavailable':
           alertTitle = "Assessment Unavailable";
@@ -424,7 +428,7 @@ export default function AttemptQuizScreen() {
       
       Alert.alert(
         "Submission Error",
-        "There was an error auto-submitting your quiz. Please contact support.",
+        `There was an error auto-submitting your ${assessmentType}. Please contact support.`,
         [{ text: "OK", onPress: () => router.replace(`/courses/assessments/${assessmentId}`) }]
       );
     } finally {
@@ -448,9 +452,9 @@ export default function AttemptQuizScreen() {
     try {
       const timeCheck = await detectTimeManipulation(userEmail);
       if (!timeCheck.isValid) {
-        console.error('❌ Time manipulation detected during quiz load:', timeCheck.reason);
+        console.error(`❌ Time manipulation detected during ${assessmentType} load:`, timeCheck.reason);
         setTimeManipulationDetected(true);
-        setError('Time manipulation detected. Quiz cannot be loaded for security reasons.');
+        setError(`Time manipulation detected. ${assessmentTypeCapitalized} cannot be loaded for security reasons.`);
         setLoading(false);
         return;
       }
@@ -463,7 +467,7 @@ export default function AttemptQuizScreen() {
 
     try {
       if (isOffline === 'true') {
-        console.log("Offline: Fetching quiz attempt from local DB.");
+        console.log(`Offline: Fetching ${assessmentType} attempt from local DB.`);
         
         const localQuestions = await getQuizQuestionsFromDb(id, userEmail);
         const localAnswers = await getOfflineQuizAnswers(id, userEmail);
@@ -478,13 +482,14 @@ export default function AttemptQuizScreen() {
           // Get duration and unavailable_at from the assessment data in the database
           const db = await getDb();
           const assessmentResult = await db.getFirstAsync(
-            `SELECT duration_minutes, unavailable_at FROM offline_assessments WHERE id = ? AND user_email = ?;`,
+            `SELECT duration_minutes, unavailable_at, type FROM offline_assessments WHERE id = ? AND user_email = ?;`,
             [id, userEmail]
           ) as any;
           const durationMinutes = assessmentResult?.duration_minutes || null;
           const unavailableAt = assessmentResult?.unavailable_at || null;
+          const localAssessmentType = assessmentResult?.type || 'quiz';
           
-          console.log("📊 Assessment data found:", { durationMinutes, unavailableAt });
+          console.log("📊 Assessment data found:", { durationMinutes, unavailableAt, localAssessmentType });
           
           const processedQuestions = localQuestions.map(q => {
             let parsedOptions: any[] = [];
@@ -599,8 +604,8 @@ export default function AttemptQuizScreen() {
             assessment: {
               id: id,
               course_id: -1,
-              title: localQuestions[0]?.question_data ? JSON.parse(localQuestions[0].question_data).assessment_title || 'Offline Quiz' : 'Offline Quiz',
-              type: 'quiz',
+              title: localQuestions[0]?.question_data ? JSON.parse(localQuestions[0].question_data).assessment_title || `Offline ${assessmentTypeCapitalized}` : `Offline ${assessmentTypeCapitalized}`,
+              type: localAssessmentType,
               duration_minutes: durationMinutes,
               points: processedQuestions.reduce((sum, q) => sum + q.max_points, 0),
               unavailable_at: unavailableAt,
@@ -609,7 +614,7 @@ export default function AttemptQuizScreen() {
 
           setSubmittedAssessment(offlineSubmittedAssessment);
           initializeStudentAnswers(processedQuestions);
-          console.log("✅ Offline Quiz Data Loaded Successfully with duration:", durationMinutes);
+          console.log(`✅ Offline ${assessmentTypeCapitalized} Data Loaded Successfully with duration:`, durationMinutes);
           
           console.log("🔍 Assessment data debug:", {
             id: offlineSubmittedAssessment.id,
@@ -620,45 +625,45 @@ export default function AttemptQuizScreen() {
             started_at: offlineSubmittedAssessment.started_at
           });
         } else {
-          setError('Offline: Quiz questions not found locally. Please start the quiz first while online.');
+          setError(`Offline: ${assessmentTypeCapitalized} questions not found locally. Please start the ${assessmentType} first while online.`);
           Alert.alert(
-            'Quiz Not Found',
-            'This quiz attempt was not found in local storage. Please connect to the internet and start the quiz again.',
+            `${assessmentTypeCapitalized} Not Found`,
+            `This ${assessmentType} attempt was not found in local storage. Please connect to the internet and start the ${assessmentType} again.`,
             [{ text: 'OK', onPress: () => router.back() }]
           );
         }
       } else {
         // ONLINE MODE - only fetch if online
         if (!netInfo?.isInternetReachable) {
-          setError('No internet connection. Please connect to the internet to load this quiz.');
+          setError(`No internet connection. Please connect to the internet to load this ${assessmentType}.`);
           setLoading(false);
           return;
         }
-        console.log("Online: Fetching submitted quiz details from API.");
+        console.log(`Online: Fetching submitted ${assessmentType} details from API.`);
         try {
           const response = await api.get(`/submitted-assessments/${id}`);
           if (response.status === 200) {
             const fetchedSubmittedAssessment = response.data.submitted_assessment;
             setSubmittedAssessment(fetchedSubmittedAssessment);
             initializeStudentAnswers(fetchedSubmittedAssessment.submitted_questions);
-            console.log("API Response for Submitted Quiz Details:", JSON.stringify(response.data, null, 2));
+            console.log(`API Response for Submitted ${assessmentTypeCapitalized} Details:`, JSON.stringify(response.data, null, 2));
           } else {
-            setError('Failed to fetch submitted quiz details.');
+            setError(`Failed to fetch submitted ${assessmentType} details.`);
           }
         } catch (err: any) {
           // Only log error if online, otherwise suppress
           if (netInfo?.isInternetReachable) {
-            console.error("Failed to fetch quiz data:", err.response?.data || err.message);
+            console.error(`Failed to fetch ${assessmentType} data:`, err.response?.data || err.message);
           }
-          setError('Failed to load quiz data.');
+          setError(`Failed to load ${assessmentType} data.`);
         }
       }
     } catch (err: any) {
       // Only log error if online, otherwise suppress
       if (netInfo?.isInternetReachable) {
-        console.error("Failed to fetch quiz data:", err.response?.data || err.message);
+        console.error(`Failed to fetch ${assessmentType} data:`, err.response?.data || err.message);
       }
-      setError('Failed to load quiz data.');
+      setError(`Failed to load ${assessmentType} data.`);
     } finally {
       setLoading(false);
     }
@@ -683,7 +688,7 @@ export default function AttemptQuizScreen() {
     
     // Check for connection and sync if online
     if (netInfo?.isInternetReachable && isOffline === 'true' && mounted) {
-      console.log('🔄 Connection restored, attempting to sync offline quizzes...');
+      console.log('🔄 Connection restored, attempting to sync offline assessments...');
       syncCompletedOfflineQuiz();
     }
     
@@ -798,7 +803,7 @@ export default function AttemptQuizScreen() {
   setIsSyncing(true);
   try {
     if (isOffline === 'true' && submittedAssessment.status === 'completed') {
-      console.log('🔄 Attempting to sync completed offline quiz...');
+      console.log(`🔄 Attempting to sync completed offline ${assessmentType}...`);
       
       const user = await getUserData();
       const userEmail = user?.email;
@@ -814,7 +819,7 @@ export default function AttemptQuizScreen() {
       );
 
       if (!hasQuizToSync) {
-        console.log('✅ No offline quiz data found to sync for this assessment');
+        console.log(`✅ No offline ${assessmentType} data found to sync for this assessment`);
         return;
       }
       
@@ -829,7 +834,7 @@ export default function AttemptQuizScreen() {
         const questionData = studentAnswers[questionId];
         acc[questionId] = {
           ...questionData,
-          submitted_answer: questionData.submitted_answer || questionData.answer?.toString() || ''
+          submitted_answer: (questionData as any).submitted_answer || questionData.answer?.toString() || ''
         };
         return acc;
       }, {} as any);
@@ -846,7 +851,7 @@ export default function AttemptQuizScreen() {
       );
       
       if (syncSuccess) {
-        console.log('✅ Offline quiz successfully synced with server');
+        console.log(`✅ Offline ${assessmentType} successfully synced with server`);
         
         // ✅ DELETE LOCAL DATA
         await deleteOfflineQuizAttempt(parseInt(assessmentId as string), userEmail);
@@ -855,7 +860,7 @@ export default function AttemptQuizScreen() {
         // ✅ IMPORTANT: Show success message and navigate back
         Alert.alert(
           'Sync Complete',
-          'Your offline quiz has been successfully synced with the server.',
+          `Your offline ${assessmentType} has been successfully synced with the server.`,
           [
             { 
               text: 'OK', 
@@ -868,10 +873,10 @@ export default function AttemptQuizScreen() {
           ]
         );
       } else {
-        console.error('❌ Failed to sync offline quiz');
+        console.error(`❌ Failed to sync offline ${assessmentType}`);
         Alert.alert(
           'Sync Failed',
-          'Failed to sync your offline quiz. Please try again.',
+          `Failed to sync your offline ${assessmentType}. Please try again.`,
           [{ text: 'OK' }]
         );
       }
@@ -883,7 +888,7 @@ export default function AttemptQuizScreen() {
       });
     }
   } catch (error) {
-    console.error('Error syncing completed offline quiz:', error);
+    console.error(`Error syncing completed offline ${assessmentType}:`, error);
     Alert.alert(
       'Sync Error',
       'An error occurred while syncing. Please try again.',
@@ -917,10 +922,10 @@ export default function AttemptQuizScreen() {
       if (userEmail && !isAutoSubmission) {
         const timeCheck = await detectTimeManipulation(userEmail);
         if (!timeCheck.isValid) {
-          console.error('❌ Time manipulation detected during quiz submission:', timeCheck.reason);
+          console.error(`❌ Time manipulation detected during ${assessmentType} submission:`, timeCheck.reason);
           Alert.alert(
             "Submission Blocked",
-            "Time manipulation detected. Quiz submission cannot proceed for security reasons.",
+            `Time manipulation detected. ${assessmentTypeCapitalized} submission cannot proceed for security reasons.`,
             [{ text: "OK", onPress: () => router.back() }]
           );
           return;
@@ -929,7 +934,7 @@ export default function AttemptQuizScreen() {
       
       if (isOffline === 'true') {
         // OFFLINE MODE - Save to local DB
-        console.log(isAutoSubmission ? 'Auto-submitting offline quiz...' : 'Submitting offline quiz...');
+        console.log(isAutoSubmission ? `Auto-submitting offline ${assessmentType}...` : `Submitting offline ${assessmentType}...`);
         
         const formattedAnswers: StudentAnswers = {};
         
@@ -969,7 +974,7 @@ export default function AttemptQuizScreen() {
           }
 
           // ✅ ENSURE ALL REQUIRED FIELDS ARE PRESENT
-          formattedAnswers[questionId] = {
+          (formattedAnswers[questionId] as any) = {
             type: answerData.type,
             answer: answerData.answer,
             submitted_answer: submittedAnswerText || '', // ✅ Always provide a string
@@ -990,13 +995,13 @@ export default function AttemptQuizScreen() {
           if (!isAutoSubmission) {
             // Show alert requiring app restart for offline completion
             Alert.alert(
-              '✅ Quiz Completed Offline',
-              'Your quiz has been saved locally and marked as completed.\n\n⚠️ The app needs to restart to properly save your offline progress.\n\nPress OK to restart the app now.',
+              `✅ ${assessmentTypeCapitalized} Completed Offline`,
+              `Your ${assessmentType} has been saved locally and marked as completed.\n\n⚠️ The app needs to restart to properly save your offline progress.\n\nPress OK to restart the app now.`,
               [
                 {
                   text: 'OK',
                   onPress: () => {
-                    console.log('🔄 Restarting app to save offline quiz...');
+                    console.log(`🔄 Restarting app to save offline ${assessmentType}...`);
                     // Use the restartApp function from AppContext to force app restart
                     restartApp();
                   }
@@ -1013,10 +1018,10 @@ export default function AttemptQuizScreen() {
       } else {
         // ONLINE MODE - only submit if online
         if (!netInfo?.isInternetReachable) {
-          Alert.alert('No Internet', 'Cannot submit quiz while offline. Please connect to the internet and try again.');
+          Alert.alert('No Internet', `Cannot submit ${assessmentType} while offline. Please connect to the internet and try again.`);
           return;
         }
-        console.log(isAutoSubmission ? 'Auto-submitting quiz online...' : 'Submitting quiz online...');
+        console.log(isAutoSubmission ? `Auto-submitting ${assessmentType} online...` : `Submitting ${assessmentType} online...`);
         try {
           const response = await api.post(`/submitted-assessments/${submittedAssessmentId}/finalize-quiz`);
           if (response.status === 200) {
@@ -1033,7 +1038,7 @@ export default function AttemptQuizScreen() {
             }
             
             if (!isAutoSubmission) {
-              Alert.alert('Quiz Submitted!', 'Your quiz has been successfully submitted.', [
+              Alert.alert(`${assessmentTypeCapitalized} Submitted!`, `Your ${assessmentType} has been successfully submitted.`, [
                 { text: 'OK', onPress: () => router.replace(`/courses/assessments/${assessmentId}`) }
               ]);
             }
@@ -1041,26 +1046,26 @@ export default function AttemptQuizScreen() {
             fetchQuizData(Number(submittedAssessmentId));
           } else {
             if (!isAutoSubmission) {
-              Alert.alert('Error', 'There was a problem submitting your quiz.');
+              Alert.alert('Error', `There was a problem submitting your ${assessmentType}.`);
             }
           }
         } catch (error) {
           // Only log error if online, otherwise suppress
           if (netInfo?.isInternetReachable) {
-            console.error('Error submitting quiz:', error);
+            console.error(`Error submitting ${assessmentType}:`, error);
           }
           if (!isAutoSubmission) {
-            Alert.alert('Error', 'Failed to submit quiz. Please try again.');
+            Alert.alert('Error', `Failed to submit ${assessmentType}. Please try again.`);
           }
         }
       }
     } catch (error) {
       // Only log error if online, otherwise suppress
       if (netInfo?.isInternetReachable) {
-        console.error('Error submitting quiz:', error);
+        console.error(`Error submitting ${assessmentType}:`, error);
       }
       if (!isAutoSubmission) {
-        Alert.alert('Error', 'Failed to submit quiz. Please try again.');
+        Alert.alert('Error', `Failed to submit ${assessmentType}. Please try again.`);
       }
     } finally {
       setSubmitting(false);
@@ -1078,7 +1083,7 @@ export default function AttemptQuizScreen() {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#007bff" />
-        <Text style={styles.loadingText}>Loading quiz...</Text>
+        <Text style={styles.loadingText}>Loading {assessmentType}...</Text>
       </View>
     );
   }
@@ -1086,7 +1091,7 @@ export default function AttemptQuizScreen() {
   if (error || !submittedAssessment) {
     return (
       <View style={styles.errorContainer}>
-        <Text style={styles.errorText}>{error || 'Quiz not found.'}</Text>
+        <Text style={styles.errorText}>{error || `${assessmentTypeCapitalized} not found.`}</Text>
         <TouchableOpacity onPress={() => fetchQuizData(Number(assessmentId))} style={styles.retryButton}>
           <Text style={styles.retryButtonText}>Retry</Text>
         </TouchableOpacity>
@@ -1094,25 +1099,26 @@ export default function AttemptQuizScreen() {
     );
   }
 
-  const quiz = submittedAssessment.assessment;
+  // ++ MODIFIED: Renamed 'quiz' to 'assessment' for clarity ++
+  const assessment = submittedAssessment.assessment;
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.scrollViewContent}>
-      <Stack.Screen options={{ title: `${quiz.title} - Attempt` }} />
+      <Stack.Screen options={{ title: `${assessment.title} - Attempt` }} />
 
       <View style={[styles.headerCard, timeManipulationDetected && styles.warningCard]}>
-        <Text style={styles.quizTitle}>{quiz.title}</Text>
-        <Text style={styles.quizInfo}>{quiz.description}</Text>
+        <Text style={styles.quizTitle}>{assessment.title}</Text>
+        <Text style={styles.quizInfo}>{assessment.description}</Text>
         
         {/* Show duration info */}
-        {quiz.duration_minutes && (
+        {assessment.duration_minutes && (
           <Text style={styles.quizInfo}>
-            Duration: {quiz.duration_minutes} minutes
+            Duration: {assessment.duration_minutes} minutes
           </Text>
         )}
         
-        {/* Show timer if quiz has duration and is in progress */}
-        {quiz.duration_minutes && submittedAssessment.status === 'in_progress' && !timeManipulationDetected && (
+        {/* Show timer if assessment has duration and is in progress */}
+        {assessment.duration_minutes && submittedAssessment.status === 'in_progress' && !timeManipulationDetected && (
           <Text style={[styles.quizInfo, timeLeft !== null && timeLeft < 300 && styles.timeWarning]}>
             ⏰ Time Left: {formatTime(timeLeft)}
           </Text>
@@ -1121,21 +1127,21 @@ export default function AttemptQuizScreen() {
         {/* Show auto-submission indicator */}
         {autoSubmitting && (
           <Text style={styles.autoSubmittingText}>
-            🔄 Auto-submitting quiz...
+            🔄 Auto-submitting {assessmentType}...
           </Text>
         )}
         
         {/* Show timer even if completed for reference */}
-        {quiz.duration_minutes && submittedAssessment.status !== 'in_progress' && (
+        {assessment.duration_minutes && submittedAssessment.status !== 'in_progress' && (
           <Text style={styles.quizInfo}>
-            ⏰ Duration was: {quiz.duration_minutes} minutes
+            ⏰ Duration was: {assessment.duration_minutes} minutes
           </Text>
         )}
         
         {/* Time manipulation warning */}
         {timeManipulationDetected && (
           <Text style={styles.timeManipulationWarning}>
-            ⚠️ TIME MANIPULATION DETECTED - Quiz access restricted for security
+            ⚠️ TIME MANIPULATION DETECTED - {assessmentTypeCapitalized} access restricted for security
           </Text>
         )}
         
@@ -1225,7 +1231,7 @@ export default function AttemptQuizScreen() {
                 timeManipulationDetected 
                   ? "Editing disabled due to time manipulation" 
                   : autoSubmitting 
-                    ? "Auto-submitting quiz..." 
+                    ? `Auto-submitting ${assessmentType}...`
                     : question.question_type === 'essay' 
                       ? "Write your essay here..." 
                       : "Your answer..."
@@ -1258,7 +1264,7 @@ export default function AttemptQuizScreen() {
           {submitting ? (
             <ActivityIndicator color="#fff" />
           ) : (
-            <Text style={styles.submitQuizButtonText}>Finalize & Submit Quiz</Text>
+            <Text style={styles.submitQuizButtonText}>Finalize & Submit {assessmentTypeCapitalized}</Text>
           )}
         </TouchableOpacity>
       )}
@@ -1266,11 +1272,11 @@ export default function AttemptQuizScreen() {
       {(submittedAssessment.status !== 'in_progress' || timeManipulationDetected) && (
         <View style={styles.completedContainer}>
           <Text style={styles.completedText}>
-            {timeManipulationDetected ? 'Quiz Blocked' : 'Quiz Completed'}
+            {timeManipulationDetected ? `${assessmentTypeCapitalized} Blocked` : `${assessmentTypeCapitalized} Completed`}
           </Text>
           {submittedAssessment.score !== null && !timeManipulationDetected && (
             <Text style={styles.finalScoreText}>
-              Final Score: {submittedAssessment.score}/{quiz.points}
+              Final Score: {submittedAssessment.score}/{assessment.points}
             </Text>
           )}
           <TouchableOpacity
@@ -1286,15 +1292,13 @@ export default function AttemptQuizScreen() {
 }
 
 const styles = StyleSheet.create({
-  // ... existing styles ...
   container: {
     flex: 1,
     backgroundColor: '#f8f9fa',
   },
   scrollViewContent: {
-    padding: 24,
-    paddingBottom: 60,
-    alignItems: 'center',
+    padding: 16,
+    paddingBottom: 32,
   },
   loadingContainer: {
     flex: 1,
@@ -1303,10 +1307,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#f8f9fa',
   },
   loadingText: {
-    marginTop: 15,
-    fontSize: 18,
-    color: '#667eea',
-    fontWeight: '600',
+    marginTop: 12,
+    fontSize: 16,
+    color: '#5f6368',
   },
   errorContainer: {
     flex: 1,
@@ -1316,125 +1319,121 @@ const styles = StyleSheet.create({
     backgroundColor: '#f8f9fa',
   },
   errorText: {
-    fontSize: 18,
-    color: '#dc3545',
+    fontSize: 16,
+    color: '#d93025',
     textAlign: 'center',
-    marginBottom: 20,
-    fontWeight: '600',
+    marginBottom: 16,
   },
   retryButton: {
-    backgroundColor: '#667eea',
-    paddingVertical: 14,
-    paddingHorizontal: 28,
-    borderRadius: 12,
-    shadowColor: '#667eea',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
+    backgroundColor: '#1967d2',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
   },
   retryButtonText: {
     color: '#fff',
     fontSize: 16,
-    fontWeight: 'bold',
-    letterSpacing: 0.5,
+    fontWeight: '600',
   },
   headerCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 20,
-    padding: 25,
-    width: '100%',
-    maxWidth: 700,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 5,
-    marginBottom: 25,
-    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    padding: 20,
+    marginBottom: 16,
     borderWidth: 1,
-    borderColor: '#f0f0f0',
+    borderColor: '#e0e0e0',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
   },
   warningCard: {
-    backgroundColor: '#fff5f5',
-    borderColor: '#e74c3c',
+    borderColor: '#d93025',
     borderWidth: 2,
+    backgroundColor: '#fef7f7',
   },
   quizTitle: {
-    fontSize: 26,
-    fontWeight: 'bold',
-    color: '#667eea',
-    marginBottom: 10,
-    textAlign: 'center',
-    letterSpacing: 0.3,
+    fontSize: 24,
+    fontWeight: '600',
+    color: '#202124',
+    marginBottom: 8,
   },
   quizInfo: {
-    fontSize: 16,
-    color: '#6c757d',
-    textAlign: 'center',
-    marginBottom: 8,
-    lineHeight: 22,
-  },
-  timeWarning: {
-    color: '#dc3545',
-    fontWeight: 'bold',
-  },
-  timeManipulationWarning: {
-    color: '#e74c3c',
-    fontSize: 15,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    marginTop: 12,
-    marginBottom: 12,
+    fontSize: 14,
+    color: '#5f6368',
+    marginBottom: 6,
     lineHeight: 20,
   },
+  timeWarning: {
+    color: '#d93025',
+    fontWeight: '600',
+    fontSize: 16,
+  },
   autoSubmittingText: {
-    color: '#ffa500',
-    fontSize: 15,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    marginTop: 12,
-    marginBottom: 12,
+    fontSize: 14,
+    color: '#e37400',
+    fontWeight: '600',
+    marginTop: 8,
+  },
+  timeManipulationWarning: {
+    fontSize: 14,
+    color: '#d93025',
+    fontWeight: '700',
+    marginTop: 8,
+    padding: 12,
+    backgroundColor: '#fff',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#d93025',
   },
   quizStatus: {
-    fontSize: 17,
-    fontWeight: 'bold',
-    color: '#28a745',
-    marginTop: 12,
-    letterSpacing: 0.3,
+    fontSize: 14,
+    color: '#5f6368',
+    marginTop: 8,
+    fontWeight: '500',
+    textTransform: 'capitalize',
+  },
+  offlineStatus: {
+    fontSize: 14,
+    color: '#e37400',
+    marginTop: 6,
+    fontWeight: '600',
   },
   questionCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 18,
-    padding: 22,
-    width: '100%',
-    maxWidth: 700,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
-    elevation: 4,
-    marginBottom: 20,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 16,
     borderWidth: 1,
-    borderColor: '#f0f0f0',
+    borderColor: '#e0e0e0',
+    elevation: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
   },
   disabledCard: {
+    opacity: 0.6,
     backgroundColor: '#f8f9fa',
-    opacity: 0.75,
   },
   questionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 18,
+    marginBottom: 16,
   },
   questionText: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#2c3e50',
-    lineHeight: 26,
     flex: 1,
-    letterSpacing: 0.2,
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#202124',
+    lineHeight: 24,
   },
   savingIndicator: {
     flexDirection: 'row',
@@ -1443,195 +1442,164 @@ const styles = StyleSheet.create({
   },
   savingText: {
     fontSize: 12,
-    color: '#667eea',
+    color: '#1967d2',
     marginLeft: 6,
-    fontWeight: '600',
   },
   optionsContainer: {
-    marginTop: 12,
+    marginTop: 8,
   },
   optionButton: {
     flexDirection: 'row',
     alignItems: 'center',
+    padding: 12,
+    marginBottom: 8,
     backgroundColor: '#f8f9fa',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  optionSelected: {
+    backgroundColor: '#e8f0fe',
+    borderColor: '#1967d2',
     borderWidth: 2,
-    borderColor: '#e9ecef',
+  },
+  disabledOption: {
+    opacity: 0.5,
+  },
+  radioCircle: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: '#5f6368',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  radioChecked: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#1967d2',
+  },
+  checkboxSquare: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: '#5f6368',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  checkboxCheck: {
+    color: '#1967d2',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  optionText: {
+    flex: 1,
+    fontSize: 15,
+    color: '#202124',
+    lineHeight: 22,
+  },
+  optionTextSelected: {
+    fontWeight: '500',
+    color: '#1967d2',
+  },
+  answerInput: {
+    backgroundColor: '#f8f9fa',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 15,
+    color: '#202124',
+    marginTop: 8,
+  },
+  essayInput: {
+    minHeight: 120,
+    textAlignVertical: 'top',
+  },
+  disabledInput: {
+    backgroundColor: '#f1f3f4',
+    color: '#5f6368',
+  },
+  pointsText: {
+    fontSize: 13,
+    color: '#5f6368',
+    marginTop: 12,
+    fontWeight: '500',
+  },
+  scoreText: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginTop: 8,
+  },
+  correctScore: {
+    color: '#137333',
+  },
+  incorrectScore: {
+    color: '#d93025',
+  },
+  submitQuizButton: {
+    backgroundColor: '#1967d2',
+    paddingVertical: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 8,
+    marginBottom: 16,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+  submitQuizButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  completedContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    padding: 24,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    alignItems: 'center',
+    elevation: 2,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
     shadowRadius: 4,
-    elevation: 2,
-  },
-  optionSelected: {
-    backgroundColor: '#e3f2fd',
-    borderColor: '#667eea',
-    shadowColor: '#667eea',
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
-    elevation: 3,
-  },
-  disabledOption: {
-    backgroundColor: '#f8f9fa',
-    opacity: 0.7,
-  },
-  optionText: {
-    fontSize: 16,
-    color: '#495057',
-    flex: 1,
-    lineHeight: 22,
-  },
-  optionTextSelected: {
-    fontWeight: '700',
-    color: '#667eea',
-  },
-  answerInput: {
-    borderWidth: 2,
-    borderColor: '#e9ecef',
-    borderRadius: 12,
-    padding: 16,
-    fontSize: 16,
-    color: '#2c3e50',
-    minHeight: 50,
-    textAlignVertical: 'top',
-    marginTop: 12,
-    backgroundColor: '#fff',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 3,
-    elevation: 2,
-  },
-  essayInput: {
-    minHeight: 140,
-  },
-  disabledInput: {
-    backgroundColor: '#f8f9fa',
-    color: '#6c757d',
-    borderColor: '#dee2e6',
-  },
-  pointsText: {
-    fontSize: 14,
-    color: '#6c757d',
-    marginTop: 12,
-    fontStyle: 'italic',
-    fontWeight: '500',
-  },
-  scoreText: {
-    fontSize: 15,
-    fontWeight: 'bold',
-    marginTop: 8,
-  },
-  correctScore: {
-    color: '#28a745',
-  },
-  incorrectScore: {
-    color: '#dc3545',
-  },
-  submitQuizButton: {
-    backgroundColor: '#28a745',
-    paddingVertical: 18,
-    borderRadius: 15,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 35,
-    width: '100%',
-    maxWidth: 350,
-    alignSelf: 'center',
-    shadowColor: '#28a745',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
-    elevation: 8,
-  },
-  submitQuizButtonText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-    letterSpacing: 0.5,
-  },
-  completedContainer: {
-    backgroundColor: '#ffffff',
-    borderRadius: 20,
-    padding: 28,
-    width: '100%',
-    maxWidth: 450,
-    alignItems: 'center',
-    marginTop: 25,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 5,
-    borderWidth: 1,
-    borderColor: '#f0f0f0',
   },
   completedText: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#28a745',
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#202124',
     marginBottom: 12,
-    letterSpacing: 0.3,
   },
   finalScoreText: {
-    fontSize: 20,
-    color: '#667eea',
-    fontWeight: 'bold',
-    marginBottom: 20,
+    fontSize: 18,
+    color: '#1967d2',
+    fontWeight: '600',
+    marginBottom: 16,
   },
   backButton: {
-    backgroundColor: '#6c757d',
-    paddingVertical: 14,
-    paddingHorizontal: 28,
-    borderRadius: 12,
+    backgroundColor: '#1967d2',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+    elevation: 2,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
-    elevation: 4,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
   },
   backButtonText: {
     color: '#fff',
     fontSize: 16,
-    fontWeight: 'bold',
-    letterSpacing: 0.5,
-  },
-  radioCircle: {
-    height: 20,
-    width: 20,
-    borderRadius: 10,
-    borderWidth: 2,
-    borderColor: '#777',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 10,
-  },
-  radioChecked: {
-    height: 10,
-    width: 10,
-    borderRadius: 5,
-    backgroundColor: '#333',
-  },
-  checkboxSquare: {
-    height: 20,
-    width: 20,
-    borderWidth: 2,
-    borderColor: '#777',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 10,
-    borderRadius: 4,
-  },
-  checkboxCheck: {
-    color: '#333',
-    fontSize: 14,
-  },
-  offlineStatus: {
-    marginTop: 10,
-    fontSize: 14,
-    color: '#ff6347',
-    fontWeight: 'bold',
+    fontWeight: '600',
   },
 });

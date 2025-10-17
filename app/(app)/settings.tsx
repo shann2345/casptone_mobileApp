@@ -1,3 +1,4 @@
+import { usePendingSyncNotification } from '@/hooks/usePendingSyncNotification';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
@@ -55,6 +56,9 @@ export default function ProfileScreen() {
   const [isUpdating, setIsUpdating] = useState(false);
   const router = useRouter();
   const { isInternetReachable } = useNetworkStatus(); // 👈 Use the network hook
+
+  // 🔔 Pending sync notification (automatic detection)
+  usePendingSyncNotification(isInternetReachable, 'settings');
 
   // Edit form state
   const [editForm, setEditForm] = useState({
