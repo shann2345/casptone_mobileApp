@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import * as FileSystem from 'expo-file-system';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -18,8 +19,9 @@ import { showOfflineModeWarningIfNeeded } from '../../../lib/offlineWarning';
 import { usePendingSyncNotification } from '@/hooks/usePendingSyncNotification';
 import { useNetworkStatus } from '../../../context/NetworkContext';
 import api, {
+  getAuthorizationHeader,
   getServerTime,
-  getUserData,
+  getUserData
 } from '../../../lib/api';
 import {
   canAccessOfflineContent,
@@ -102,6 +104,8 @@ export default function CourseDetailsScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false); 
   const [highlightedAssessmentId, setHighlightedAssessmentId] = useState<number | null>(null);
   const sectionListRef = useRef<SectionList<CourseItem>>(null);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState({ current: 0, total: 0 });
 
   // 🔔 Pending sync notification (automatic detection)
   usePendingSyncNotification(netInfo?.isInternetReachable ?? null, 'course-details');
@@ -155,6 +159,214 @@ export default function CourseDetailsScreen() {
       minute: '2-digit',
     };
     return date.toLocaleDateString(undefined, options);
+  };
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
+  };
+
+  const getAllMaterials = (): Material[] => {
+    if (!courseDetail) return [];
+    
+    const materials: Material[] = [];
+    
+    courseDetail.sorted_content.forEach(item => {
+      if (item.type === 'material') {
+        materials.push(item as Material);
+      } else if (item.type === 'topic') {
+        const topic = item as Topic;
+        materials.push(...topic.materials);
+      }
+    });
+    
+    return materials;
+  };
+
+  const calculateTotalSize = async (materials: Material[]): Promise<number> => {
+    // This alert is helpful to let the user know something is happening.
+    Alert.alert(
+      'Calculating Size...',
+      'Please wait while we calculate the total download size.',
+      [],
+      { cancelable: false }
+    );
+
+    const materialsWithFiles = materials.filter(m => m.file_path);
+    
+    const sizePromises = materialsWithFiles.map(material =>
+      api.get(`/materials/${material.id}/metadata`)
+        .then(response => response.data.file_size || 0)
+        .catch(error => {
+          console.error(`Could not get size for "${material.title}":`, error);
+          return 0;
+        })
+    );
+
+    const sizes = await Promise.all(sizePromises);
+    const totalSize = sizes.reduce((acc, size) => acc + size, 0);
+
+    // This alert is redundant and can be removed for a smoother flow.
+    // Alert.alert('Calculation Complete', 'Ready to download.'); 
+
+    // A better way is to simply close any open alerts before showing the next one.
+    // You can manage this in the handleDownloadAllMaterials function or simply rely on the OS to replace the alert.
+    // For simplicity, just removing it is the best approach.
+
+    return totalSize;
+  };
+
+  const downloadMaterialFile = async (material: Material): Promise<boolean> => {
+    if (!material.file_path) return false;
+    
+    try {
+      // FIXED: Use robust and unique file naming, consistent with [materialId].tsx
+      const fileExtension = material.file_path.split('.').pop();
+      const sanitizedTitle = material.title.replace(/[^a-zA-Z0-9]/g, '_');
+      const fileName = `${sanitizedTitle}_${material.id}${fileExtension ? `.${fileExtension}` : ''}`;
+      const localUri = `${FileSystem.documentDirectory}${fileName}`;
+      
+      // Check if file already exists and is not empty
+      const fileInfo = await FileSystem.getInfoAsync(localUri);
+      if (fileInfo.exists && fileInfo.size > 0) {
+        console.log(`✅ File already exists and is valid: ${fileName}`);
+        return true;
+      }
+      
+      // FIXED: Construct the full, authenticated download URL
+      const downloadUrl = `${api.defaults.baseURL}/materials/${material.id}/view`;
+      
+      console.log(`📥 Downloading material: "${material.title}" from ${downloadUrl}`);
+      
+      // FIXED: Add authentication headers to the download request
+      const downloadResult = await FileSystem.downloadAsync(
+        downloadUrl,
+        localUri,
+        {
+          headers: {
+            'Authorization': getAuthorizationHeader(),
+          }
+        }
+      );
+      
+      // Verify download was successful
+      if (downloadResult.status === 200) {
+        const downloadedFileInfo = await FileSystem.getInfoAsync(downloadResult.uri);
+        if (downloadedFileInfo.exists && downloadedFileInfo.size > 0) {
+          console.log(`✅ Successfully downloaded "${material.title}" to ${downloadResult.uri}`);
+          return true;
+        } else {
+          console.error(`❌ Downloaded file for "${material.title}" is empty or corrupted.`);
+          // Clean up empty file if it exists
+          await FileSystem.deleteAsync(downloadResult.uri, { idempotent: true });
+          return false;
+        }
+      } else {
+        console.error(`❌ Download failed for "${material.title}" with status: ${downloadResult.status}`);
+        return false;
+      }
+
+    } catch (error) {
+      console.error(`❌ Failed to download "${material.title}":`, error);
+      return false;
+    }
+  };
+
+  const handleDownloadAllMaterials = async () => {
+    if (!netInfo?.isInternetReachable) {
+      Alert.alert(
+        'No Internet Connection',
+        'Please connect to the internet to download materials.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
+    if (timeManipulationDetected) {
+      Alert.alert(
+        '🚨 Access Blocked',
+        'Time manipulation was detected. Connect to the internet to restore access.',
+        [{ text: 'Understood' }]
+      );
+      return;
+    }
+
+    const materials = getAllMaterials();
+    const materialsWithFiles = materials.filter(m => m.file_path);
+
+    if (materialsWithFiles.length === 0) {
+      Alert.alert(
+        'No Materials',
+        'There are no downloadable materials in this course.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
+    try {
+      // The calculating alert is now inside calculateTotalSize
+      const totalSize = await calculateTotalSize(materialsWithFiles);
+      const formattedSize = formatFileSize(totalSize);
+
+      // Show confirmation dialog
+      Alert.alert(
+        'Download All Materials',
+        `You are about to download ${materialsWithFiles.length} file(s) with a total size of approximately ${formattedSize}.\n\nDo you want to continue?`,
+        [
+          {
+            text: 'Cancel',
+            style: 'cancel'
+          },
+          {
+            text: 'Download',
+            onPress: async () => {
+              setIsDownloading(true);
+              setDownloadProgress({ current: 0, total: materialsWithFiles.length });
+
+              let successCount = 0;
+              const failedMaterials: string[] = [];
+
+              for (let i = 0; i < materialsWithFiles.length; i++) {
+                const material = materialsWithFiles[i];
+                setDownloadProgress({ current: i + 1, total: materialsWithFiles.length });
+
+                const success = await downloadMaterialFile(material);
+                if (success) {
+                  successCount++;
+                } else {
+                  failedMaterials.push(material.title);
+                }
+              }
+
+              setIsDownloading(false);
+              setDownloadProgress({ current: 0, total: 0 });
+              
+              const failedCount = failedMaterials.length;
+              let message = `Successfully downloaded: ${successCount} file(s).\nFailed to download: ${failedCount} file(s).`;
+              if(failedCount > 0) {
+                  message += `\n\nFailed files:\n- ${failedMaterials.join('\n- ')}`;
+              }
+
+              Alert.alert(
+                'Download Complete',
+                message,
+                [{ text: 'OK' }]
+              );
+            }
+          }
+        ]
+      );
+    } catch (error) {
+      console.error('Failed to calculate size or download:', error);
+      Alert.alert(
+        'Error',
+        'An unexpected error occurred. Please try again.',
+        [{ text: 'OK' }]
+      );
+    }
   };
 
   // Centralized availability check function that uses server time and detects manipulation
@@ -427,8 +639,32 @@ export default function CourseDetailsScreen() {
       {/* LMS-Style Header */}
       <View style={[styles.headerContainer, timeManipulationDetected && styles.disabledHeader]}>
         <View style={styles.headerContent}>
-          <Text style={styles.courseTitle}>{courseDetail?.title || 'Course Access Blocked'}</Text>
-          <Text style={styles.courseCode}>{courseDetail?.course_code}</Text>
+          <View style={styles.titleRow}>
+            <View style={styles.titleContainer}>
+              <Text style={styles.courseTitle}>{courseDetail?.title || 'Course Access Blocked'}</Text>
+              <Text style={styles.courseCode}>{courseDetail?.course_code}</Text>
+            </View>
+            
+            {/* Download All Materials Button */}
+            {!timeManipulationDetected && courseDetail && netInfo?.isInternetReachable && (
+              <TouchableOpacity
+                style={styles.downloadButton}
+                onPress={handleDownloadAllMaterials}
+                disabled={isDownloading}
+              >
+                <Ionicons 
+                  name={isDownloading ? "hourglass-outline" : "cloud-download-outline"} 
+                  size={24} 
+                  color="#1967d2" 
+                />
+                {isDownloading && (
+                  <Text style={styles.downloadButtonText}>
+                    {downloadProgress.current}/{downloadProgress.total}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            )}
+          </View>
           
           {!timeManipulationDetected && courseDetail && (
             <>
@@ -942,6 +1178,15 @@ const styles = StyleSheet.create({
   headerContent: {
     padding: 20,
   },
+  titleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 16,
+  },
+  titleContainer: {
+    flex: 1,
+  },
   courseTitle: {
     fontSize: 24,
     fontWeight: '500',
@@ -951,7 +1196,22 @@ const styles = StyleSheet.create({
   courseCode: {
     fontSize: 14,
     color: '#5f6368',
-    marginBottom: 16,
+  },
+  downloadButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 12,
+    backgroundColor: '#e8f0fe',
+    borderRadius: 8,
+    marginLeft: 12,
+    minWidth: 60,
+  },
+  downloadButtonText: {
+    fontSize: 12,
+    color: '#1967d2',
+    fontWeight: '500',
+    marginLeft: 6,
   },
   instructorInfo: {
     flexDirection: 'row',
@@ -1337,12 +1597,6 @@ const styles = StyleSheet.create({
   disabledInput: {
     backgroundColor: '#f1f3f4',
     color: '#9aa0a6',
-  },
-  errorContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 8,
-    padding: 8,
   },
   errorTextModal: {
     flex: 1,

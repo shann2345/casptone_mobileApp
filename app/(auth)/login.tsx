@@ -16,10 +16,11 @@ import {
   View
 } from 'react-native';
 
+import api, { googleAuth, prepareOfflineMode, storeAuthToken, storeUserData } from '@/lib/api';
+import { registerBackgroundSync } from '@/lib/backgroundSync';
 import { useNetworkStatus } from '../../context/NetworkContext';
 import { useOAuth } from '../../context/OAuthContext'; // NEW IMPORT
-import api, { googleAuth, storeAuthToken, storeUserData } from '../../lib/api';
-import { resetTimeCheckData } from '../../lib/localDb';
+import { initDb, resetTimeCheckData } from '../../lib/localDb';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -112,6 +113,19 @@ export default function LoginScreen() {
         console.log('✅ Google auth result:', result);
         await resetTimeCheckData(result.user.email);
         
+        // Initialize database and prepare offline mode
+        await initDb();
+        await prepareOfflineMode();
+        
+        // Register background sync for offline work
+        console.log('🔄 Registering background sync for Google user...');
+        const syncRegistered = await registerBackgroundSync();
+        if (syncRegistered) {
+          console.log('✅ Background sync enabled - will sync even when app is closed');
+        } else {
+          console.log('⚠️ Background sync registration failed - only foreground sync available');
+        }
+        
         stopProcessing(); // Hide overlay before showing alert
         
         if (result.isVerified) {
@@ -185,6 +199,19 @@ export default function LoginScreen() {
 
       const verificationResponse = await api.get('/user/verification-status');
       const isVerified = verificationResponse.data.is_verified;
+
+      // Initialize database and prepare offline mode
+      await initDb();
+      await prepareOfflineMode();
+      
+      // Register background sync for offline work
+      console.log('🔄 Registering background sync...');
+      const syncRegistered = await registerBackgroundSync();
+      if (syncRegistered) {
+        console.log('✅ Background sync enabled - will sync even when app is closed');
+      } else {
+        console.log('⚠️ Background sync registration failed - only foreground sync available');
+      }
 
       if (isVerified) {
         Alert.alert('Success', 'Logged in successfully!');

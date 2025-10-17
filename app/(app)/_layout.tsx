@@ -1,4 +1,5 @@
 // app/(app)/_layout.tsx
+import { useNetworkSync } from '@/hooks/useNetworkSync';
 import { Ionicons } from '@expo/vector-icons';
 import { Tabs, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
@@ -15,7 +16,7 @@ export default function AppLayout() {
   const [notifications, setNotifications] = useState<any[]>([]);
   const [unreadCount, setUnreadCount] = useState<number>(0);
   const [isModalVisible, setIsModalVisible] = useState<boolean>(false);
-
+  useNetworkSync();
   useEffect(() => {
     const fetchUserProfile = async () => {
       try {
@@ -55,7 +56,7 @@ export default function AppLayout() {
     try {
       // Check internet reachability before making API calls
       if (!netInfo?.isInternetReachable) {
-        console.log('📵 No internet connection - skipping notification fetch');
+        console.log('ðŸ“µ No internet connection - skipping notification fetch');
         return;
       }
 
@@ -65,7 +66,7 @@ export default function AppLayout() {
         return;
       }
 
-      console.log('🔔 Loading notifications from student endpoint...');
+      console.log('ðŸ”” Loading notifications from student endpoint...');
 
       const authHeader = await getAuthorizationHeader();
       const response = await fetch(`${API_BASE_URL}/student/notifications`, {
@@ -77,7 +78,7 @@ export default function AppLayout() {
 
       if (response.ok) {
         const data = await response.json();
-        console.log('📱 Notifications response:', data);
+        console.log('ðŸ“± Notifications response:', data);
         
         setNotifications(data.notifications || []);
         
@@ -90,7 +91,7 @@ export default function AppLayout() {
         setUnreadCount(0);
       }
     } catch (error) {
-      console.error('❌ Error loading notifications:', error);
+      console.error('âŒ Error loading notifications:', error);
       setNotifications([]);
       setUnreadCount(0);
     }
@@ -99,11 +100,11 @@ export default function AppLayout() {
   const getNotificationIcon = (type: string) => {
     switch(type) {
       case 'material':
-        return '📚';
+        return 'ðŸ“š';
       case 'assessment':
-        return '📝';
+        return 'ðŸ“';
       default:
-        return '🔔';
+        return 'ðŸ””';
     }
   };
 
@@ -170,7 +171,7 @@ export default function AppLayout() {
         clearInterval(notificationInterval);
         notificationInterval = null;
       }
-      console.log('📵 Offline mode - notification interval disabled');
+      console.log('ðŸ“µ Offline mode - notification interval disabled');
     }
 
     return () => {
@@ -191,7 +192,7 @@ export default function AppLayout() {
 
       // Only persist to server if internet is reachable
       if (!netInfo?.isInternetReachable) {
-        console.log('📵 No internet connection - marking as read locally only');
+        console.log('ðŸ“µ No internet connection - marking as read locally only');
         return;
       }
 
@@ -233,7 +234,7 @@ export default function AppLayout() {
 
       // Only persist to server if internet is reachable
       if (!netInfo?.isInternetReachable) {
-        console.log('📵 No internet connection - marking all as read locally only');
+        console.log('ðŸ“µ No internet connection - marking all as read locally only');
         return;
       }
 
@@ -306,7 +307,7 @@ export default function AppLayout() {
                 <HeaderRight
                   initials={initials}
                   profileImage={profileImage}
-                  toggleModal={netInfo?.isInternetReachable ? toggleModal : () => console.log('📵 Notifications disabled - no internet connection')}
+                  toggleModal={netInfo?.isInternetReachable ? toggleModal : () => console.log('ðŸ“µ Notifications disabled - no internet connection')}
                   unreadCount={unreadCount}
                   isInternetReachable={netInfo?.isInternetReachable}
                 />
@@ -337,7 +338,7 @@ export default function AppLayout() {
                 <HeaderRight
                   initials={initials}
                   profileImage={profileImage}
-                  toggleModal={netInfo?.isInternetReachable ? toggleModal : () => console.log('📵 Notifications disabled - no internet connection')}
+                  toggleModal={netInfo?.isInternetReachable ? toggleModal : () => console.log('ðŸ“µ Notifications disabled - no internet connection')}
                   unreadCount={unreadCount}
                   isInternetReachable={netInfo?.isInternetReachable}
                 />
@@ -402,10 +403,10 @@ export default function AppLayout() {
                     <View style={styles.notificationTextContainer}>
                       <Text style={styles.notificationText}>{item.description}</Text>
                       {item.course && (
-                        <Text style={styles.courseText}>📚 {item.course}</Text>
+                        <Text style={styles.courseText}>ðŸ“š {item.course}</Text>
                       )}
                       <Text style={styles.notificationDate}>
-                        🕐 {formatDate(item.date)}
+                        ðŸ• {formatDate(item.date)}
                       </Text>
                     </View>
                     {!item.read && <View style={styles.unreadDot} />}
@@ -414,7 +415,7 @@ export default function AppLayout() {
               )}
               ListEmptyComponent={
                 <View style={styles.noNotificationsContainer}>
-                  <Text style={styles.noNotificationsIcon}>🔔</Text>
+                  <Text style={styles.noNotificationsIcon}>ðŸ””</Text>
                   <Text style={styles.noNotificationsText}>
                     No notifications available.
                   </Text>

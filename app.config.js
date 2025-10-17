@@ -61,6 +61,15 @@ export default {
       "expo-sqlite",
       "expo-secure-store",
       "expo-web-browser",
+      // Background sync notifications
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/splash-icon-dark.png",
+          "color": "#ffffff",
+          "sounds": []
+        }
+      ],
       // Add expo-build-properties for signing config
       [
         "expo-build-properties",

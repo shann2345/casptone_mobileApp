@@ -741,7 +741,7 @@ export const manualSync = async (): Promise<{ success: number; failed: number }>
     console.log('🔄 Starting manual offline sync...');
     
     // Import sync functions from localDb
-    const { getUnsyncedSubmissions, getCompletedOfflineQuizzes } = await import('./localDb');
+    const { getUnsyncedSubmissions, getCompletedOfflineQuizzes, deleteOfflineSubmission, getDb } = await import('./localDb');
     
     // Get unsynced items
     const unsyncedSubmissions = await getUnsyncedSubmissions(userData.email) as UnsyncedSubmission[];
@@ -756,13 +756,22 @@ export const manualSync = async (): Promise<{ success: number; failed: number }>
     for (const submission of unsyncedSubmissions) {
       try {
         console.log(`📤 Syncing submission for assessment ${submission.assessment_id}...`);
-        await syncOfflineSubmission(
+        const success = await syncOfflineSubmission(
           submission.assessment_id,
           submission.file_uri,
           submission.original_filename,
           submission.submitted_at
         );
-        successCount++;
+        
+        if (success) {
+          // Only delete from localDb if upload was successful
+          await deleteOfflineSubmission(submission.id);
+          successCount++;
+          console.log(`✅ Successfully synced and deleted submission ${submission.id} from localDb`);
+        } else {
+          failCount++;
+          console.log(`❌ Sync returned false for submission ${submission.id} - keeping in localDb`);
+        }
       } catch (error) {
         console.error(`❌ Failed to sync submission ${submission.id}:`, error);
         failCount++;
@@ -773,13 +782,26 @@ export const manualSync = async (): Promise<{ success: number; failed: number }>
     for (const quiz of unsyncedQuizzes) {
       try {
         console.log(`📤 Syncing quiz for assessment ${quiz.assessment_id}...`);
-        await syncOfflineQuiz(
+        const success = await syncOfflineQuiz(
           quiz.assessment_id,
           quiz.answers,
           quiz.started_at,
           quiz.completed_at
         );
-        successCount++;
+        
+        if (success) {
+          // Only mark as synced if upload was successful
+          const db = await getDb();
+          await db.runAsync(
+            `UPDATE offline_quiz_attempts SET synced = 1 WHERE assessment_id = ? AND user_email = ?`,
+            [quiz.assessment_id, userData.email]
+          );
+          successCount++;
+          console.log(`✅ Successfully synced and marked quiz ${quiz.assessment_id} in localDb`);
+        } else {
+          failCount++;
+          console.log(`❌ Sync returned false for quiz ${quiz.assessment_id} - keeping as unsynced`);
+        }
       } catch (error) {
         console.error(`❌ Failed to sync quiz ${quiz.assessment_id}:`, error);
         failCount++;

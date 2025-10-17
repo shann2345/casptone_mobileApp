@@ -1,4 +1,5 @@
 import { usePendingSyncNotification } from '@/hooks/usePendingSyncNotification';
+import { unregisterBackgroundSync } from '@/lib/backgroundSync';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
@@ -326,6 +327,12 @@ export default function ProfileScreen() {
           onPress: async () => {
             try {
               setLoading(true);
+              
+              // Unregister background sync before logout
+              console.log('🔄 Unregistering background sync...');
+              await unregisterBackgroundSync();
+              console.log('✅ Background sync unregistered');
+              
               await clearAuthToken();
               await clearOfflineData();
               router.replace('/login');

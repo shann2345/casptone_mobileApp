@@ -89,7 +89,7 @@ export default function HomeScreen() {
       } catch (error) {
         if (i === maxRetries - 1) throw error;
         const delay = baseDelay * Math.pow(2, i);
-        console.log(`⏳ Retry attempt ${i + 1}/${maxRetries} in ${delay}ms`);
+        console.log(`â³ Retry attempt ${i + 1}/${maxRetries} in ${delay}ms`);
         await new Promise(resolve => setTimeout(resolve, delay));
       }
     }
@@ -105,7 +105,7 @@ export default function HomeScreen() {
   let isMounted = true;
   const initialize = async () => {
     try {
-      console.log('🔧 Initializing home screen...');
+      console.log('ðŸ”§ Initializing home screen...');
       
       // Add retry logic for initialization
       let retryCount = 0;
@@ -114,14 +114,14 @@ export default function HomeScreen() {
       while (retryCount < maxRetries && isMounted) {
         try {
           await initDb();
-          console.log('✅ Home screen database initialized');
+          console.log('âœ… Home screen database initialized');
           if (isMounted) {
             setIsInitialized(true);
           }
           break; // Success, exit retry loop
         } catch (initError) {
           retryCount++;
-          console.error(`❌ Home screen initialization error (attempt ${retryCount}):`, initError);
+          console.error(`âŒ Home screen initialization error (attempt ${retryCount}):`, initError);
           
           if (retryCount < maxRetries) {
             // Wait before retrying
@@ -132,7 +132,7 @@ export default function HomeScreen() {
         }
       }
     } catch (error) {
-      console.error('❌ Final home screen initialization error:', error);
+      console.error('âŒ Final home screen initialization error:', error);
       if (isMounted) {
         Alert.alert(
           'Initialization Error',
@@ -180,20 +180,20 @@ export default function HomeScreen() {
   // Enhanced smart sync assessment data with retry logic and better status tracking
   const autoDownloadAssessmentData = async (userEmail: string, forceRefresh: boolean = false) => {
     if (!netInfo?.isInternetReachable) {
-      console.log('📡 No internet connection - skipping smart sync');
+      console.log('ðŸ“¡ No internet connection - skipping smart sync');
       setSyncStatus('Offline - sync skipped');
       return { success: true, downloaded: 0, failed: 0 };
     }
 
     // Check data freshness
     if (!forceRefresh && !isDataStale(lastSyncTime)) {
-      console.log('� Data is fresh, skipping sync');
+      console.log('ï¿½ Data is fresh, skipping sync');
       setSyncStatus('Data is up to date');
       return { success: true, downloaded: 0, failed: 0 };
     }
 
     try {
-      console.log('�🔄 Starting enhanced smart assessment data sync...');
+      console.log('ï¿½ðŸ”„ Starting enhanced smart assessment data sync...');
       setIsDownloadingData(true);
       setDownloadProgress({ current: 0, total: 0 });
       setSyncStatus('Initializing sync...');
@@ -207,12 +207,12 @@ export default function HomeScreen() {
           (current, total, type) => {
             setDownloadProgress({ current, total });
             setSyncStatus(`Processing ${type}: ${current}/${total} assessments`);
-            console.log(`📥 ${type}: ${current}/${total} assessments processed`);
+            console.log(`ðŸ“¥ ${type}: ${current}/${total} assessments processed`);
           }
         );
       }, 3, 2000);
 
-      console.log(`✅ Smart Sync Complete: ${syncResult.success} successful, ${syncResult.failed} failed, ${syncResult.updated} updated`);
+      console.log(`âœ… Smart Sync Complete: ${syncResult.success} successful, ${syncResult.failed} failed, ${syncResult.updated} updated`);
 
       // Download quiz questions with chunked processing
       setSyncStatus('Downloading quiz questions...');
@@ -224,12 +224,12 @@ export default function HomeScreen() {
             const baseProgress = syncResult.success;
             setDownloadProgress({ current: current + baseProgress, total: total + baseProgress });
             setSyncStatus(`Quiz questions: ${current}/${total} (${skipped} skipped)`);
-            console.log(`📝 Downloaded ${current}/${total} quiz questions (${skipped} skipped)`);
+            console.log(`ðŸ“ Downloaded ${current}/${total} quiz questions (${skipped} skipped)`);
           }
         );
       }, 2, 1500);
 
-      console.log(`✅ Quiz Questions: ${quizResult.success} successful, ${quizResult.failed} failed, ${quizResult.skipped} skipped`);
+      console.log(`âœ… Quiz Questions: ${quizResult.success} successful, ${quizResult.failed} failed, ${quizResult.skipped} skipped`);
 
       const totalSuccessful = syncResult.success + quizResult.success;
       const totalFailed = syncResult.failed + quizResult.failed;
@@ -238,13 +238,13 @@ export default function HomeScreen() {
       if (totalSuccessful > 0) {
         const now = new Date().toISOString();
         setLastSyncTime(now);
-        setSyncStatus(`✅ Synced ${totalSuccessful} items successfully`);
-        console.log(`🎉 Successfully synced ${totalSuccessful} items for offline access`);
+        setSyncStatus(`âœ… Synced ${totalSuccessful} items successfully`);
+        console.log(`ðŸŽ‰ Successfully synced ${totalSuccessful} items for offline access`);
       }
 
       if (totalFailed > 0) {
-        console.warn(`⚠️ Some downloads failed: ${totalFailed} items - offline data preserved`);
-        setSyncStatus(`⚠️ ${totalFailed} items failed, offline data preserved`);
+        console.warn(`âš ï¸ Some downloads failed: ${totalFailed} items - offline data preserved`);
+        setSyncStatus(`âš ï¸ ${totalFailed} items failed, offline data preserved`);
       }
 
       // Update assessment count
@@ -254,8 +254,8 @@ export default function HomeScreen() {
       return { success: true, downloaded: totalSuccessful, failed: totalFailed };
 
     } catch (error) {
-      console.error('❌ Enhanced sync failed:', error);
-      setSyncStatus('❌ Sync failed - offline data preserved');
+      console.error('âŒ Enhanced sync failed:', error);
+      setSyncStatus('âŒ Sync failed - offline data preserved');
       // Don't throw - preserve existing data
       return { success: false, downloaded: 0, failed: 1 };
     } finally {
@@ -385,16 +385,16 @@ export default function HomeScreen() {
   }, [netInfo?.isInternetReachable]);
 
   const fetchAndSaveCompleteCoursesData = async (courses: EnrolledCourse[], userEmail: string) => {
-    console.log('📦 Starting to fetch complete course data for offline access...');
+    console.log('ðŸ“¦ Starting to fetch complete course data for offline access...');
 
     for (const course of courses) {
       try {
-        console.log(`🔄 Fetching detailed data for course: ${course.title} (ID: ${course.id})`);
+        console.log(`ðŸ”„ Fetching detailed data for course: ${course.title} (ID: ${course.id})`);
         
         const courseId = typeof course.id === 'string' ? parseInt(course.id, 10) : course.id;
         
         if (!courseId || isNaN(courseId) || courseId <= 0) {
-          console.error('❌ Invalid course ID detected:', {
+          console.error('âŒ Invalid course ID detected:', {
             originalId: course.id,
             convertedId: courseId,
             courseTitle: course.title
@@ -402,7 +402,7 @@ export default function HomeScreen() {
           continue;
         }
         
-        console.log(`📋 Processing course with validated ID: ${courseId} (type: ${typeof courseId})`);
+        console.log(`ðŸ“‹ Processing course with validated ID: ${courseId} (type: ${typeof courseId})`);
 
         const courseDetailResponse = await api.get(`/courses/${courseId}`);
         
@@ -413,22 +413,22 @@ export default function HomeScreen() {
             detailedCourse.id = courseId;
           }
           
-          console.log(`📊 Fetched detailed data for course ${courseId}:`, {
+          console.log(`ðŸ“Š Fetched detailed data for course ${courseId}:`, {
             topics: detailedCourse.topics?.length || 0,
             assessments: detailedCourse.assessments?.length || 0,
             materials: detailedCourse.materials?.length || 0
           });
           
           await saveCourseDetailsToDb(detailedCourse, userEmail);
-          console.log(`✅ Successfully saved detailed data for course: ${detailedCourse.title}`);
+          console.log(`âœ… Successfully saved detailed data for course: ${detailedCourse.title}`);
         } else {
-          console.warn(`⚠️ Failed to fetch detailed data for course ${courseId}: Status ${courseDetailResponse.status}`);
+          console.warn(`âš ï¸ Failed to fetch detailed data for course ${courseId}: Status ${courseDetailResponse.status}`);
         }
       } catch (saveError: any) {
-        console.error(`❌ Failed to fetch/save complete data for course ${course.title}:`, saveError.message || saveError);
+        console.error(`âŒ Failed to fetch/save complete data for course ${course.title}:`, saveError.message || saveError);
       }
     }
-    console.log('✅ Completed fetching and saving all course data for offline access');
+    console.log('âœ… Completed fetching and saving all course data for offline access');
   };
 
   const fetchCourses = async () => {
@@ -447,7 +447,7 @@ export default function HomeScreen() {
         return;
       }
     } catch (error) {
-      console.error('❌ Error getting user data:', error);
+      console.error('âŒ Error getting user data:', error);
       router.replace('/login');
       return;
     }
@@ -476,11 +476,11 @@ export default function HomeScreen() {
           if (apiServerTime) {
             const currentDeviceTime = new Date().toISOString();
             await saveServerTime(userEmail, apiServerTime, currentDeviceTime);
-            console.log('✅ Server time synced and saved locally.');
+            console.log('âœ… Server time synced and saved locally.');
           }
         } catch (timeError) {
-          console.error('❌ Failed to fetch or save server time:', timeError);
-          console.log('🔄 Server time sync failed, falling back to offline mode...');
+          console.error('âŒ Failed to fetch or save server time:', timeError);
+          console.log('ðŸ”„ Server time sync failed, falling back to offline mode...');
           const offlineCourses = await getEnrolledCoursesFromDb(userEmail);
           setEnrolledCourses(offlineCourses as EnrolledCourse[]);
           setIsLoadingEnrolledCourses(false);
@@ -488,7 +488,7 @@ export default function HomeScreen() {
           return;
         }
 
-        console.log('✅ Online: Fetching courses from API.');
+        console.log('âœ… Online: Fetching courses from API.');
         const response = await api.get('/my-courses');
         const courses = response.data.courses || [];
         setEnrolledCourses(courses);
@@ -498,22 +498,22 @@ export default function HomeScreen() {
           try {
             await saveCourseToDb(course, userEmail);
           } catch (saveError) {
-            console.error('⚠️ Failed to save basic course to DB:', saveError);
+            console.error('âš ï¸ Failed to save basic course to DB:', saveError);
           }
         }
-        console.log('📄 Basic course info synced to local DB.');
+        console.log('ðŸ“„ Basic course info synced to local DB.');
 
         // Fetch and save complete course details including materials and assessments
         await fetchAndSaveCompleteCoursesData(courses, userEmail);
 
-        // ✅ Enhanced: Auto-download assessment data with smart logic
+        // âœ… Enhanced: Auto-download assessment data with smart logic
         if (courses.length > 0) {
           setSyncStatus('Auto-syncing assessment data...');
           await autoDownloadAssessmentData(userEmail);
         }
 
       } else {
-        console.log('⚠️ Offline or no internet reachability: Fetching courses from local DB.');
+        console.log('âš ï¸ Offline or no internet reachability: Fetching courses from local DB.');
         const offlineCourses = await getEnrolledCoursesFromDb(userEmail);
         setEnrolledCourses(offlineCourses as EnrolledCourse[]);
       }
@@ -522,12 +522,12 @@ export default function HomeScreen() {
 
       const hasRealInternet = netInfo?.isInternetReachable === true;
       if (hasRealInternet) {
-        console.log('🔄 API failed, falling back to local DB...');
+        console.log('ðŸ”„ API failed, falling back to local DB...');
         try {
           const offlineCourses = await getEnrolledCoursesFromDb(userEmail);
           setEnrolledCourses(offlineCourses as EnrolledCourse[]);
         } catch (localError) {
-          console.error('❌ Local DB fallback also failed:', localError);
+          console.error('âŒ Local DB fallback also failed:', localError);
           Alert.alert('Error', 'Failed to load your enrolled courses.');
         }
       } else {
@@ -570,12 +570,12 @@ export default function HomeScreen() {
                 await saveServerTime(userData.email, apiServerTime, new Date().toISOString());
               }
             } catch (timeError) {
-              console.error('⚠️ Periodic server time sync failed:', timeError);
+              console.error('âš ï¸ Periodic server time sync failed:', timeError);
             }
           }
         }
       } catch (error) {
-        console.error('❌ Periodic time sync error:', error);
+        console.error('âŒ Periodic time sync error:', error);
       }
     }, 60000);
 
@@ -606,7 +606,7 @@ export default function HomeScreen() {
         return;
       }
 
-      console.log('🔄 Starting enhanced refresh with incremental updates...');
+      console.log('ðŸ”„ Starting enhanced refresh with incremental updates...');
       setSyncStatus('Fetching course updates...');
       
       let refreshSuccessful = false;
@@ -658,18 +658,18 @@ export default function HomeScreen() {
         refreshSuccessful = syncResult.success;
         
         if (refreshSuccessful) {
-          setSyncStatus('✅ Refresh completed successfully');
-          console.log('✅ Enhanced refresh completed successfully');
+          setSyncStatus('âœ… Refresh completed successfully');
+          console.log('âœ… Enhanced refresh completed successfully');
         }
         
       } catch (downloadError) {
-        console.warn('⚠️ Refresh failed, keeping existing offline data:', downloadError);
-        setSyncStatus('⚠️ Refresh failed, using offline data');
+        console.warn('âš ï¸ Refresh failed, keeping existing offline data:', downloadError);
+        setSyncStatus('âš ï¸ Refresh failed, using offline data');
         // Fallback to existing data
         try {
           await fetchCourses();
         } catch (fallbackError) {
-          console.error('❌ Fallback fetch also failed:', fallbackError);
+          console.error('âŒ Fallback fetch also failed:', fallbackError);
         }
       }
 
@@ -680,8 +680,8 @@ export default function HomeScreen() {
       Alert.alert('Refresh Complete', message, [{ text: 'OK' }]);
 
     } catch (error) {
-      console.error('❌ Enhanced refresh failed:', error);
-      setSyncStatus('❌ Refresh failed');
+      console.error('âŒ Enhanced refresh failed:', error);
+      setSyncStatus('âŒ Refresh failed');
       Alert.alert('Error', 'Failed to refresh data. Please try again.');
     } finally {
       setIsRefreshing(false);
@@ -757,7 +757,7 @@ export default function HomeScreen() {
         return;
       }
     } catch (error) {
-      console.error('❌ Error getting user data:', error);
+      console.error('âŒ Error getting user data:', error);
       Alert.alert('Error', 'User data not found. Please log in again.');
       router.replace('/login');
       setIsEnrolling(false);
@@ -779,7 +779,7 @@ export default function HomeScreen() {
           await saveCourseDetailsToDb(courseDetailResponse.data.course, userEmail);
         }
       } catch (saveError) {
-        console.error('⚠️ Failed to save enrolled course to local DB:', saveError);
+        console.error('âš ï¸ Failed to save enrolled course to local DB:', saveError);
       }
 
       setIsEnrollModalVisible(false);
@@ -804,7 +804,7 @@ export default function HomeScreen() {
           const offlineCourses = await getEnrolledCoursesFromDb(userEmail);
           setEnrolledCourses(offlineCourses as EnrolledCourse[]);
         } catch (localError) {
-          console.error('❌ Local DB fallback failed:', localError);
+          console.error('âŒ Local DB fallback failed:', localError);
         }
       } finally {
         setIsLoadingEnrolledCourses(false);
@@ -905,7 +905,7 @@ export default function HomeScreen() {
       if (totalToSync === 0) {
         setSyncStatus('All data is up to date');
         Alert.alert('Information', 
-          `All assessment data is current!\n\n📊 Last sync: ${lastSyncTime ? new Date(lastSyncTime).toLocaleString() : 'Never'}\n\n🔒 Your offline data is ready for use.`, 
+          `All assessment data is current!\n\nðŸ“Š Last sync: ${lastSyncTime ? new Date(lastSyncTime).toLocaleString() : 'Never'}\n\nðŸ”’ Your offline data is ready for use.`, 
           [{ text: 'OK', onPress: toggleAd }]
         );
         setTimeout(() => setSyncStatus(''), 2000);
@@ -915,7 +915,7 @@ export default function HomeScreen() {
       // Enhanced dialog with data freshness info
       Alert.alert(
         'Enhanced Smart Download',
-        `🔍 Analysis Complete:\n• ${syncNeeded.missing.length} new assessments\n• ${syncNeeded.outdated.length} updates available\n\n💡 Features:\n✅ Preserves existing offline data\n✅ Chunked download for performance\n✅ Automatic retry on failures\n\nProceed with smart download?`,
+        `ðŸ” Analysis Complete:\nâ€¢ ${syncNeeded.missing.length} new assessments\nâ€¢ ${syncNeeded.outdated.length} updates available\n\nðŸ’¡ Features:\nâœ… Preserves existing offline data\nâœ… Chunked download for performance\nâœ… Automatic retry on failures\n\nProceed with smart download?`,
         [
           { text: 'Cancel', style: 'cancel', onPress: () => setSyncStatus('') },
           {
@@ -933,18 +933,18 @@ export default function HomeScreen() {
                   const now = new Date().toISOString();
                   setLastSyncTime(now);
                   
-                  let message = '🎉 Enhanced Download Complete!\n\n';
+                  let message = 'ðŸŽ‰ Enhanced Download Complete!\n\n';
                   
                   if (result.downloaded > 0) {
-                    message += `✅ Successfully processed ${result.downloaded} items\n`;
+                    message += `âœ… Successfully processed ${result.downloaded} items\n`;
                   }
                   
                   if (result.failed > 0) {
-                    message += `⚠️ ${result.failed} items failed (data preserved)\n`;
+                    message += `âš ï¸ ${result.failed} items failed (data preserved)\n`;
                   }
 
-                  message += `\n📅 Last sync: ${new Date(now).toLocaleString()}`;
-                  message += '\n🔒 All offline data preserved and optimized!';
+                  message += `\nðŸ“… Last sync: ${new Date(now).toLocaleString()}`;
+                  message += '\nðŸ”’ All offline data preserved and optimized!';
 
                   Alert.alert('Success', message, [{ text: 'OK', onPress: toggleAd }]);
 
@@ -960,7 +960,7 @@ export default function HomeScreen() {
                 setSyncStatus('Download failed - data preserved');
                 Alert.alert(
                   'Download Error',
-                  '❌ Enhanced download encountered issues.\n\n🔒 Your existing offline data is preserved and safe.\n\n💡 Try again when network is stable.',
+                  'âŒ Enhanced download encountered issues.\n\nðŸ”’ Your existing offline data is preserved and safe.\n\nðŸ’¡ Try again when network is stable.',
                   [{ text: 'OK' }]
                 );
               } finally {
