@@ -274,7 +274,7 @@ export default function LoginScreen() {
               <Text style={styles.logo}>OLIN</Text>
             </View>
 
-            <Text style={styles.title}>Welcome Back!</Text>
+            <Text style={styles.title}>Welcome</Text>
             
             {!isConnected && (
               <Animated.View style={styles.offlineNotice}>

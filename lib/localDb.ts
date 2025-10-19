@@ -147,6 +147,14 @@ export const initDb = async (): Promise<void> => {
               suspicious_pattern_count INTEGER DEFAULT 0
             );`,
             
+            `CREATE TABLE IF NOT EXISTS sync_metadata (
+              user_email TEXT PRIMARY KEY NOT NULL,
+              last_full_sync INTEGER DEFAULT 0,
+              last_course_sync INTEGER DEFAULT 0,
+              last_assessment_sync INTEGER DEFAULT 0,
+              last_quiz_sync INTEGER DEFAULT 0
+            );`,
+            
             // 2. offline_courses (parent table)
             `CREATE TABLE IF NOT EXISTS offline_courses (
               id INTEGER NOT NULL, 

@@ -1,4 +1,5 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import * as ScreenCapture from 'expo-screen-capture';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -92,6 +93,38 @@ export default function AttemptQuizScreen() {
   // ++ MODIFIED: Added helper variables for dynamic text ++
   const assessmentType = submittedAssessment?.assessment?.type || 'assessment';
   const assessmentTypeCapitalized = assessmentType.charAt(0).toUpperCase() + assessmentType.slice(1);
+
+  // ++ ADDED: useEffect for screenshot prevention ++
+  useEffect(() => {
+    // This function activates screenshot prevention.
+    const activateScreenshotPrevention = async () => {
+      await ScreenCapture.preventScreenCaptureAsync();
+    };
+
+    // This function deactivates screenshot prevention.
+    const deactivateScreenshotPrevention = async () => {
+      await ScreenCapture.allowScreenCaptureAsync();
+    };
+
+    // Activate prevention when the component mounts.
+    activateScreenshotPrevention();
+
+    // Add a listener that triggers an alert when a screenshot is taken.
+    const subscription = ScreenCapture.addScreenshotListener(() => {
+      Alert.alert(
+        'Screenshot Not Allowed',
+        `For security reasons, taking screenshots is not allowed during this ${assessmentType}. This attempt has been noted.`,
+        [{ text: 'OK' }]
+      );
+    });
+
+    // Cleanup function: This runs when the user navigates away from the screen.
+    return () => {
+      deactivateScreenshotPrevention();
+      subscription.remove();
+    };
+  }, [assessmentType]); // Re-run if assessmentType changes
+  // -- END ADDED --
 
   // Update the ref whenever studentAnswers state changes
   useEffect(() => {

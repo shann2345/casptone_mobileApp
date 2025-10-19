@@ -2,7 +2,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
@@ -401,98 +400,101 @@ export default function AssessmentDetailsScreen() {
   // NEW: Heavily modified submission handler for both files and links
   const handleSubmitAssignment = async () => {
     if (!assessmentDetail) return;
-    if (!isAssessmentOpen(assessmentDetail)) {
-      Alert.alert('Assessment Unavailable', `This assessment is not currently available.`);
-      return;
-    }
-
-    const hasFile = selectedFile !== null;
-    const hasLink = submissionLink.trim() !== '';
-
-    if (!hasFile && !hasLink) {
-      Alert.alert(`No Submission`, `Please select a file or enter a link to submit.`);
-      return;
-    }
-
-    setSubmissionLoading(true);
-
-    try {
-      let submissionUri = '';
-      let submissionName = '';
-      let submissionMimeType = 'application/octet-stream';
-
-      // Handle link submission by creating a temporary text file
-      if (hasLink) {
-        submissionName = `submission_link_${assessmentDetail.id}_${Date.now()}.txt`;
-        submissionUri = FileSystem.documentDirectory + submissionName;
-        await FileSystem.writeAsStringAsync(submissionUri, submissionLink.trim());
-        submissionMimeType = 'text/plain';
-      } else if (hasFile) {
-        submissionUri = selectedFile.uri;
-        submissionName = selectedFile.name;
-        submissionMimeType = selectedFile.mimeType || submissionMimeType;
+      if (!isAssessmentOpen(assessmentDetail)) {
+        Alert.alert('Assessment Unavailable', `This assessment is not currently available.`);
+        return;
       }
-      
-      // Proceed with submission (online or offline)
-      if (netInfo?.isInternetReachable) {
-        const formData = new FormData();
-        formData.append('assignment_file', {
-          uri: submissionUri,
-          name: submissionName,
-          type: submissionMimeType,
-        } as any);
 
-        const response = await api.post(`/assessments/${assessmentDetail.id}/submit-assignment`, formData, {
-          headers: { 'Content-Type': 'multipart/form-data' },
-        });
+      const hasFile = selectedFile !== null;
+      const hasLink = submissionLink.trim() !== '';
 
-        if (response.status === 200) {
-          Alert.alert('Success', response.data.message || 'Submission successful!');
-          setSelectedFile(null);
-          setSubmissionLink('');
-          setSubmissionType(null);
-          await fetchAssessmentDetailsAndAttemptStatus();
-        } else {
-          Alert.alert('Error', response.data.message || 'Failed to submit.');
-        }
-      } else {
-        // Offline submission
-        const user = await getUserData();
-        if (user && user.email) {
-          const serverSubmissionTime = await getCurrentServerTime(user.email);
-          const actualSubmissionTime = await saveOfflineSubmission(
-            user.email,
-            assessmentDetail.id,
-            submissionUri,
-            submissionName,
-            serverSubmissionTime
-          );
+      if (!hasFile && !hasLink) {
+        Alert.alert(`No Submission`, `Please select a file or enter a link to submit.`);
+        return;
+      }
 
-          Alert.alert('Submission Saved Offline', 'Your work has been saved and will be submitted once you are online.');
+      setSubmissionLoading(true);
 
-          setLatestAssignmentSubmission({
-            has_submitted_file: true,
-            submitted_file_path: submissionUri,
-            submitted_file_url: null,
-            submitted_file_name: submissionName,
-            original_filename: submissionName,
-            submitted_at: actualSubmissionTime,
-            status: 'to sync',
+      try {
+        // --- MODIFICATION START ---
+        if (netInfo?.isInternetReachable) {
+          // ONLINE SUBMISSION
+          const formData = new FormData();
+          
+          if (hasLink) {
+            formData.append('submission_link', submissionLink.trim());
+          } else if (hasFile && selectedFile) {
+            formData.append('assignment_file', {
+              uri: selectedFile.uri,
+              name: selectedFile.name,
+              type: selectedFile.mimeType || 'application/octet-stream',
+            } as any);
+          }
+
+          const response = await api.post(`/assessments/${assessmentDetail.id}/submit-assignment`, formData, {
+            headers: { 'Content-Type': 'multipart/form-data' },
           });
-          setSelectedFile(null);
-          setSubmissionLink('');
-          setSubmissionType(null);
+
+          if (response.status === 200) {
+            Alert.alert('Success', response.data.message || 'Submission successful!');
+            setSelectedFile(null);
+            setSubmissionLink('');
+            setSubmissionType(null);
+            await fetchAssessmentDetailsAndAttemptStatus();
+          } else {
+            Alert.alert('Error', response.data.message || 'Failed to submit.');
+          }
+
         } else {
-          Alert.alert('Error', 'User not found. Cannot save offline submission.');
+          // OFFLINE SUBMISSION
+          const user = await getUserData();
+          if (user && user.email) {
+            let submissionUri = '';
+            let submissionName = '';
+
+            if (hasLink) {
+              submissionUri = submissionLink.trim();
+              submissionName = submissionLink.trim();
+            } else if (hasFile && selectedFile) {
+              submissionUri = selectedFile.uri;
+              submissionName = selectedFile.name;
+            }
+
+            const serverSubmissionTime = await getCurrentServerTime(user.email);
+            const actualSubmissionTime = await saveOfflineSubmission(
+              user.email,
+              assessmentDetail.id,
+              submissionUri,
+              submissionName,
+              serverSubmissionTime
+            );
+
+            Alert.alert('Submission Saved Offline', 'Your work has been saved and will be submitted once you are online.');
+
+            setLatestAssignmentSubmission({
+              has_submitted_file: true,
+              submitted_file_path: submissionUri,
+              submitted_file_url: null, // No URL available offline
+              submitted_file_name: submissionName,
+              original_filename: submissionName,
+              submitted_at: actualSubmissionTime,
+              status: 'to sync',
+            });
+            setSelectedFile(null);
+            setSubmissionLink('');
+            setSubmissionType(null);
+          } else {
+            Alert.alert('Error', 'User not found. Cannot save offline submission.');
+          }
         }
+        // --- MODIFICATION END ---
+      } catch (err: any) {
+        console.error('Error submitting assignment:', err.response?.data || err.message);
+        Alert.alert('Submission Error', err.response?.data?.message || 'Failed to submit due to a network error.');
+      } finally {
+        setSubmissionLoading(false);
+        setSubmissionModalVisible(false);
       }
-    } catch (err: any) {
-      console.error('Error submitting assignment:', err.response?.data || err.message);
-      Alert.alert('Submission Error', err.response?.data?.message || 'Failed to submit due to a network error.');
-    } finally {
-      setSubmissionLoading(false);
-      setSubmissionModalVisible(false);
-    }
   };
 
   // Other functions like getAssessmentIcon, fetchSubmittedAssessment, etc. remain unchanged.
@@ -627,19 +629,26 @@ export default function AssessmentDetailsScreen() {
       <Stack.Screen options={{ title: assessmentDetail.title || 'Assessment Details' }} />
       
       <ScrollView contentContainerStyle={styles.scrollViewContent} showsVerticalScrollIndicator={false}>
-        {/* Header remains unchanged */}
+        {/* *** REDESIGNED HEADER *** */}
         <View style={styles.headerContainer}>
-          <View style={styles.headerContent}>
-            <View style={[styles.assessmentIconContainer, { backgroundColor: getAssessmentColor(assessmentDetail.type) + '30' }]}>
-              <Ionicons name={getAssessmentIcon(assessmentDetail.type)} size={32} color={getAssessmentColor(assessmentDetail.type)} />
-            </View>
-            <Text style={styles.assessmentTitle}>{assessmentDetail.title}</Text>
-            <View style={[styles.assessmentTypeBadge, { backgroundColor: getAssessmentColor(assessmentDetail.type) }]}>
-              <Text style={styles.assessmentTypeText}>{assessmentDetail.type?.toUpperCase()}</Text>
-            </View>
-            {assessmentDetail.description && <Text style={styles.assessmentDescription}>{assessmentDetail.description}</Text>}
+          <View style={[styles.assessmentTypeBadge, { backgroundColor: getAssessmentColor(assessmentDetail.type) }]}>
+            <Text style={styles.assessmentTypeText}>{assessmentDetail.type?.toUpperCase()}</Text>
           </View>
-          {!netInfo?.isInternetReachable && <View style={styles.offlineNotice}><Ionicons name="cloud-offline" size={14} color="#5f6368" /><Text style={styles.offlineText}>Working offline</Text></View>}
+          
+          <Text style={styles.assessmentTitle}>{assessmentDetail.title}</Text>
+          
+          {assessmentDetail.description && (
+            <View style={styles.descriptionContainer}>
+              <Text style={styles.assessmentDescription}>{assessmentDetail.description}</Text>
+            </View>
+          )}
+
+          {!netInfo?.isInternetReachable && (
+            <View style={styles.offlineNotice}>
+              <Ionicons name="cloud-offline" size={14} color="#5f6368" />
+              <Text style={styles.offlineText}>Working offline</Text>
+            </View>
+          )}
         </View>
 
         {/* Details section remains unchanged */}
@@ -791,9 +800,8 @@ export default function AssessmentDetailsScreen() {
   );
 }
 
-// Styles have been updated to include modal styles
+// *** UPDATED HEADER STYLES ***
 const styles = StyleSheet.create({
-  //... (Keep all existing styles from the original file)
   container: { flex: 1, backgroundColor: '#f8f9fa' },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   errorContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
@@ -802,15 +810,60 @@ const styles = StyleSheet.create({
   retryButton: { backgroundColor: '#1967d2', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 8, marginTop: 8 },
   retryButtonText: { color: '#fff', fontSize: 16, fontWeight: '500' },
   scrollViewContent: { paddingBottom: 24 },
-  headerContainer: { backgroundColor: '#fff', paddingTop: 20, paddingBottom: 24, paddingHorizontal: 20, borderBottomWidth: 1, borderBottomColor: '#e0e0e0' },
-  headerContent: { alignItems: 'center' },
-  assessmentIconContainer: { width: 64, height: 64, borderRadius: 32, justifyContent: 'center', alignItems: 'center', marginBottom: 12 },
-  assessmentTitle: { fontSize: 24, fontWeight: '600', color: '#202124', textAlign: 'center', marginBottom: 8 },
-  assessmentTypeBadge: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, marginBottom: 12 },
-  assessmentTypeText: { color: '#fff', fontSize: 12, fontWeight: '600', letterSpacing: 0.5 },
-  assessmentDescription: { fontSize: 14, color: '#5f6368', textAlign: 'center', lineHeight: 20 },
-  offlineNotice: { flexDirection: 'row', alignItems: 'center', alignSelf: 'center', paddingHorizontal: 12, paddingVertical: 6, backgroundColor: '#f1f3f4', borderRadius: 16, marginTop: 16, gap: 6 },
+  
+  // Redesigned header styles
+  headerContainer: { 
+    backgroundColor: '#fff', 
+    padding: 20, 
+    borderBottomWidth: 1, 
+    borderBottomColor: '#e0e0e0' 
+  },
+  assessmentTypeBadge: { 
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12, 
+    paddingVertical: 6, 
+    borderRadius: 16,
+    marginBottom: 12 
+  },
+  assessmentTypeText: { 
+    color: '#fff', 
+    fontSize: 12, 
+    fontWeight: '600', 
+    letterSpacing: 0.5 
+  },
+  assessmentTitle: { 
+    fontSize: 26, 
+    fontWeight: '600', 
+    color: '#202124', 
+    textAlign: 'left', 
+    marginBottom: 16
+  },
+  descriptionContainer: {
+    backgroundColor: '#f1f3f4',
+    borderRadius: 8,
+    padding: 16,
+    width: '100%',
+  },
+  assessmentDescription: {
+    fontSize: 14,
+    color: '#3c4043',
+    textAlign: 'left',
+    lineHeight: 22,
+  },
+  offlineNotice: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    alignSelf: 'flex-start', 
+    paddingHorizontal: 12, 
+    paddingVertical: 6, 
+    backgroundColor: '#f1f3f4', 
+    borderRadius: 16, 
+    marginTop: 16, 
+    gap: 6 
+  },
   offlineText: { fontSize: 12, color: '#5f6368', fontWeight: '500' },
+  
+  // (The rest of the styles remain unchanged)
   sectionContainer: { marginHorizontal: 16, marginTop: 16, backgroundColor: '#fff', borderRadius: 8, padding: 16, borderWidth: 1, borderColor: '#e0e0e0' },
   sectionHeader: { fontSize: 18, fontWeight: '500', color: '#202124', marginBottom: 16 },
   detailsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 16 },
@@ -863,8 +916,6 @@ const styles = StyleSheet.create({
   loadingSubmissionText: { fontSize: 14, color: '#5f6368' },
   submissionPreviewCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#e8f0fe', borderRadius: 8, padding: 12, gap: 12, borderWidth: 1, borderColor: '#1967d2' },
   submissionPreviewText: { flex: 1, fontSize: 14, color: '#202124' },
-
-  // New Modal Styles
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.6)', justifyContent: 'center', alignItems: 'center' },
   modalContainer: { width: '90%', backgroundColor: '#fff', borderRadius: 12, padding: 24, gap: 16 },
   modalTitle: { fontSize: 20, fontWeight: '600', color: '#202124', textAlign: 'center', marginBottom: 8 },

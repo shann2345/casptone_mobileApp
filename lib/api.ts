@@ -609,11 +609,23 @@ export const googleAuth = async (googleUser: {
 export const syncOfflineSubmission = async (assessmentId: number, fileUri: string, originalFilename: string, submittedAt: string) => {
   try {
     const formData = new FormData();
-    formData.append('assignment_file', {
-      uri: fileUri,
-      name: originalFilename,
-      type: 'application/octet-stream',
-    } as any);
+    
+    // --- MODIFICATION START ---
+    // Check if the URI is a web link or a local file path
+    const isLink = fileUri.startsWith('http://') || fileUri.startsWith('https://');
+
+    if (isLink) {
+      // If it's a link, send it as the 'submission_link' field
+      formData.append('submission_link', fileUri);
+    } else {
+      // Otherwise, treat it as a file to upload
+      formData.append('assignment_file', {
+        uri: fileUri,
+        name: originalFilename,
+        type: 'application/octet-stream', // Generic type for offline files
+      } as any);
+    }
+    // --- MODIFICATION END ---
     
     // Add the original submission timestamp to preserve offline submission time
     formData.append('submitted_at', submittedAt);
