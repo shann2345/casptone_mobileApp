@@ -4,7 +4,7 @@ import { useNetworkStatus } from '../context/NetworkContext';
 import api, { getServerTime, getUserData, syncOfflineQuiz, syncOfflineSubmission } from '../lib/api';
 import {
   clearManipulationFlag,
-  deleteOfflineQuizAttempt,
+  deleteCompletedOfflineQuizAttempt,
   deleteOfflineSubmission,
   downloadAllQuizQuestions,
   getCompletedOfflineQuizzes,
@@ -189,7 +189,8 @@ export const useNetworkSync = () => {
                 );
 
                 if (syncResult) {
-                  await deleteOfflineQuizAttempt(quiz.assessment_id, userEmail);
+                  // --- MODIFICATION: Use the new, correct delete function ---
+                  await deleteCompletedOfflineQuizAttempt(quiz.assessment_id, userEmail);
                   syncResults.quizzesSynced++;
                 } else {
                   syncResults.errors.push(`Quiz ${quiz.assessment_id} failed`);

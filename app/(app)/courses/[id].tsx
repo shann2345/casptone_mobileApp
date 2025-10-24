@@ -13,7 +13,6 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { showOfflineModeWarningIfNeeded } from '../../../lib/offlineWarning';
 // Import your API and database functions
 import { usePendingSyncNotification } from '@/hooks/usePendingSyncNotification';
 import { useNetworkStatus } from '../../../context/NetworkContext';
@@ -25,10 +24,9 @@ import {
   canAccessOfflineContent,
   checkManipulationHistory,
   clearManipulationFlag,
-  detectTimeManipulation,
   getCourseDetailsFromDb,
   getSavedServerTime,
-  saveCourseDetailsToDb,
+  saveCourseDetailsToDb
 } from '../../../lib/localDb';
 
 // Define interfaces for detailed course data
@@ -215,124 +213,93 @@ export default function CourseDetailsScreen() {
   }
 
   try {
-    // ALWAYS check for manipulation first, regardless of connection status
-    const timeCheck = await detectTimeManipulation(userEmail);
-    if (!timeCheck.isValid) {
-      setTimeManipulationDetected(true);
-      setServerTime(null);
-      
-      if (timeCheck.requiresOnlineSync) {
-        Alert.alert(
-          '🚨 Time Manipulation Detected',
-          `${timeCheck.reason}\n\n⚠️ WARNING: Any attempt to manipulate device time will lock your access. You must connect to the internet to restore access.`,
-          [
-            {
-              text: 'Understood',
-              onPress: () => {
-                setCourseDetail(null);
-              }
-            }
-          ]
-        );
-        setLoading(false);
-        return;
-      }
-    }
-
-    if (netInfo?.isInternetReachable && !timeManipulationDetected) {
-      // ONLINE MODE: Fetch fresh data and establish time baseline
-      console.log('✅ Online: Fetching course details and establishing strict time baseline');
-      
+    // ++ CHANGE START: Prioritize the online check ++
+    if (netInfo?.isInternetReachable) {
+      // --- ONLINE MODE ---
+      // 1. Immediately sync with the server time. This is the most critical step.
+      // This will clear any manipulation flags and establish a new, correct baseline.
+      console.log('✅ Online: Syncing server time to validate session...');
       try {
-        const apiServerTime = await getServerTime(true);
+        // getServerTime(true) fetches from API and saves the new baseline via localDb
+        const apiServerTime = await getServerTime(true); 
+        
         if (apiServerTime) {
           const serverTimeDate = new Date(apiServerTime);
           setServerTime(serverTimeDate);
-          
-          // Clear any previous manipulation flags since user is now online
-          await clearManipulationFlag(userEmail);
-          setTimeManipulationDetected(false);
-          
-          console.log('✅ Server time set and strict baseline established:', serverTimeDate.toISOString());
-          
-          // Show success message if this is a recovery from manipulation
-          const manipulationHistory = await checkManipulationHistory(userEmail);
-          if (manipulationHistory) {
+          setTimeManipulationDetected(false); // We just synced, so we are valid now.
+          console.log('✅ Server time synced. Access validated.');
+
+          // Check if the user was previously flagged to show a confirmation message.
+          const wasPreviouslyFlagged = await checkManipulationHistory(userEmail);
+          if (wasPreviouslyFlagged) {
+            await clearManipulationFlag(userEmail); // Explicitly clear the flag just in case
             Alert.alert(
               '✅ Access Restored',
-              'Your access has been restored. Remember: any time manipulation will immediately lock your access again.',
-              [{ text: 'Understood' }]
+              'Your time has been re-synced with the server. Course access is restored.',
+              [{ text: 'OK' }]
             );
           }
         } else {
-          setServerTime(null);
-          Alert.alert('Network Error', 'Could not sync server time. Some content may be unavailable.');
+          // If time sync fails online, that's a critical error. Block access.
+          throw new Error('Failed to sync with server time.');
         }
       } catch (timeError) {
-        console.error('❌ Error establishing time baseline:', timeError);
+        console.error('❌ Critical Error: Failed to sync server time while online.', timeError);
+        setTimeManipulationDetected(true); // Treat as a security issue
         setServerTime(null);
+        setCourseDetail(null);
+        Alert.alert('Sync Error', 'Could not verify time with the server. Access is temporarily blocked.');
+        setLoading(false);
+        return;
       }
 
-      // Fetch course data
+      // 2. Now that time is valid, fetch the course details.
+      console.log('✅ Fetching latest course details from API...');
       const response = await api.get(`/courses/${courseId}`);
       if (response.status === 200) {
         const courseData = response.data.course;
         setCourseDetail(courseData);
         await saveCourseDetailsToDb(courseData, userEmail);
-        console.log('✅ Course details fetched and saved for offline use');
       } else {
-        // Fallback to offline data
+        // If API fails, fall back to local data but trust the synced time.
         const offlineData = await getCourseDetailsFromDb(Number(courseId), userEmail);
-        if (offlineData) {
-          setCourseDetail(offlineData);
-          Alert.alert('Network Error', 'Failed to load live data, showing offline content.');
-        }
+        setCourseDetail(offlineData);
       }
+
     } else {
-      // OFFLINE MODE: Show proactive warning and use cached data with STRICT time validation
-        console.log('⚠️ Offline: Entering offline mode with strict time monitoring');
-
-        // PROACTIVE WARNING: Use the imported function
-        await showOfflineModeWarningIfNeeded();
-
-        // Double-check manipulation status in offline mode
-        const canAccess = await canAccessOfflineContent(userEmail);
-        if (!canAccess) {
-          setTimeManipulationDetected(true);
-          setServerTime(null);
-          Alert.alert(
-            '🚨 Access Blocked',
-            'Your 7-day offline access window has expired, or time manipulation was detected. You must connect to the internet to restore access.',
-            [{ text: 'Understood' }]
-          );
-          setCourseDetail(null);
-        } else {
-          setTimeManipulationDetected(false);
-          
-          // Get calculated offline server time
-          const calculatedServerTime = await getSavedServerTime(userEmail);
-          if (calculatedServerTime) {
-            const serverTimeDate = new Date(calculatedServerTime);
-            setServerTime(serverTimeDate);
-            console.log('✅ Using calculated offline server time with strict monitoring:', serverTimeDate.toISOString());
-          }
-
-          // Load offline course data
-          const offlineData = await getCourseDetailsFromDb(Number(courseId), userEmail);
-          if (offlineData) {
-            setCourseDetail(offlineData);
-          } else {
-            Alert.alert('Offline Error', 'No offline content available for this course.');
-          }
+      // --- OFFLINE MODE ---
+      // This logic can now safely assume the user is genuinely offline.
+      console.log('⚠️ Offline: Checking local data and time validity...');
+      const canAccess = await canAccessOfflineContent(userEmail);
+      if (!canAccess) {
+        setTimeManipulationDetected(true);
+        setServerTime(null);
+        setCourseDetail(null);
+        Alert.alert(
+          '🚨 Access Blocked',
+          'Your offline access has expired or time manipulation was detected. Please connect to the internet to restore access.',
+          [{ text: 'Understood' }]
+        );
+      } else {
+        // It's safe to proceed with offline data.
+        setTimeManipulationDetected(false);
+        const calculatedServerTime = await getSavedServerTime(userEmail);
+        if (calculatedServerTime) {
+          setServerTime(new Date(calculatedServerTime));
         }
+        const offlineData = await getCourseDetailsFromDb(Number(courseId), userEmail);
+        setCourseDetail(offlineData);
       }
-    } catch (error) {
-      console.error('Failed to fetch course details:', error);
-      Alert.alert('Error', 'Unable to load course details.');
-    } finally {
-      setLoading(false);
     }
-  };
+    // ++ CHANGE END ++
+
+  } catch (error) {
+    console.error('Failed to fetch course details:', error);
+    Alert.alert('Error', 'Unable to load course details.');
+  } finally {
+    setLoading(false);
+  }
+};
 
 
   const handleRefresh = useCallback(async () => {
@@ -874,7 +841,7 @@ export default function CourseDetailsScreen() {
               />
               
               {accessCodeError && (
-                <View style={styles.errorContainer}>
+                <View style={styles.modalErrorContainer}>
                   <Ionicons name="alert-circle-outline" size={16} color="#d93025" />
                   <Text style={styles.errorTextModal}>{accessCodeError}</Text>
                 </View>
@@ -1368,6 +1335,14 @@ const styles = StyleSheet.create({
   disabledInput: {
     backgroundColor: '#f1f3f4',
     color: '#9aa0a6',
+  },
+  modalErrorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    backgroundColor: '#fce8e6',
+    borderRadius: 8,
+    marginTop: 16,
   },
   errorTextModal: {
     flex: 1,

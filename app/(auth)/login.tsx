@@ -66,13 +66,18 @@ export default function LoginScreen() {
     ]).start();
   }, []);
 
+  // UPDATED: This useEffect now handles success, cancellation, or failure of the Google login
   React.useEffect(() => {
     if (googleResponse?.type === 'success') {
-      startProcessing(); // Show global overlay
       handleGoogleSuccess(googleResponse.authentication?.accessToken);
+    } else if (googleResponse?.type === 'dismiss' || googleResponse?.type === 'cancel' || googleResponse?.type === 'error') {
+      // Handle cases where the user closes the login window or an error occurs
+      console.log('Google Auth was dismissed, cancelled, or failed:', googleResponse.type);
+      stopProcessing(); // Hide the loading overlay
     }
   }, [googleResponse]);
 
+  // UPDATED: Starts the loading overlay before opening the Google prompt
   const handleGoogleLogin = () => {
     if (!isConnected) {
       Alert.alert(
@@ -82,6 +87,7 @@ export default function LoginScreen() {
       return;
     }
     
+    startProcessing(); // Show loading overlay immediately
     googlePromptAsync();
   };
 

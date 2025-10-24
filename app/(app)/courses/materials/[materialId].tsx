@@ -40,6 +40,37 @@ interface MaterialDetail {
 
 type FileType = 'image' | 'pdf' | 'document' | 'video' | 'audio' | 'code' | 'other';
 
+const getMaterialIcon = (type: string) => {
+  const lowerType = type.toLowerCase();
+  switch (lowerType) {
+    case 'document': return 'document-text';
+    case 'video': return 'videocam';
+    case 'link': return 'link';
+    case 'presentation': return 'easel';
+    case 'spreadsheet': return 'grid';
+    case 'audio': return 'musical-notes';
+    case 'image': return 'image';
+    case 'pdf': return 'document-attach';
+    case 'code': return 'code-slash';
+    default: return 'folder';
+  }
+};
+
+const getMaterialColor = (type: string) => {
+  const lowerType = type.toLowerCase();
+  switch (lowerType) {
+    case 'document': return '#1967d2';
+    case 'video': return '#ea4335';
+    case 'link': return '#0d9488';
+    case 'presentation': return '#f59e0b';
+    case 'spreadsheet': return '#16a34a';
+    case 'audio': return '#9333ea';
+    case 'image': return '#06b6d4';
+    case 'pdf': return '#dc2626';
+    case 'code': return '#6366f1';
+    default: return '#6c757d';
+  }
+};
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -318,8 +349,80 @@ export default function MaterialDetailsScreen() {
       Alert.alert('Offline Mode', 'Online viewing requires an internet connection.');
       return;
     }
+    
     const fileUrl = await getAuthenticatedFileUrl();
-    if (fileUrl) {
+    if (!fileUrl) return;
+
+    const fileType = getFileType(materialDetail?.file_path || '');
+    
+    // For documents and PDFs, offer viewing options
+    if (['pdf', 'document'].includes(fileType)) {
+      Alert.alert(
+        'Choose Viewer',
+        'Select how you want to view this document:',
+        [
+          {
+            text: 'Google Docs',
+            onPress: async () => {
+              try {
+                const googleDocsUrl = `https://docs.google.com/viewer?url=${encodeURIComponent(fileUrl)}&embedded=true`;
+                const supported = await Linking.canOpenURL(googleDocsUrl);
+                if (supported) {
+                  await Linking.openURL(googleDocsUrl);
+                } else {
+                  Alert.alert('Error', 'Cannot open Google Docs Viewer.');
+                }
+              } catch (error) {
+                Alert.alert('Error', 'Could not open with Google Docs Viewer.');
+                console.error('Google Docs Viewer error:', error);
+              }
+            }
+          },
+          {
+            text: 'Microsoft Office',
+            onPress: async () => {
+              try {
+                // Office Online Viewer for better rendering of Office documents
+                const officeViewerUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(fileUrl)}`;
+                const supported = await Linking.canOpenURL(officeViewerUrl);
+                if (supported) {
+                  await Linking.openURL(officeViewerUrl);
+                } else {
+                  Alert.alert('Error', 'Cannot open Office Viewer.');
+                }
+              } catch (error) {
+                Alert.alert('Error', 'Could not open with Office Viewer.');
+                console.error('Office Viewer error:', error);
+              }
+            }
+          },
+          {
+            text: 'Download & Open',
+            onPress: async () => {
+              Alert.alert(
+                'Download Required',
+                'This will download the file to your device for offline viewing. Continue?',
+                [
+                  {
+                    text: 'Cancel',
+                    style: 'cancel'
+                  },
+                  {
+                    text: 'Download',
+                    onPress: handleDownload
+                  }
+                ]
+              );
+            }
+          },
+          {
+            text: 'Cancel',
+            style: 'cancel'
+          }
+        ]
+      );
+    } else {
+      // For other file types (images, videos, etc.), open directly
       try {
         const supported = await Linking.canOpenURL(fileUrl);
         if (supported) {
@@ -686,26 +789,31 @@ export default function MaterialDetailsScreen() {
         }
       >
         <View style={styles.headerContainer}>
+          <View style={styles.titleRow}>
+            {/* Title comes first now */}
+            <Text style={styles.materialTitle} numberOfLines={2}>{materialDetail.title}</Text>
+            
+            {/* Material type badge comes after */}
             {materialDetail.material_type && (
-              <View style={styles.materialTypeBadge}>
+              <View style={[styles.materialTypeBadge, { backgroundColor: getMaterialColor(materialDetail.material_type) }]}>
+                <Ionicons name={getMaterialIcon(materialDetail.material_type)} size={16} color="#fff" />
                 <Text style={styles.materialTypeText}>
                   {materialDetail.material_type.toUpperCase()}
                 </Text>
               </View>
             )}
-            
-            <Text style={styles.materialTitle}>{materialDetail.title}</Text>
-            
-            {materialDetail.description && (
-              <Text style={styles.materialDescription}>{materialDetail.description}</Text>
-            )}
-            
-            {!netInfo?.isInternetReachable && (
-              <View style={styles.offlineNotice}>
-                <Ionicons name="cloud-offline" size={14} color="#5f6368" />
-                <Text style={styles.offlineText}>Offline Mode</Text>
-              </View>
-            )}
+          </View>
+          
+          {materialDetail.description && (
+            <Text style={styles.materialDescription}>{materialDetail.description}</Text>
+          )}
+          
+          {!netInfo?.isInternetReachable && (
+            <View style={styles.offlineNotice}>
+              <Ionicons name="cloud-offline" size={14} color="#5f6368" />
+              <Text style={styles.offlineText}>Offline Mode</Text>
+            </View>
+          )}
         </View>
 
         {/* Action Buttons Section */}
@@ -767,15 +875,15 @@ export default function MaterialDetailsScreen() {
           <View style={styles.sectionContainer}>
             <Text style={styles.sectionHeader}>External Link</Text>
             <TouchableOpacity 
-              style={[styles.linkClickableContainer, !netInfo?.isInternetReachable && styles.actionCardDisabled]} 
+              style={styles.linkClickableContainer} 
               onPress={() => handleOpenLink(materialDetail.file_path!)}
             >
               <View style={styles.linkContentWrapper}>
-                <Ionicons name="link" size={24} color={netInfo?.isInternetReachable ? '#4285f4' : '#9aa0a6'} />
-                <Text style={[styles.linkUrlText, !netInfo?.isInternetReachable && styles.disabledText]} numberOfLines={1}>
+                <Ionicons name="link" size={24} color={'#4285f4'} />
+                <Text style={styles.linkUrlText} numberOfLines={1}>
                   {materialDetail.file_path}
                 </Text>
-                <Ionicons name="open-outline" size={20} color={netInfo?.isInternetReachable ? '#4285f4' : '#9aa0a6'} />
+                <Ionicons name="open-outline" size={20} color={'#4285f4'} />
               </View>
             </TouchableOpacity>
             {!netInfo?.isInternetReachable && (
@@ -846,26 +954,32 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1, 
     borderBottomColor: '#e0e0e0' 
   },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 12,
+  },
   materialTypeBadge: { 
-    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
     paddingHorizontal: 12, 
-    paddingVertical: 6, 
-    borderRadius: 16, 
-    backgroundColor: '#e8f0fe',
-    marginBottom: 12 
+    paddingVertical: 8, 
+    borderRadius: 8,
   },
   materialTypeText: { 
-    color: '#1967d2',
-    fontSize: 12, 
-    fontWeight: '600', 
+    color: '#fff',
+    fontSize: 11, 
+    fontWeight: '700', 
     letterSpacing: 0.5 
   },
   materialTitle: { 
-    fontSize: 26, 
+    flex: 1,
+    fontSize: 22, 
     fontWeight: '600', 
     color: '#202124', 
-    textAlign: 'left', 
-    marginBottom: 8 
+    textAlign: 'left',
   },
   materialDescription: { 
     fontSize: 15, 

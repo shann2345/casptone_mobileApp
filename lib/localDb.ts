@@ -212,6 +212,7 @@ export const initDb = async (): Promise<void> => {
               assessment_file_path TEXT, 
               assessment_file_url TEXT, 
               assessment_data TEXT NOT NULL DEFAULT '{}',
+              allow_answer_review INTEGER DEFAULT 0,
               PRIMARY KEY (id, user_email),
               FOREIGN KEY (course_id, user_email) REFERENCES offline_courses(id, user_email) ON DELETE CASCADE
             );`,
@@ -294,6 +295,14 @@ export const initDb = async (): Promise<void> => {
               is_selected INTEGER NOT NULL DEFAULT 0,
               is_correct_option INTEGER NOT NULL DEFAULT 0,
               FOREIGN KEY (submission_id) REFERENCES offline_quiz_question_submissions(submission_id) ON DELETE CASCADE
+            );`,
+
+            `CREATE TABLE IF NOT EXISTS offline_assessment_reviews (
+              assessment_id INTEGER NOT NULL,
+              user_email TEXT NOT NULL,
+              review_data TEXT NOT NULL,
+              PRIMARY KEY (assessment_id, user_email),
+              FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessments(id, user_email) ON DELETE CASCADE
             );`
           ];
           
@@ -551,6 +560,76 @@ export const getEnrolledCoursesFromDb = async (userEmail: string) => {
   }
 };
 
+export const deleteCourseAndRelatedDataFromDb = async (courseId: number, userEmail: string): Promise<void> => {
+  if (!courseId || !userEmail) {
+    console.error('❌ Invalid arguments for deleteCourseAndRelatedDataFromDb:', { courseId, userEmail });
+    throw new Error('Valid courseId and userEmail are required.');
+  }
+
+  try {
+    const db = await getDb();
+    console.log(`🗑️ Starting deletion process for course ${courseId}, user ${userEmail}...`);
+
+    await db.withTransactionAsync(async () => {
+      // Get all assessment IDs associated with this course first
+      const assessmentsToDelete = await db.getAllAsync<{ id: number }>(
+        `SELECT id FROM offline_assessments WHERE course_id = ? AND user_email = ?;`,
+        [courseId, userEmail]
+      );
+      const assessmentIds = assessmentsToDelete.map(a => a.id);
+      console.log(`   - Found ${assessmentIds.length} assessments associated with course ${courseId}`);
+
+      if (assessmentIds.length > 0) {
+        // Delete data linked ONLY by assessment_id (using IN clause)
+        const placeholders = assessmentIds.map(() => '?').join(','); // Creates ?,?,?,...
+
+        console.log(`   - Deleting from offline_assessment_data...`);
+        await db.runAsync(`DELETE FROM offline_assessment_data WHERE assessment_id IN (${placeholders}) AND user_email = ?;`, [...assessmentIds, userEmail]);
+
+        console.log(`   - Deleting from offline_assessment_reviews...`);
+        await db.runAsync(`DELETE FROM offline_assessment_reviews WHERE assessment_id IN (${placeholders}) AND user_email = ?;`, [...assessmentIds, userEmail]);
+
+        console.log(`   - Deleting from offline_assessment_sync...`);
+        await db.runAsync(`DELETE FROM offline_assessment_sync WHERE assessment_id IN (${placeholders}) AND user_email = ?;`, [...assessmentIds, userEmail]);
+
+        console.log(`   - Deleting from offline_submissions...`);
+        await db.runAsync(`DELETE FROM offline_submissions WHERE assessment_id IN (${placeholders}) AND user_email = ?;`, [...assessmentIds, userEmail]);
+
+        console.log(`   - Deleting from offline_quiz_questions...`);
+        await db.runAsync(`DELETE FROM offline_quiz_questions WHERE assessment_id IN (${placeholders}) AND user_email = ?;`, [...assessmentIds, userEmail]);
+
+        console.log(`   - Deleting from offline_quiz_attempts (will cascade to child tables)...`);
+        await db.runAsync(`DELETE FROM offline_quiz_attempts WHERE assessment_id IN (${placeholders}) AND user_email = ?;`, [...assessmentIds, userEmail]);
+
+        // Now delete the assessments themselves
+        console.log(`   - Deleting from offline_assessments...`);
+        await db.runAsync(`DELETE FROM offline_assessments WHERE course_id = ? AND user_email = ?;`, [courseId, userEmail]);
+      } else {
+        console.log(`   - No assessments found, skipping assessment-related deletions.`);
+      }
+
+      // Delete data linked directly by course_id
+      console.log(`   - Deleting from offline_materials...`);
+      await db.runAsync(`DELETE FROM offline_materials WHERE course_id = ? AND user_email = ?;`, [courseId, userEmail]);
+
+      console.log(`   - Deleting from offline_course_details...`);
+      await db.runAsync(`DELETE FROM offline_course_details WHERE course_id = ? AND user_email = ?;`, [courseId, userEmail]);
+
+      // Finally, delete the course itself
+      console.log(`   - Deleting from offline_courses...`);
+      await db.runAsync(`DELETE FROM offline_courses WHERE id = ? AND user_email = ?;`, [courseId, userEmail]);
+
+    }); // End transaction
+
+    console.log(`✅ Successfully deleted all local data for course ${courseId}, user ${userEmail}.`);
+
+  } catch (error) {
+    console.error(`❌ Error deleting course ${courseId} and related data:`, error);
+    // Optionally re-throw or handle the error appropriately
+    throw error;
+  }
+};
+
 
 
 // MATERIALS
@@ -704,8 +783,8 @@ export const saveAssessmentsToDb = async (assessments: any[], courseId: number, 
         await db.runAsync(
           `INSERT OR REPLACE INTO offline_assessments 
            (id, course_id, user_email, title, type, description, available_at, unavailable_at, 
-            max_attempts, duration_minutes, points, assessment_file_path, assessment_file_url) 
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+            max_attempts, duration_minutes, points, assessment_file_path, assessment_file_url, allow_answer_review) 
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
           [
             assessment.id,
             validCourseId,
@@ -716,10 +795,11 @@ export const saveAssessmentsToDb = async (assessments: any[], courseId: number, 
             assessment.available_at || null,
             assessment.unavailable_at || null,
             assessment.max_attempts || null,
-            assessment.duration_minutes || null, // Make sure this is not undefined
+            assessment.duration_minutes || null,
             assessment.points || 0,
             assessment.assessment_file_path || null,
             assessment.assessment_file_url || null,
+            assessment.allow_answer_review ? 1 : 0, // Add this field
           ]
         );
       } catch (error) {
@@ -951,6 +1031,12 @@ export const getAssessmentDetailsFromDb = async (assessmentId: number | string, 
       return null;
     }
 
+    // Convert allow_answer_review from INTEGER to boolean
+    const assessmentData = {
+      ...assessmentResult,
+      allow_answer_review: assessmentResult.allow_answer_review === 1
+    };
+
     // Then, get the dynamic data (attempt status, submission)
     const dataResult = await db.getFirstAsync(
       `SELECT data FROM offline_assessment_data WHERE assessment_id = ? AND user_email = ?;`,
@@ -968,12 +1054,12 @@ export const getAssessmentDetailsFromDb = async (assessmentId: number | string, 
 
     // Combine the two results
     return {
-      ...assessmentResult,
+      ...assessmentData,
       attemptStatus: additionalData.attemptStatus,
       latestSubmission: additionalData.latestSubmission,
     };
   } catch (error) {
-    console.error(`âŒ Failed to get assessment ${assessmentId} from DB:`, error);
+    console.error(`❌ Failed to get assessment ${assessmentId} from DB:`, error);
     return null;
   }
 };
@@ -1083,6 +1169,55 @@ export const getAssessmentsNeedingSync = async (
   } catch (error) {
     console.error('Failed to check assessments needing sync:', error);
     return { missing: [], outdated: [] };
+  }
+};
+
+export const saveAssessmentReviewToDb = async (assessmentId: number, userEmail: string, reviewData: any): Promise<void> => {
+  try {
+    await initDb();
+    const db = await getDb();
+    console.log(`💾 Saving review data for assessment ${assessmentId}`);
+    await db.runAsync(
+      `INSERT OR REPLACE INTO offline_assessment_reviews (assessment_id, user_email, review_data) VALUES (?, ?, ?);`,
+      [assessmentId, userEmail, JSON.stringify(reviewData)]
+    );
+    console.log(`✅ Review data for assessment ${assessmentId} saved successfully.`);
+  } catch (error) {
+    console.error(`❌ Failed to save assessment review data for assessment ${assessmentId}:`, error);
+    throw error;
+  }
+};
+
+export const getAssessmentReviewFromDb = async (assessmentId: number, userEmail: string): Promise<any | null> => {
+  try {
+    const db = await getDb();
+    const result = await db.getFirstAsync(
+      `SELECT review_data FROM offline_assessment_reviews WHERE assessment_id = ? AND user_email = ?;`,
+      [assessmentId, userEmail]
+    );
+    if (result && result.review_data) {
+      console.log(`✅ Found offline review data for assessment ${assessmentId}`);
+      return JSON.parse(result.review_data);
+    }
+    console.log(`⚠️ No offline review data found for assessment ${assessmentId}`);
+    return null;
+  } catch (error) {
+    console.error(`❌ Failed to get assessment review data for assessment ${assessmentId}:`, error);
+    return null;
+  }
+};
+
+export const hasAssessmentReviewSaved = async (assessmentId: number, userEmail: string): Promise<boolean> => {
+  try {
+    const db = await getDb();
+    const result = await db.getFirstAsync(
+      `SELECT COUNT(*) as count FROM offline_assessment_reviews WHERE assessment_id = ? AND user_email = ?;`,
+      [assessmentId, userEmail]
+    );
+    return (result as any)?.count > 0;
+  } catch (error) {
+    console.error(`❌ Error checking for saved assessment review for assessment ${assessmentId}:`, error);
+    return false;
   }
 };
 
@@ -1747,35 +1882,66 @@ export const deleteOfflineQuizAttempt = async (assessmentId: number, userEmail: 
   try {
     await initDb();
     const db = await getDb();
-    console.log(`🗑️ Deleting offline quiz attempt for assessment ${assessmentId} and user ${userEmail}`);
+    console.log(`🗑️ Deleting IN-PROGRESS offline quiz attempt for assessment ${assessmentId} and user ${userEmail}`);
 
     await db.withTransactionAsync(async () => {
-      // First, get the attempt_id to delete related records
+      // --- MODIFIED: Target the 'in_progress' (is_completed = 0) attempt ---
       const attempt = await db.getFirstAsync(
-        `SELECT attempt_id FROM offline_quiz_attempts WHERE assessment_id = ? AND user_email = ?;`,
+        `SELECT attempt_id FROM offline_quiz_attempts WHERE assessment_id = ? AND user_email = ? AND is_completed = 0;`,
         [assessmentId, userEmail]
       );
 
       if (attempt) {
         const attemptId = (attempt as any).attempt_id;
+        console.log(`   - Found in-progress attempt with ID: ${attemptId}`);
         // Delete related submissions and options first
         await db.runAsync(`DELETE FROM offline_quiz_option_selections WHERE submission_id IN (SELECT submission_id FROM offline_quiz_question_submissions WHERE attempt_id = ?);`, [attemptId]);
         await db.runAsync(`DELETE FROM offline_quiz_question_submissions WHERE attempt_id = ?;`, [attemptId]);
         // Then, delete the attempt itself
         await db.runAsync(`DELETE FROM offline_quiz_attempts WHERE attempt_id = ?;`, [attemptId]);
-        console.log(`✅ Deleted offline quiz attempt ${attemptId} and all related records.`);
+        console.log(`✅ Deleted in-progress offline quiz attempt ${attemptId} and all related records.`);
       } else {
-        console.log(`✅ No offline quiz attempt found for assessment ${assessmentId}. Nothing to delete.`);
+        console.log(`✅ No in-progress (is_completed = 0) offline quiz attempt found for assessment ${assessmentId}. Nothing to delete.`);
       }
     });
 
   } catch (error) {
-    console.error('❌ Failed to delete offline quiz attempt:', error);
+    console.error('❌ Failed to delete in-progress offline quiz attempt:', error);
     throw error;
   }
 };
 
+export const deleteCompletedOfflineQuizAttempt = async (assessmentId: number, userEmail: string): Promise<void> => {
+  try {
+    await initDb();
+    const db = await getDb();
+    console.log(`🗑️ Deleting COMPLETED offline quiz attempt for assessment ${assessmentId} and user ${userEmail}`);
 
+    await db.withTransactionAsync(async () => {
+      // --- Target the 'completed' (is_completed = 1) attempt ---
+      const attempt = await db.getFirstAsync(
+        `SELECT attempt_id FROM offline_quiz_attempts WHERE assessment_id = ? AND user_email = ? AND is_completed = 1;`,
+        [assessmentId, userEmail]
+      );
+
+      if (attempt) {
+        const attemptId = (attempt as any).attempt_id;
+        console.log(`   - Found completed attempt with ID: ${attemptId}`);
+        // Delete related submissions and options first
+        await db.runAsync(`DELETE FROM offline_quiz_option_selections WHERE submission_id IN (SELECT submission_id FROM offline_quiz_question_submissions WHERE attempt_id = ?);`, [attemptId]);
+        await db.runAsync(`DELETE FROM offline_quiz_question_submissions WHERE attempt_id = ?;`, [attemptId]);
+        // Then, delete the attempt itself
+        await db.runAsync(`DELETE FROM offline_quiz_attempts WHERE attempt_id = ?;`, [attemptId]);
+        console.log(`✅ Deleted completed offline quiz attempt ${attemptId} and all related records.`);
+      } else {
+        console.log(`✅ No completed (is_completed = 1) offline quiz attempt found for assessment ${assessmentId}. Nothing to delete.`);
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to delete completed offline quiz attempt:', error);
+    throw error;
+  }
+};
 
 
 

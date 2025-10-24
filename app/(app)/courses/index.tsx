@@ -17,7 +17,14 @@ import {
 } from 'react-native';
 import { useNetworkStatus } from '../../../context/NetworkContext';
 import api, { getUserData } from '../../../lib/api';
-import { getCompletedOfflineQuizzes, getDb, getEnrolledCoursesFromDb, getUnsyncedSubmissions, initDb, saveCourseToDb } from '../../../lib/localDb';
+import {
+  deleteCourseAndRelatedDataFromDb,
+  getCompletedOfflineQuizzes,
+  getEnrolledCoursesFromDb, // Keep this import
+  getUnsyncedSubmissions,
+  initDb,
+  saveCourseToDb
+} from '../../../lib/localDb';
 import { showOfflineModeWarningIfNeeded } from '../../../lib/offlineWarning';
 
 const { width } = Dimensions.get('window');
@@ -62,10 +69,10 @@ const courseColors = [
 export default function CoursesScreen() {
   const [enrolledCourses, setEnrolledCourses] = useState<EnrolledCourse[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null); // State for actual errors
   const router = useRouter();
   const params = useLocalSearchParams();
-  const { isConnected, netInfo } = useNetworkStatus(); 
+  const { isConnected, netInfo } = useNetworkStatus();
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
   const [selectedCourse, setSelectedCourse] = useState<EnrolledCourse | null>(null);
@@ -78,14 +85,40 @@ export default function CoursesScreen() {
   // Ref to prevent repeated deep link navigation
   const hasNavigatedToCourseRef = useRef(false);
 
+  // Helper function to fetch courses from the local database
+  const fetchEnrolledCoursesFromDb = async () => {
+    if (!currentUserEmail) {
+      setError('Cannot load courses. No user email found.'); // Keep error for missing email
+      setIsLoading(false);
+      return;
+    }
+    try {
+      const courses = await getEnrolledCoursesFromDb(currentUserEmail);
+      setEnrolledCourses(courses);
+      // --- FIX: Remove setError when courses are empty ---
+      // if (courses.length === 0) {
+      //   setError('You are not enrolled in any courses yet.'); // REMOVED THIS LINE
+      // }
+      // --- END FIX ---
+    } catch (e) {
+      console.error('Failed to get enrolled courses from local DB:', e);
+      setError('Failed to load courses from local storage.'); // Keep error for actual DB issues
+    } finally {
+        setIsLoading(false); // Make sure loading stops even if offline & empty
+    }
+  };
+
+
   const fetchCourses = useCallback(async () => {
     if (!currentUserEmail) {
       // Don't fetch if no email
+      setIsLoading(false); // Stop loading if no user
       return;
     }
-    setIsLoading(true);
-    setError(null);
-    
+    // Only set loading true if not already refreshing
+    if (!isRefreshing) setIsLoading(true);
+    setError(null); // Clear previous errors on fetch start
+
     try {
       if (netInfo?.isInternetReachable) {
         console.log('Network is reachable. Fetching courses from API...');
@@ -93,25 +126,32 @@ export default function CoursesScreen() {
         if (response.data && response.data.courses) {
           setEnrolledCourses(response.data.courses);
           // Save to local DB for offline access
-          await Promise.all(response.data.courses.map((course: Course) => 
+          await Promise.all(response.data.courses.map((course: Course) =>
             saveCourseToDb(course, currentUserEmail)
           ));
         } else {
-          setEnrolledCourses([]);
+          setEnrolledCourses([]); // API returned no courses
         }
       } else {
         console.log('Network is not reachable. Fetching courses from local DB...');
-        await fetchEnrolledCoursesFromDb();
+        await fetchEnrolledCoursesFromDb(); // fetchEnrolledCoursesFromDb handles setIsLoading(false)
+        return; // Return early as fetchEnrolledCoursesFromDb handles loading state
       }
     } catch (error: any) {
       console.error('Failed to fetch courses:', error);
       setError('Failed to load courses. Please try again.');
-      // Attempt to load from DB as a fallback
-      await fetchEnrolledCoursesFromDb();
+      // Attempt to load from DB as a fallback only if online fetch failed
+      if (netInfo?.isInternetReachable) {
+         await fetchEnrolledCoursesFromDb();
+      }
     } finally {
-      setIsLoading(false);
+        // Only set loading false here if it wasn't an offline fetch
+        if (netInfo?.isInternetReachable) {
+            setIsLoading(false);
+            setIsRefreshing(false); // Also stop refreshing indicator
+        }
     }
-  }, [currentUserEmail, netInfo?.isInternetReachable]);
+  }, [currentUserEmail, netInfo?.isInternetReachable, isRefreshing]); // Added isRefreshing dependency
 
   useEffect(() => {
     const initialize = async () => {
@@ -127,11 +167,13 @@ export default function CoursesScreen() {
       } catch (e) {
         console.error('Failed to initialize database or get user data:', e);
         setError('Failed to initialize app. Please restart.');
+        setIsLoading(false); // Stop loading on init error
       }
     };
     initialize();
   }, []);
 
+  // Sync effect remains the same
   useEffect(() => {
     const submitOfflineAssessments = async () => {
       if (netInfo?.isInternetReachable) {
@@ -141,16 +183,14 @@ export default function CoursesScreen() {
           if (userData?.email) {
             const unsyncedSubmissions = await getUnsyncedSubmissions(userData.email);
             const completedOfflineQuizzes = await getCompletedOfflineQuizzes(userData.email);
-            
+
             if (unsyncedSubmissions.length > 0 || completedOfflineQuizzes.length > 0) {
               console.log(`📤 Found ${unsyncedSubmissions.length} file submissions and ${completedOfflineQuizzes.length} quizzes to sync`);
               await syncAllOfflineData();
               console.log('✅ Offline assessments synced successfully');
-              // Refresh data after sync
+              // Refresh data after sync (using fetchCourses which now handles online/offline)
               setTimeout(() => {
-                // Call the appropriate refresh function for each file
-                // For index.tsx: fetchCourses();
-                // For materialId.tsx: fetchMaterialDetails();
+                fetchCourses();
               }, 1000);
             }
           }
@@ -161,9 +201,9 @@ export default function CoursesScreen() {
     };
 
     submitOfflineAssessments();
-  }, [netInfo?.isInternetReachable]);
+  }, [netInfo?.isInternetReachable, fetchCourses]); // Added fetchCourses dependency
 
-  // Use useFocusEffect to refetch data when the screen is focused
+  // Focus effect remains the same
   useFocusEffect(
     useCallback(() => {
       if (currentUserEmail) {
@@ -173,7 +213,7 @@ export default function CoursesScreen() {
     }, [currentUserEmail, fetchCourses])
   );
 
-  // Enhanced deep link navigation logic with fix
+  // Deep link effect remains the same
   useEffect(() => {
     if (
       params.courseId &&
@@ -182,10 +222,10 @@ export default function CoursesScreen() {
       !hasNavigatedToCourseRef.current
     ) {
       const courseIdToNavigate = params.courseId;
-      const targetCourse = enrolledCourses.find(course => 
+      const targetCourse = enrolledCourses.find(course =>
         course.id.toString() === courseIdToNavigate.toString()
       );
-      
+
       if (targetCourse) {
         hasNavigatedToCourseRef.current = true;
         console.log(`Navigating to course ${courseIdToNavigate} from deep link.`);
@@ -193,7 +233,6 @@ export default function CoursesScreen() {
           pathname: `/courses/${courseIdToNavigate}`,
           params: { course: JSON.stringify(targetCourse) },
         });
-        // Clear the param so tab doesn't keep auto-navigating
         setTimeout(() => {
           if (router.setParams) {
             router.setParams({ courseId: undefined });
@@ -201,104 +240,48 @@ export default function CoursesScreen() {
         }, 500);
       } else {
         console.warn(`Deep link to course ID ${courseIdToNavigate} failed: Course not found in user's enrolled list.`);
-        // Optionally, show a toast or alert
-        // Toast library: Uncomment if you use Toast
-        // Toast.show({
-        //   type: 'error',
-        //   text1: 'Course Not Found',
-        //   text2: 'You may not be enrolled in the specified course.',
-        // });
       }
     }
-    // Reset the flag if params.courseId is removed
     if (!params.courseId) {
       hasNavigatedToCourseRef.current = false;
     }
   }, [params.courseId, isLoading, enrolledCourses]);
 
+  // Initial fetch trigger (now relies on currentUserEmail)
   useEffect(() => {
-    const fetchCourses = async () => {
-      if (!currentUserEmail) {
-        // Don't fetch if no email
-        return;
-      }
-      setIsLoading(true);
-      setError(null);
-      
-      if (netInfo?.isInternetReachable) {
-        console.log('Network is reachable. Fetching courses from API...');
-        try {
-          const response = await api.get('/my-courses');
-          if (response.data && response.data.courses) {
-            setEnrolledCourses(response.data.courses);
-            // Save to local DB for offline access
-            await Promise.all(response.data.courses.map((course: Course) => 
-              saveCourseToDb(course, currentUserEmail)
-            ));
-          } else {
-            setEnrolledCourses([]);
-          }
-        } catch (error: any) {
-          console.error('Failed to fetch courses:', error);
-          setError('Failed to load courses. Please try again.');
-          // Attempt to load from DB as a fallback
-          await fetchEnrolledCoursesFromDb();
-        } finally {
-          setIsLoading(false);
-        }
-      } else {
-        console.log('Network is not reachable. Fetching courses from local DB...');
-        await fetchEnrolledCoursesFromDb();
-      }
-    };
-    
     if (currentUserEmail) {
-      // Initial fetch is now handled by useFocusEffect
-      // fetchCourses();
+      // Initial fetch is now handled by useFocusEffect primarily,
+      // but we might need one here if focus effect doesn't run immediately
+       fetchCourses();
+    } else {
+      setIsLoading(false); // Stop loading if no user email yet
     }
-  }, [netInfo?.isInternetReachable, currentUserEmail]);
+  }, [currentUserEmail, fetchCourses]); // Added fetchCourses
 
-  // Helper function to fetch courses from the local database
-  const fetchEnrolledCoursesFromDb = async () => {
-    if (!currentUserEmail) {
-      setError('Cannot load courses. No user email found.');
-      setIsLoading(false);
-      return;
-    }
-    try {
-      const courses = await getEnrolledCoursesFromDb(currentUserEmail);
-      setEnrolledCourses(courses);
-      if (courses.length === 0) {
-        setError('You are not enrolled in any courses yet.');
-      }
-    } catch (e) {
-      console.error('Failed to get enrolled courses from local DB:', e);
-      setError('Failed to load courses from local storage.');
-    }
-  };
 
+  // handleRefresh remains the same
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
 
     if (!netInfo?.isInternetReachable) {
-      // Toast library: Uncomment if you use Toast
-      // Toast.show({
-      //   type: 'info',
-      //   text1: 'Offline Mode',
-      //   text2: 'Cannot refresh while offline. Showing cached data.',
-      // });
+      Alert.alert(
+        'Offline',
+        'Cannot refresh while offline. Showing cached data.',
+        [{ text: 'OK' }]
+      );
       setIsRefreshing(false);
       return;
     }
     try {
-      await fetchCourses();
+      await fetchCourses(); // fetchCourses now handles setIsRefreshing(false)
     } catch (error) {
       console.error('Error on refresh:', error);
-    } finally {
-      setIsRefreshing(false);
+      setIsRefreshing(false); // Ensure it stops on error too
     }
+    // Removed finally block as fetchCourses handles it
   }, [fetchCourses, netInfo?.isInternetReachable]);
 
+  // Offline warning effect remains the same
   useEffect(() => {
     const checkOfflineWarning = async () => {
       if (!netInfo?.isInternetReachable) {
@@ -308,19 +291,19 @@ export default function CoursesScreen() {
     checkOfflineWarning();
   }, [netInfo?.isInternetReachable]);
 
-  // Function to handle course settings
+  // handleCourseSettings remains the same
   const handleCourseSettings = (course: EnrolledCourse) => {
     setSelectedCourse(course);
     setIsSettingsModalVisible(true);
   };
 
-  // Function to unenroll from course
+  // handleUnenroll remains the same (uses the correct DB delete function)
   const handleUnenroll = async () => {
-    if (!selectedCourse) return;
+    if (!selectedCourse || !currentUserEmail) return;
 
     Alert.alert(
       'Unenroll from Course',
-      `Are you sure you want to unenroll from "${selectedCourse.title}"?\n\nThis will:\n• Remove you from the course\n• Delete all offline course data\n• Remove your access to course materials\n\nNote: Your submissions and grades will be preserved on the server.`,
+      `Are you sure you want to unenroll from "${selectedCourse.title}"?\n\nThis will:\n• Remove you from the course\n• Delete ALL offline course data\n• Remove your access to course materials\n\nNote: Your submissions and grades will be preserved on the server.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -330,74 +313,22 @@ export default function CoursesScreen() {
             setIsUnenrolling(true);
             try {
               console.log(`🔄 Unenrolling from course: ${selectedCourse.title} (ID: ${selectedCourse.id})`);
-
-              // Call backend API to unenroll
-              const response = await api.post('/unenroll', {
-                course_id: selectedCourse.id
-              });
-
+              const response = await api.post('/unenroll', { course_id: selectedCourse.id });
               if (response.status === 200) {
                 console.log('✅ Successfully unenrolled from course on server');
-
-                // Delete offline data
-                if (currentUserEmail) {
-                  const db = await getDb();
-
-                  // Delete course details
-                  await db.runAsync(
-                    'DELETE FROM offline_course_details WHERE course_id = ? AND user_email = ?',
-                    [selectedCourse.id, currentUserEmail]
-                  );
-
-                  // Delete materials
-                  await db.runAsync(
-                    'DELETE FROM offline_materials WHERE course_id = ? AND user_email = ?',
-                    [selectedCourse.id, currentUserEmail]
-                  );
-
-                  // Delete assessments and related data
-                  const assessments = await db.getAllAsync(
-                    'SELECT id FROM offline_assessments WHERE course_id = ? AND user_email = ?',
-                    [selectedCourse.id, currentUserEmail]
-                  ) as any[];
-
-                  for (const assessment of assessments) {
-                    await db.runAsync(
-                      'DELETE FROM offline_quiz_questions WHERE assessment_id = ? AND user_email = ?',
-                      [assessment.id, currentUserEmail]
-                    );
-
-                    await db.runAsync(
-                      'DELETE FROM offline_assessment_details WHERE assessment_id = ? AND user_email = ?',
-                      [assessment.id, currentUserEmail]
-                    );
-                  }
-
-                  await db.runAsync(
-                    'DELETE FROM offline_assessments WHERE course_id = ? AND user_email = ?',
-                    [selectedCourse.id, currentUserEmail]
-                  );
-
-                  // Delete the course itself
-                  await db.runAsync(
-                    'DELETE FROM offline_courses WHERE id = ? AND user_email = ?',
-                    [selectedCourse.id, currentUserEmail]
-                  );
-
-                  console.log('✅ Successfully deleted offline course data');
+                try {
+                  await deleteCourseAndRelatedDataFromDb(selectedCourse.id, currentUserEmail);
+                  console.log('✅ Successfully deleted all associated offline course data.');
+                } catch (dbError) {
+                  console.error('❌ Failed to delete offline data after unenroll, but server unenrollment succeeded:', dbError);
+                  Alert.alert('Cleanup Error', 'Unenrolled successfully, but failed to remove all local data. Please restart the app or clear cache if issues persist.');
                 }
-
-                // Close modal
                 setIsSettingsModalVisible(false);
                 setSelectedCourse(null);
-
-                // Refresh course list
-                await fetchCourses();
-
-                Alert.alert(
-                  'Success',
-                  `You have been unenrolled from "${selectedCourse.title}".`
-                );
+                await fetchCourses(); // Refresh list
+                Alert.alert('Success', `You have been unenrolled from "${selectedCourse.title}".`);
+              } else {
+                throw new Error(response.data?.message || 'Failed to unenroll on server');
               }
             } catch (error: any) {
               console.error('❌ Error unenrolling from course:', error);
@@ -412,7 +343,7 @@ export default function CoursesScreen() {
     );
   };
 
-  // Function to delete course and all its data
+  // handleDeleteCourse - adjusted to use the comprehensive delete function
   const handleDeleteCourse = async (course: EnrolledCourse) => {
     Alert.alert(
       'Delete Course Data',
@@ -429,57 +360,14 @@ export default function CoursesScreen() {
                 return;
               }
 
-              const db = await getDb();
-
               console.log(`🗑️ Deleting offline data for course: ${course.title} (ID: ${course.id})`);
 
-              // Delete course details
-              await db.runAsync(
-                'DELETE FROM offline_course_details WHERE course_id = ? AND user_email = ?',
-                [course.id, currentUserEmail]
-              );
-
-              // Delete materials
-              await db.runAsync(
-                'DELETE FROM offline_materials WHERE course_id = ? AND user_email = ?',
-                [course.id, currentUserEmail]
-              );
-
-              // Delete assessments
-              const assessments = await db.getAllAsync(
-                'SELECT id FROM offline_assessments WHERE course_id = ? AND user_email = ?',
-                [course.id, currentUserEmail]
-              ) as any[];
-
-              for (const assessment of assessments) {
-                // Delete quiz questions for this assessment
-                await db.runAsync(
-                  'DELETE FROM offline_quiz_questions WHERE assessment_id = ? AND user_email = ?',
-                  [assessment.id, currentUserEmail]
-                );
-
-                // Delete assessment details
-                await db.runAsync(
-                  'DELETE FROM offline_assessment_details WHERE assessment_id = ? AND user_email = ?',
-                  [assessment.id, currentUserEmail]
-                );
-              }
-
-              // Delete the assessments themselves
-              await db.runAsync(
-                'DELETE FROM offline_assessments WHERE course_id = ? AND user_email = ?',
-                [course.id, currentUserEmail]
-              );
-
-              // Delete the course itself
-              await db.runAsync(
-                'DELETE FROM offline_courses WHERE id = ? AND user_email = ?',
-                [course.id, currentUserEmail]
-              );
-
+              // --- FIX: Use the comprehensive delete function ---
+              await deleteCourseAndRelatedDataFromDb(course.id, currentUserEmail);
               console.log(`✅ Successfully deleted all offline data for course: ${course.title}`);
+              // --- END OF FIX ---
 
-              // Refresh the course list
+              // Refresh the course list directly from DB as we are offline
               await fetchEnrolledCoursesFromDb();
 
               Alert.alert(
@@ -496,10 +384,11 @@ export default function CoursesScreen() {
     );
   };
 
+  // renderCourseCard remains the same
   const renderCourseCard = ({ item, index }: { item: EnrolledCourse; index: number }) => {
     const color = courseColors[index % courseColors.length];
     const isOffline = !netInfo?.isInternetReachable;
-    
+
     return (
       <View style={styles.courseCardWrapper}>
         <TouchableOpacity
@@ -515,7 +404,7 @@ export default function CoursesScreen() {
               <Ionicons name="book-outline" size={28} color="#fff" />
             </View>
           </View>
-          
+
           <View style={styles.courseCardBody}>
             <Text style={styles.courseCardTitle} numberOfLines={2}>
               {item.title}
@@ -523,9 +412,9 @@ export default function CoursesScreen() {
             <Text style={styles.courseCardCode} numberOfLines={1}>
               {item.course_code}
             </Text>
-            
+
             <View style={styles.courseCardDivider} />
-            
+
             <View style={styles.courseCardFooter}>
               <View style={styles.instructorRow}>
                 <Ionicons name="person-outline" size={14} color="#5f6368" />
@@ -533,15 +422,11 @@ export default function CoursesScreen() {
                   {item.instructor?.name || 'N/A'}
                 </Text>
               </View>
-              <View style={styles.creditsRow}>
-                <Ionicons name="ribbon-outline" size={14} color="#5f6368" />
-                <Text style={styles.creditsText}>{item.credits} credits</Text>
-              </View>
+              {/* Credits Row removed as it's not in DB */}
             </View>
           </View>
         </TouchableOpacity>
-        
-        {/* Settings button - only shown when online */}
+
         {!isOffline && (
           <TouchableOpacity
             style={styles.settingsButton}
@@ -551,8 +436,7 @@ export default function CoursesScreen() {
             <Ionicons name="ellipsis-vertical" size={20} color="#5f6368" />
           </TouchableOpacity>
         )}
-        
-        {/* Delete button - only shown when offline */}
+
         {isOffline && (
           <TouchableOpacity
             style={styles.deleteButton}
@@ -566,6 +450,8 @@ export default function CoursesScreen() {
     );
   };
 
+  // --- Main Render Logic ---
+
   if (isLoading) {
     return (
       <View style={styles.container}>
@@ -577,22 +463,18 @@ export default function CoursesScreen() {
     );
   }
 
-  if (error) {
+  // --- FIX: Prioritize showing error only if it's a real loading error ---
+  // Don't show error screen just because courses are empty
+  if (error && enrolledCourses.length === 0) { // Only show error if list is also empty
     return (
       <View style={styles.container}>
         <View style={styles.errorContainer}>
           <Ionicons name="alert-circle-outline" size={64} color="#d93025" />
           <Text style={styles.errorTitle}>Oops!</Text>
           <Text style={styles.errorText}>{error}</Text>
-          <TouchableOpacity 
-            style={styles.retryButton} 
-            onPress={() => {
-              setError(null);
-              setIsLoading(true);
-              if (currentUserEmail) {
-                fetchEnrolledCoursesFromDb();
-              }
-            }}
+          <TouchableOpacity
+            style={styles.retryButton}
+            onPress={fetchCourses} // Use fetchCourses for retry
           >
             <Text style={styles.retryButtonText}>Try Again</Text>
           </TouchableOpacity>
@@ -600,12 +482,21 @@ export default function CoursesScreen() {
       </View>
     );
   }
+  // --- END FIX ---
 
-  if (enrolledCourses.length === 0) {
+
+  // --- FIX: Show empty state if not loading, no errors preventing load, AND list is empty ---
+  if (!isLoading && !error && enrolledCourses.length === 0) {
     return (
       <View style={styles.container}>
         <View style={styles.header}>
           <Text style={styles.headerTitle}>My Courses</Text>
+           {!netInfo?.isInternetReachable && (
+            <View style={styles.offlineNotice}>
+              <Ionicons name="cloud-offline-outline" size={16} color="#5f6368" />
+              <Text style={styles.offlineText}>Offline</Text>
+            </View>
+          )}
         </View>
         <View style={styles.emptyStateContainer}>
           <Ionicons name="school-outline" size={80} color="#dadce0" />
@@ -616,14 +507,21 @@ export default function CoursesScreen() {
           <Text style={styles.emptyStateText}>
             Visit the home screen to search and enroll!
           </Text>
+           <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+            tintColor="#1967d2"
+            colors={['#1967d2']}
+          />
         </View>
       </View>
     );
   }
+ // --- END FIX ---
 
+  // Default rendering if courses exist
   return (
     <View style={styles.container}>
-      {/* LMS-Style Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>My Courses</Text>
         <Text style={styles.headerSubtitle}>
@@ -637,7 +535,6 @@ export default function CoursesScreen() {
         )}
       </View>
 
-      {/* Courses Grid */}
       <FlatList
         data={enrolledCourses}
         keyExtractor={(item) => item.id.toString()}
@@ -656,61 +553,42 @@ export default function CoursesScreen() {
         }
       />
 
-      {/* Course Settings Modal */}
+      {/* Course Settings Modal (remains unchanged) */}
       <Modal
         visible={isSettingsModalVisible}
         transparent={true}
         animationType="fade"
-        onRequestClose={() => {
-          setIsSettingsModalVisible(false);
-          setSelectedCourse(null);
-        }}
+        onRequestClose={() => { setIsSettingsModalVisible(false); setSelectedCourse(null); }}
       >
         <TouchableOpacity
           style={styles.modalOverlay}
           activeOpacity={1}
-          onPress={() => {
-            setIsSettingsModalVisible(false);
-            setSelectedCourse(null);
-          }}
+          onPress={() => { setIsSettingsModalVisible(false); setSelectedCourse(null); }}
         >
           <View style={styles.modalContent} onStartShouldSetResponder={() => true}>
             <View style={styles.modalHeader}>
               <Ionicons name="settings-outline" size={24} color="#202124" />
               <Text style={styles.modalTitle}>Course Settings</Text>
             </View>
-
             {selectedCourse && (
               <>
                 <View style={styles.courseInfoSection}>
                   <Text style={styles.modalCourseTitle}>{selectedCourse.title}</Text>
                   <Text style={styles.modalCourseCode}>{selectedCourse.course_code}</Text>
                 </View>
-
                 <View style={styles.modalDivider} />
-
                 <TouchableOpacity
                   style={[styles.unenrollButton, isUnenrolling && styles.disabledButton]}
                   onPress={handleUnenroll}
                   disabled={isUnenrolling}
                   activeOpacity={0.7}
                 >
-                  {isUnenrolling ? (
-                    <ActivityIndicator size="small" color="#d93025" />
-                  ) : (
-                    <Ionicons name="exit-outline" size={20} color="#d93025" />
-                  )}
-                  <Text style={styles.unenrollButtonText}>
-                    {isUnenrolling ? 'Unenrolling...' : 'Unenroll from Course'}
-                  </Text>
+                  {isUnenrolling ? (<ActivityIndicator size="small" color="#d93025" />) : (<Ionicons name="exit-outline" size={20} color="#d93025" />)}
+                  <Text style={styles.unenrollButtonText}>{isUnenrolling ? 'Unenrolling...' : 'Unenroll from Course'}</Text>
                 </TouchableOpacity>
-
                 <TouchableOpacity
                   style={styles.cancelButton}
-                  onPress={() => {
-                    setIsSettingsModalVisible(false);
-                    setSelectedCourse(null);
-                  }}
+                  onPress={() => { setIsSettingsModalVisible(false); setSelectedCourse(null); }}
                   activeOpacity={0.7}
                 >
                   <Text style={styles.cancelButtonText}>Cancel</Text>
@@ -724,6 +602,7 @@ export default function CoursesScreen() {
   );
 }
 
+// Styles remain unchanged
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -731,7 +610,7 @@ const styles = StyleSheet.create({
   },
   header: {
     backgroundColor: '#fff',
-    paddingTop: 48,
+    paddingTop: 16,
     paddingHorizontal: 20,
     paddingBottom: 16,
     borderBottomWidth: 1,
@@ -928,11 +807,11 @@ const styles = StyleSheet.create({
     marginLeft: 6,
     flex: 1,
   },
-  creditsRow: {
+  creditsRow: { // Kept for consistency if data becomes available
     flexDirection: 'row',
     alignItems: 'center',
   },
-  creditsText: {
+  creditsText: { // Kept for consistency
     fontSize: 12,
     color: '#5f6368',
     marginLeft: 6,
