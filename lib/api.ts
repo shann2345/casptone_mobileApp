@@ -1,5 +1,4 @@
 import axios from 'axios';
-import { router } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
 import { establishTimeBaseline, getSavedServerTime, saveAssessmentReviewToDb, saveServerTime, updateOnlineSync } from './localDb';
 
@@ -175,22 +174,27 @@ const performOfflineSync = async () => {
 };
 
 // =================================================================
-// === MODIFIED INTERCEPTOR: Removed aggressive background sync    ===
+// === MODIFIED INTERCEPTOR: Removed navigation logic            ===
 // =================================================================
-// The useNetworkSync hook is a better place to handle this logic,
-// as it specifically triggers when coming back online.
+// The RootLayout (_layout.tsx) is now responsible for handling
+// the 401 redirect. The interceptor's *only* job is to
+// clear the data and reject the promise so _layout can catch it.
 api.interceptors.response.use(
   (response) => {
-    // The original, aggressive sync logic has been removed from here.
     return response;
   },
   async (error) => {
     const originalRequest = error.config;
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
-      console.log('❌ 401 Unauthenticated error caught. Clearing token and redirecting to login.');
+      console.log('❌ 401 Unauthenticated error caught in interceptor. Clearing token.');
       await clearAuthData();
-      router.replace('/login');
+      
+      // *** THIS LINE WAS REMOVED TO FIX THE RACE CONDITION ***
+      // router.replace('/login'); 
+      
+      // We reject the promise so the _layout.tsx can catch this
+      // error and set the initialRoute correctly.
       return Promise.reject(error);
     }
     return Promise.reject(error);
@@ -374,7 +378,7 @@ export const getServerTime = async (isConnected: boolean = true): Promise<string
       
       // Save time baseline AND update online sync timestamp
       await saveServerTime(userData.email, serverTime, new Date().toISOString());
-      await updateOnlineSync(userData.email); // NEW: Track when user was last online
+      await updateOnlineSync(userData.email); // NEW: Track when when user was last online
       
       return serverTime;
     }

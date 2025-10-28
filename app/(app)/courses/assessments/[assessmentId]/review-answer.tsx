@@ -129,25 +129,32 @@ export default function ReviewAnswerScreen() {
 
         // Rebuild True/False options if necessary (no changes)
         let optionsToRender = question.submitted_options || [];
-        if (question.question_type === 'true_false' && (optionsToRender.length === 0 || optionsToRender.length === 1 || optionsToRender.length === 2 && !optionsToRender.find(o => o.option_text === 'True'))) { // Added robustness check
+        if (question.question_type === 'true_false' && (optionsToRender.length === 0 || optionsToRender.length === 1 || optionsToRender.length === 2 && !optionsToRender.find(o => o.option_text === 'True'))) {
           const submittedAnswerText = question.submitted_answer; let selectedId: number | null = null;
           if (submittedAnswerText === 'True') selectedId = 1; else if (submittedAnswerText === 'False') selectedId = 2;
-          console.log(`[DEBUG T/F ${qIndex+1}] Rebuilding options. isCorrect: ${isQuestionCorrect}, submitted_answer: "${submittedAnswerText}", selectedId: ${selectedId}`);
           optionsToRender = [
             { id: question.id * 100 + 1, question_option_id: 1, option_text: 'True', is_selected: selectedId === 1, is_correct_option: false },
             { id: question.id * 100 + 2, question_option_id: 2, option_text: 'False', is_selected: selectedId === 2, is_correct_option: false }
           ];
         }
 
-        // --- Find Correct Answer Text for T/F and ID ---
+        // --- MODIFIED: Find Correct Answer Text for ID, T/F, AND MC ---
         let correctAnswerText: string | null = null;
-        if (question.question_type === 'identification' && question.question?.correct_answer) {
-          correctAnswerText = question.question.correct_answer;
-        } else if (question.question_type === 'true_false' && question.question?.correct_answer) {
-          // For T/F, the correct answer IS the text "True" or "False"
-          correctAnswerText = question.question.correct_answer;
+        const originalQ = question.question; // Shortcut for original question data
+
+        if (originalQ?.correct_answer !== null && originalQ?.correct_answer !== undefined) {
+          if (question.question_type === 'identification') {
+            correctAnswerText = originalQ.correct_answer;
+          } else if (question.question_type === 'true_false') {
+            correctAnswerText = originalQ.correct_answer; // Direct text "True" or "False"
+          } else if (question.question_type === 'multiple_choice') {
+            // Find the option text using the option_order saved in correct_answer
+            const correctOptionOrder = originalQ.correct_answer; // This is '0', '1', '2'...
+            const correctOption = (originalQ.questionOptions || []).find(opt => String(opt.option_order) === String(correctOptionOrder));
+            correctAnswerText = correctOption?.option_text || null; // Get the text
+          }
         }
-        // --- END ---
+        // --- END MODIFIED ---
 
         return (
           <View key={question.id} style={styles.questionCard}>
@@ -157,63 +164,45 @@ export default function ReviewAnswerScreen() {
             {(question.question_type === 'multiple_choice' || question.question_type === 'true_false') && (
               <View style={styles.optionsContainer}>
                 {(optionsToRender || []).map((option) => {
-                  // Make sure is_selected is strictly boolean
                   const isSelectedByUser = !!option.is_selected;
 
                   // Determine if this is the actual correct option using original question data
-                  const correctOptionValue = question.question?.correct_answer;
+                  const correctOptionValue = originalQ?.correct_answer;
                   let isCorrectOption = false;
 
                   if (question.question_type === 'true_false' && correctOptionValue) {
-                      // Compare option text ("True"/"False") with the correct answer text
                       isCorrectOption = option.option_text.toLowerCase() === correctOptionValue.toLowerCase();
                   } else if (question.question_type === 'multiple_choice' && correctOptionValue !== null && correctOptionValue !== undefined) {
-                     // Logic for Multiple Choice using option_order
-                     const currentOptionOrder = (question.question?.questionOptions || []).find(opt => opt.id === option.question_option_id)?.option_order;
-                     // ++ FIX: Compare numerically ++
-                     if (currentOptionOrder !== undefined && !isNaN(Number(correctOptionValue))) { // Check if found and correctValue is numeric
+                     const currentOptionOrder = (originalQ?.questionOptions || []).find(opt => opt.id === option.question_option_id)?.option_order;
+                     if (currentOptionOrder !== undefined && !isNaN(Number(correctOptionValue))) {
                          isCorrectOption = currentOptionOrder === Number(correctOptionValue);
-                     } else {
-                         console.warn(`[DEBUG MC ${qIndex+1}] Could not find or compare option_order for option ID ${option.question_option_id}. Correct Value: "${correctOptionValue}", Found Order: ${currentOptionOrder}`);
                      }
-                  } else { // Fallback
-                    isCorrectOption = !!option.is_correct_option;
+                  } else {
+                    isCorrectOption = !!option.is_correct_option; // Fallback
                   }
 
-                  // Determine styling based on requirements
+                  // Determine styling (no changes needed here)
                   const shouldShowGreen = isSelectedByUser && isQuestionCorrect === true;
-                  const shouldShowRed = isSelectedByUser && isQuestionCorrect === false; // Should work for T/F now
+                  const shouldShowRed = isSelectedByUser && isQuestionCorrect === false;
                   const shouldShowMissedCorrect = isCorrectOption && !isSelectedByUser && question.question_type === 'multiple_choice';
-
-                  // ++ DEBUG LOGGING for Styling (T/F specific) ++
-                  if (question.question_type === 'true_false') {
-                    console.log(`[DEBUG T/F ${qIndex+1}] Option "${option.option_text}": isSelectedByUser=${isSelectedByUser}, isQuestionCorrect=${isQuestionCorrect}, isCorrectOption=${isCorrectOption} => shouldShowRed=${shouldShowRed}`);
-                  }
-                  // ++ END DEBUG ++
 
                   return (
                     <TouchableOpacity
                       key={option.id}
                       style={[
                         styles.optionButton,
-                        shouldShowGreen && styles.correctOption, // User chose correctly
-                        shouldShowRed && styles.incorrectOption, // User chose incorrectly
-                        shouldShowMissedCorrect && styles.correctOption, // User missed this correct option (MC only)
+                        shouldShowGreen && styles.correctOption,
+                        shouldShowRed && styles.incorrectOption,
+                        shouldShowMissedCorrect && styles.correctOption,
                       ]}
                       disabled
                     >
-                      {/* Radio button for both types */}
                       <View style={styles.radioCircle}>
                         {isSelectedByUser && <View style={styles.radioChecked} />}
                       </View>
-
                       <Text style={styles.optionText}>{option.option_text}</Text>
-
-                      {/* Icons for user's selection */}
                       {shouldShowGreen && <Ionicons name="checkmark-circle" size={22} color="#137333" style={styles.correctnessIcon} />}
                       {shouldShowRed && <Ionicons name="close-circle" size={22} color="#d93025" style={styles.correctnessIcon} />}
-
-                      {/* Icon for the missed correct answer (MC only) */}
                       {shouldShowMissedCorrect && <Ionicons name="checkmark-circle-outline" size={22} color="#137333" style={styles.correctnessIcon} />}
                     </TouchableOpacity>
                   );
@@ -221,7 +210,7 @@ export default function ReviewAnswerScreen() {
               </View>
             )}
 
-            {/* Identification & Essay Answer Display */}
+            {/* Identification & Essay Answer Display (no changes)*/}
             {['identification', 'essay'].includes(question.question_type) && (
               <View style={styles.answerContainer}>
                 <Text style={styles.answerLabel}>Your Answer:</Text>
@@ -231,8 +220,6 @@ export default function ReviewAnswerScreen() {
                 ]}>
                   {question.submitted_answer || '(No answer provided)'}
                 </Text>
-
-                {/* Essay Note (no changes) */}
                 {question.question_type === 'essay' && (
                   <View style={styles.essayNoteContainer}>
                     <Ionicons name="information-circle-outline" size={18} color="#00579b" />
@@ -242,14 +229,14 @@ export default function ReviewAnswerScreen() {
               </View>
             )}
 
-            {/* Dedicated Correct Answer Box for ID and T/F */}
-            {correctAnswerText && (question.question_type === 'identification' || question.question_type === 'true_false') && (
+            {/* ++ MODIFIED: Dedicated Correct Answer Box for ID, T/F, AND MC ++ */}
+            {correctAnswerText && (question.question_type === 'identification' || question.question_type === 'true_false' || question.question_type === 'multiple_choice') && (
               <View style={styles.correctAnswerContainer}>
                 <Text style={styles.correctAnswerLabel}>Correct Answer:</Text>
                 <Text style={styles.correctAnswerText}>{correctAnswerText}</Text>
               </View>
             )}
-            {/* -- END -- */}
+            {/* -- END MODIFIED -- */}
 
 
             {/* Score Display (no changes) */}

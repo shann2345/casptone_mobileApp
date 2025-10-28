@@ -25,7 +25,6 @@ import {
   initDb,
   saveCourseToDb
 } from '../../../lib/localDb';
-import { showOfflineModeWarningIfNeeded } from '../../../lib/offlineWarning';
 
 const { width } = Dimensions.get('window');
 
@@ -281,15 +280,15 @@ export default function CoursesScreen() {
     // Removed finally block as fetchCourses handles it
   }, [fetchCourses, netInfo?.isInternetReachable]);
 
-  // Offline warning effect remains the same
-  useEffect(() => {
-    const checkOfflineWarning = async () => {
-      if (!netInfo?.isInternetReachable) {
-        await showOfflineModeWarningIfNeeded();
-      }
-    };
-    checkOfflineWarning();
-  }, [netInfo?.isInternetReachable]);
+  // // Offline warning effect remains the same
+  // useEffect(() => {
+  //   const checkOfflineWarning = async () => {
+  //     if (!netInfo?.isInternetReachable) {
+  //       await showOfflineModeWarningIfNeeded();
+  //     }
+  //   };
+  //   checkOfflineWarning();
+  // }, [netInfo?.isInternetReachable]);
 
   // handleCourseSettings remains the same
   const handleCourseSettings = (course: EnrolledCourse) => {

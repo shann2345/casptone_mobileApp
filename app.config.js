@@ -106,8 +106,11 @@ export default {
       // "eas": {
       //   "projectId": "864813f8-e96b-4dc2-980a-f78f61b3a262"
       // }
+      // "eas": {
+      //   "projectId": "c02beff9-ba4a-4afb-91b0-b2fff90a38ab"
+      // }
       "eas": {
-        "projectId": "c02beff9-ba4a-4afb-91b0-b2fff90a38ab"
+        "projectId": "f1b3f445-d766-4b2b-8b1a-5e486cc41470"
       }
     }
   }

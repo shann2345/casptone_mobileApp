@@ -11,6 +11,7 @@ import {
   getDb,
   getUnsyncedSubmissions,
   resetTimeCheckData,
+  saveAssessmentDetailsToDb, // ADDED: Required to update local status after sync
   saveCourseDetailsToDb,
   saveCourseToDb,
   saveServerTime,
@@ -59,6 +60,17 @@ interface SyncMetadata {
   last_course_sync: number;
   last_assessment_sync: number;
   last_quiz_sync: number;
+}
+
+// ADDED: Interface for latest assignment submission (used in post-sync refresh)
+interface LatestAssignmentSubmission {
+  has_submitted_file: boolean;
+  submitted_file_path: string | null;
+  submitted_file_url: string | null;
+  submitted_file_name: string | null;
+  original_filename: string | null;
+  submitted_at: string | null;
+  status: string | null;
 }
 
 // ============================================
@@ -152,6 +164,9 @@ export const useNetworkSync = () => {
           if (unsyncedSubmissions.length > 0 || unsyncedQuizzes.length > 0) {
             console.log(`📤 [Smart Sync] Phase 2: Syncing ${unsyncedSubmissions.length} submissions & ${unsyncedQuizzes.length} quizzes...`);
             
+            // NEW: Track IDs of assessments that need a post-sync status refresh
+            const submittedAssessmentIds = new Set<number>();
+            
             // Sync submissions
             for (const submission of unsyncedSubmissions) {
               try {
@@ -164,6 +179,7 @@ export const useNetworkSync = () => {
 
                 if (syncResult) {
                   await deleteOfflineSubmission(submission.id);
+                  submittedAssessmentIds.add(submission.assessment_id); // <-- TRACK ID
                   syncResults.assessmentsSubmitted++;
                 } else {
                   syncResults.errors.push(`Submission ${submission.id} failed`);
@@ -189,8 +205,9 @@ export const useNetworkSync = () => {
                 );
 
                 if (syncResult) {
-                  // --- MODIFICATION: Use the new, correct delete function ---
+                  // Use the new, correct delete function
                   await deleteCompletedOfflineQuizAttempt(quiz.assessment_id, userEmail);
+                  submittedAssessmentIds.add(quiz.assessment_id); // <-- TRACK ID
                   syncResults.quizzesSynced++;
                 } else {
                   syncResults.errors.push(`Quiz ${quiz.assessment_id} failed`);
@@ -199,6 +216,51 @@ export const useNetworkSync = () => {
                 syncResults.errors.push(`Quiz ${quiz.assessment_id} error`);
               }
             }
+            
+            // ==========================================================
+            //  ✅ CRITICAL FIX: REFRESH ASSIGNMENT/QUIZ STATUS
+            // ==========================================================
+            if (submittedAssessmentIds.size > 0) {
+                console.log(`📡 [Smart Sync] Refreshing local status for ${submittedAssessmentIds.size} submitted assessment(s)...`);
+
+                for (const assessmentId of submittedAssessmentIds) {
+                    try {
+                        let latestSubmission: LatestAssignmentSubmission | null = null;
+                        let attemptStatus: any = null;
+
+                        // 1. Fetch latest assignment submission details (for assignment types)
+                        try {
+                            const latestResponse = await api.get(`/assessments/${assessmentId}/latest-assignment-submission`);
+                            if (latestResponse.status === 200) {
+                                latestSubmission = latestResponse.data as LatestAssignmentSubmission;
+                            }
+                        } catch (e) {
+                            // This assessment might be a quiz/exam, or no submission found yet.
+                        }
+
+                        // 2. Fetch latest attempt status (for quiz/exam types)
+                        try {
+                            const attemptResponse = await api.get(`/assessments/${assessmentId}/attempt-status`);
+                            if (attemptResponse.status === 200) {
+                                attemptStatus = attemptResponse.data;
+                            }
+                        } catch (e) {
+                            // Ignore 404/etc, means no attempt status yet.
+                        }
+
+                        // 3. Save the new online status to the local offline_assessment_data table
+                        await saveAssessmentDetailsToDb(assessmentId, userEmail, attemptStatus, latestSubmission);
+                        
+                        console.log(`✅ [Smart Sync] Refreshed status for assessment ID: ${assessmentId}`);
+                        syncResults.assessmentDetailsUpdated++; 
+
+                    } catch (statusError) {
+                        console.error(`❌ [Smart Sync] Failed to refresh status for assessment ${assessmentId}:`, statusError);
+                        syncResults.errors.push(`Status refresh for ${assessmentId} failed`);
+                    }
+                }
+            }
+
           } else {
             console.log('✅ [Smart Sync] No offline work to sync (silent)');
           }
@@ -252,7 +314,7 @@ export const useNetworkSync = () => {
                 }
               );
 
-              syncResults.assessmentDetailsUpdated = syncResult.success;
+              syncResults.assessmentDetailsUpdated += syncResult.success;
               
               await updateSyncTimestamp(userEmail, 'assessment');
               console.log(`✅ [Smart Sync] Updated ${syncResult.success} assessment details (silent)`);
@@ -379,7 +441,7 @@ export const useNetworkSync = () => {
 };
 
 // ============================================
-// HELPER FUNCTIONS
+// HELPER FUNCTIONS (These remain unchanged)
 // ============================================
 
 /**

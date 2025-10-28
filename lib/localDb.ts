@@ -273,6 +273,7 @@ export const initDb = async (): Promise<void> => {
               end_time TEXT,
               is_completed INTEGER DEFAULT 0,
               answers TEXT,
+              shuffled_order TEXT, 
               FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessments(id, user_email) ON DELETE CASCADE
             );`,
             
@@ -301,6 +302,13 @@ export const initDb = async (): Promise<void> => {
               assessment_id INTEGER NOT NULL,
               user_email TEXT NOT NULL,
               review_data TEXT NOT NULL,
+              PRIMARY KEY (assessment_id, user_email),
+              FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessments(id, user_email) ON DELETE CASCADE
+            );`,
+
+            `CREATE TABLE IF NOT EXISTS unlocked_assessments (
+              assessment_id INTEGER NOT NULL,
+              user_email TEXT NOT NULL,
               PRIMARY KEY (assessment_id, user_email),
               FOREIGN KEY (assessment_id, user_email) REFERENCES offline_assessments(id, user_email) ON DELETE CASCADE
             );`
@@ -1595,7 +1603,7 @@ export const downloadAllQuizQuestions = async (
   }
 };
 
-export const startOfflineQuiz = async (assessmentId: number, userEmail: string): Promise<void> => {
+export const startOfflineQuiz = async (assessmentId: number, userEmail: string, shuffledOrder: number[]): Promise<void> => {
   try {
     await initDb();
     const db = await getDb();
@@ -1614,14 +1622,15 @@ export const startOfflineQuiz = async (assessmentId: number, userEmail: string):
 
       // Create new attempt
       await db.runAsync(
-        `INSERT INTO offline_quiz_attempts (assessment_id, user_email, start_time, answers, is_completed)
-         VALUES (?, ?, ?, ?, ?);`,
+        `INSERT INTO offline_quiz_attempts (assessment_id, user_email, start_time, answers, is_completed, shuffled_order)
+         VALUES (?, ?, ?, ?, ?, ?);`, // <-- MODIFIED SQL
         [
           assessmentId,
           userEmail,
           new Date().toISOString(),
           JSON.stringify({}),
-          0
+          0,
+          JSON.stringify(shuffledOrder) // <-- ADDED ORDER VALUE
         ]
       );
     });
@@ -1868,13 +1877,45 @@ export const getOfflineQuizAttempt = async (
   try {
     const db = await getDb();
     const result = await db.getFirstAsync(
-      `SELECT * FROM offline_quiz_attempts WHERE assessment_id = ? AND user_email = ? AND is_completed = 0;`,
+      // <-- MODIFIED SQL to select shuffled_order
+      `SELECT *, shuffled_order FROM offline_quiz_attempts WHERE assessment_id = ? AND user_email = ? AND is_completed = 0;`, 
       [assessmentId, userEmail]
     );
     return result || null;
   } catch (error) {
     console.error('Error checking for offline quiz attempt:', error);
     return null;
+  }
+};
+
+export const markAssessmentAsUnlocked = async (assessmentId: number, userEmail: string): Promise<void> => {
+  try {
+    await initDb();
+    const db = await getDb();
+    console.log(`🔑 Unlocking assessment ${assessmentId} for user ${userEmail}`);
+    await db.runAsync(
+      `INSERT OR IGNORE INTO unlocked_assessments (assessment_id, user_email) VALUES (?, ?);`,
+      [assessmentId, userEmail]
+    );
+  } catch (error) {
+    console.error(`❌ Failed to mark assessment ${assessmentId} as unlocked:`, error);
+  }
+};
+
+export const getUnlockedAssessmentIds = async (userEmail: string): Promise<Set<number>> => {
+  try {
+    await initDb();
+    const db = await getDb();
+    const results = await db.getAllAsync<{ assessment_id: number }>(
+      `SELECT assessment_id FROM unlocked_assessments WHERE user_email = ?;`,
+      [userEmail]
+    );
+    const idSet = new Set(results.map((row) => row.assessment_id));
+    console.log(`🔓 Found ${idSet.size} unlocked assessments for user ${userEmail}`);
+    return idSet;
+  } catch (error) {
+    console.error(`❌ Failed to get unlocked assessment IDs:`, error);
+    return new Set<number>();
   }
 };
 

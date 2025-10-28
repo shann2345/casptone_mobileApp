@@ -15,10 +15,10 @@ import {
 import { useApp } from '../../../../../context/AppContext';
 import { useNetworkStatus } from '../../../../../context/NetworkContext';
 import api, { getUserData, syncOfflineQuiz } from '../../../../../lib/api';
+// Removed `startOfflineQuiz` and `hasQuizQuestionsSaved` from imports as they are only used in AssessmentDetailsScreen now
 import { deleteCompletedOfflineQuizAttempt, deleteOfflineQuizAttempt, detectTimeManipulation, getAssessmentReviewFromDb, getCompletedOfflineQuizzes, getCurrentServerTime, getDb, getOfflineQuizAnswers, getOfflineQuizAttempt, getOfflineQuizAttemptStatus, getQuizQuestionsFromDb, saveAssessmentReviewToDb, submitOfflineQuiz, updateOfflineQuizAnswers, updateTimeSync } from '../../../../../lib/localDb';
 
-// ... (Keep all your interfaces: OriginalQuestion, SubmittedOption, SubmittedQuestion, AssessmentDetail, SubmittedAssessmentData) ...
-
+// Interface definitions (unchanged)
 interface OriginalQuestion {
     id: number;
     question_text: string;
@@ -26,7 +26,7 @@ interface OriginalQuestion {
     correct_answer: string | null;
     points: number;
 }
-
+// ... (rest of interfaces remain the same)
 interface SubmittedOption {
   id: number;
   submitted_question_id: number;
@@ -59,6 +59,7 @@ interface AssessmentDetail {
   duration_minutes?: number;
   points: number;
   unavailable_at?: string | null;
+  max_attempts?: number | null; 
 }
 
 interface SubmittedAssessmentData {
@@ -79,7 +80,6 @@ type StudentAnswers = {
     type: SubmittedQuestion['question_type'];
     answer: string | number[];
     isDirty?: boolean;
-    // --- ADDED: These fields will be populated on submit ---
     submitted_answer?: string | null;
     is_correct?: boolean | null;
     score_earned?: number | null;
@@ -102,37 +102,38 @@ export default function AttemptQuizScreen() {
   const studentAnswersRef = useRef<StudentAnswers>(studentAnswers);
   const [isSyncing, setIsSyncing] = useState(false);
   const [timeManipulationDetected, setTimeManipulationDetected] = useState(false);
-  const [autoSubmitting, setAutoSubmitting] = useState(false); // Track auto-submission
+  const [autoSubmitting, setAutoSubmitting] = useState(false); 
   const [shuffledQuestions, setShuffledQuestions] = useState<SubmittedQuestion[]>([]);
   const { restartApp } = useApp();
   const [justSubmittedOnline, setJustSubmittedOnline] = useState(false);
-  const [progressAnim] = useState(new Animated.Value(1)); // Start at 100%
+  const [progressAnim] = useState(new Animated.Value(1)); 
 
-  // Check if we're in review mode
   const isReviewMode = isReview === 'true';
 
-  // ++ MODIFIED: Added helper variables for dynamic text ++
   const assessmentType = submittedAssessment?.assessment?.type || 'assessment';
   const assessmentTypeCapitalized = assessmentType.charAt(0).toUpperCase() + assessmentType.slice(1);
 
-  // ... (Keep your useEffects for: screenshot prevention, progress bar, studentAnswersRef, shuffle, fetchQuizData, timer, time manipulation checks) ...
+  // --- UTILITY FUNCTION: Fisher-Yates shuffle algorithm (Keep here just in case, though unused for resume) ---
+  const shuffleArray = (array: SubmittedQuestion[]): SubmittedQuestion[] => {
+      const newArray = [...array];
+      for (let i = newArray.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
+      }
+      return newArray;
+  };
+  // --- END UTILITY FUNCTION ---
 
-  // --- START: All your existing hooks (no changes) ---
+  // --- START: All existing hooks (mostly untouched) ---
   useEffect(() => {
-    // This function activates screenshot prevention.
     const activateScreenshotPrevention = async () => {
       await ScreenCapture.preventScreenCaptureAsync();
     };
-
-    // This function deactivates screenshot prevention.
     const deactivateScreenshotPrevention = async () => {
       await ScreenCapture.allowScreenCaptureAsync();
     };
 
-    // Activate prevention when the component mounts.
     activateScreenshotPrevention();
-
-    // Add a listener that triggers an alert when a screenshot is taken.
     const subscription = ScreenCapture.addScreenshotListener(() => {
       Alert.alert(
         'Screenshot Not Allowed',
@@ -141,13 +142,11 @@ export default function AttemptQuizScreen() {
       );
     });
 
-    // Cleanup function: This runs when the user navigates away from the screen.
     return () => {
       deactivateScreenshotPrevention();
       subscription.remove();
     };
-  }, [assessmentType]); // Re-run if assessmentType changes
-  // -- END ADDED --
+  }, [assessmentType]);
 
   useEffect(() => {
     if (!submittedAssessment || !submittedAssessment.assessment.duration_minutes || 
@@ -159,38 +158,30 @@ export default function AttemptQuizScreen() {
       const totalSeconds = submittedAssessment.assessment.duration_minutes * 60;
       const progress = timeLeft / totalSeconds;
       
-      // Animate the progress bar smoothly
       Animated.timing(progressAnim, {
-        toValue: Math.max(0, progress), // Ensure it doesn't go below 0
-        duration: 300, // Smooth 300ms animation
-        useNativeDriver: false, // Required for width animations
+        toValue: Math.max(0, progress),
+        duration: 300,
+        useNativeDriver: false,
       }).start();
     }
   }, [timeLeft, submittedAssessment?.assessment.duration_minutes]);
 
-  // Update the ref whenever studentAnswers state changes
   useEffect(() => {
     studentAnswersRef.current = studentAnswers;
   }, [studentAnswers]);
 
+  // Simple effect to load data into shuffledQuestions state when available
   useEffect(() => {
     if (submittedAssessment && submittedAssessment.submitted_questions.length > 0 && shuffledQuestions.length === 0) {
-      // Fisher-Yates shuffle algorithm to randomize for UX only
-      const shuffleArray = (array: SubmittedQuestion[]) => {
-        const newArray = [...array];
-        for (let i = newArray.length - 1; i > 0; i--) {
-          const j = Math.floor(Math.random() * (i + 1));
-          [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
-        }
-        return newArray;
-      };
-      const shuffled = shuffleArray(submittedAssessment.submitted_questions);
-      setShuffledQuestions(shuffled);
+      // The order of submitted_questions is already correct (default or persisted)
+      setShuffledQuestions(submittedAssessment.submitted_questions);
+      console.log('✅ Initial questions loaded into display list.');
+    } else if (submittedAssessment && submittedAssessment.submitted_questions.length > 0 && shuffledQuestions.length > 0) {
+        console.log('✅ Questions already loaded, preserving order.');
     }
   }, [submittedAssessment]);
 
   useEffect(() => {
-    // Determine which ID to use based on the mode
     const idToFetch = isOffline === 'true' ? assessmentId : submittedAssessmentId;
     if (idToFetch) {
       fetchQuizData(Number(idToFetch));
@@ -200,7 +191,6 @@ export default function AttemptQuizScreen() {
       if (timerInterval) {
         clearInterval(timerInterval);
       }
-      // Clean up all debounce timers on unmount
       Object.values(debounceTimers.current).forEach(timer => {
         if (timer) clearTimeout(timer);
       });
@@ -208,35 +198,27 @@ export default function AttemptQuizScreen() {
   }, [submittedAssessmentId, assessmentId, isOffline]);
 
   useEffect(() => {
-    // --- FIX START: This entire effect hook is refactored for accuracy ---
     console.log("🕐 Timer effect triggered", {
       hasAssessment: !!submittedAssessment,
       hasDuration: !!submittedAssessment?.assessment?.duration_minutes,
       status: submittedAssessment?.status,
     });
     
-    // Ensure we only run this logic when necessary
     if (!submittedAssessment || !submittedAssessment.assessment.duration_minutes || submittedAssessment.status !== 'in_progress' || timeManipulationDetected) {
       if (timeManipulationDetected) {
-        setTimeLeft(0); // If manipulation was detected before, ensure timer shows 0
+        setTimeLeft(0);
       }
-      return; // Exit if no timer is needed
+      return;
     }
 
-    // --- STEP 1: Synchronous Initial Calculation ---
-    // These calculations are fast and run instantly.
     const startTime = new Date(submittedAssessment.started_at).getTime();
     const durationMs = submittedAssessment.assessment.duration_minutes * 60 * 1000;
     const endTime = startTime + durationMs;
 
-    // Calculate the initial time left based on the current device time.
-    // This gives us an immediate, accurate value for the first render.
     const initialTimeLeft = Math.floor((endTime - Date.now()) / 1000);
     setTimeLeft(initialTimeLeft > 0 ? initialTimeLeft : 0);
     console.log(`⏰ Timer synchronously set to initial value: ${initialTimeLeft} seconds`);
 
-    // --- STEP 2: Asynchronous Interval for Updates and Security Checks ---
-    // This interval will run every second to update the time and perform slower checks.
     const calculateTimeLeft = async () => {
       try {
         const user = await getUserData();
@@ -246,7 +228,6 @@ export default function AttemptQuizScreen() {
           return;
         }
 
-        // Security Check 1: Time Manipulation
         const timeCheck = await detectTimeManipulation(user.email);
         if (!timeCheck.isValid) {
           console.error('❌ Time manipulation detected:', timeCheck.reason);
@@ -255,7 +236,6 @@ export default function AttemptQuizScreen() {
           return;
         }
 
-        // Get the most accurate "current" time
         let currentTime;
         if (isOffline === 'true') {
           const serverTimeString = await getCurrentServerTime(user.email);
@@ -269,24 +249,20 @@ export default function AttemptQuizScreen() {
           currentTime = Date.now();
         }
 
-        // Calculate time left from the fixed end time
         const remainingMs = endTime - currentTime;
         let remainingSeconds = Math.floor(remainingMs / 1000);
 
-        // Security Check 2: Due Date (unavailable_at)
         if (submittedAssessment.assessment.unavailable_at) {
           const unavailableTime = new Date(submittedAssessment.assessment.unavailable_at).getTime();
           if (currentTime >= unavailableTime) {
             console.log("🚨 Assessment unavailable time reached, auto-submitting");
             await handleAutoSubmit('assessment_unavailable');
-            return; // Stop further execution
+            return;
           }
-          // Also make sure the timer doesn't go past the due date
           const timeUntilUnavailable = Math.floor((unavailableTime - currentTime) / 1000);
           remainingSeconds = Math.min(remainingSeconds, timeUntilUnavailable);
         }
 
-        // Final check and state update
         if (remainingSeconds <= 0) {
           setTimeLeft(0);
           await handleAutoSubmit('time_up');
@@ -304,14 +280,11 @@ export default function AttemptQuizScreen() {
 
     const interval = setInterval(calculateTimeLeft, 1000);
 
-    // Cleanup function to clear the interval when the component unmounts
     return () => {
       clearInterval(interval);
     };
-    // --- FIX END ---
   }, [submittedAssessment, isOffline, timeManipulationDetected, autoSubmitting]);
 
-  // Add time manipulation check on component mount and periodically
   useEffect(() => {
     const checkTimeManipulation = async () => {
       const user = await getUserData();
@@ -326,18 +299,14 @@ export default function AttemptQuizScreen() {
 
     checkTimeManipulation();
 
-    // Periodic time manipulation check every 30 seconds
     const timeCheckInterval = setInterval(checkTimeManipulation, 30000);
 
     return () => {
       clearInterval(timeCheckInterval);
     };
   }, []);
-  // --- END: All your existing hooks (no changes) ---
+  // --- END: All existing hooks (mostly untouched) ---
 
-  // ... (Keep your existing fetchQuizData, initializeStudentAnswers, saveAnswer, handleAnswerChange, and handleAutoSubmit functions) ...
-
-  // --- START: Existing functions (no changes) ---
   const handleAutoSubmit = async (reason: 'time_up' | 'time_manipulation' | 'no_server_time' | 'timer_error' | 'assessment_unavailable') => {
     if (autoSubmitting) {
       console.log('Auto-submission already in progress, skipping...');
@@ -348,7 +317,6 @@ export default function AttemptQuizScreen() {
     setAutoSubmitting(true);
 
     try {
-      // Show appropriate alert based on reason
       let alertTitle = `${assessmentTypeCapitalized} Auto-Submitted`;
       let alertMessage = "";
       
@@ -375,16 +343,11 @@ export default function AttemptQuizScreen() {
           break;
       }
 
-      // Automatically submit without user confirmation for security reasons
-      await handleFinalizeQuiz(true); // Pass true to indicate auto-submission
+      await handleFinalizeQuiz(true);
 
-      // Show alert after submission
-      // MODIFICATION: Check if submission was online or offline
       if (isOffline === 'true' && !netInfo?.isInternetReachable) {
-         // Offline auto-submit, app will restart, no alert needed here
          console.log("Offline auto-submit complete, app will restart.");
       } else {
-        // Online auto-submit, show alert and navigate
         Alert.alert(alertTitle, alertMessage, [
           { 
             text: "OK", 
@@ -397,7 +360,6 @@ export default function AttemptQuizScreen() {
 
     } catch (error) {
       console.error('❌ Error during auto-submission:', error);
-      // Even if submission fails, mark as completed locally to prevent further attempts
       setSubmittedAssessment(prev => prev ? { 
         ...prev, 
         status: 'completed', 
@@ -430,21 +392,21 @@ export default function AttemptQuizScreen() {
       console.log(`✅ Review Mode: Fetching review data for assessment ${id}`);
       try {
           if (netInfo?.isInternetReachable && !isOffline) {
-              // Online review - fetch from API
               const response = await api.get(`/submitted-assessments/${submittedAssessmentId}`);
               if (response.status === 200) {
                   const fetchedSubmittedAssessment = response.data.submitted_assessment;
                   setSubmittedAssessment(fetchedSubmittedAssessment);
+                  setShuffledQuestions(fetchedSubmittedAssessment.submitted_questions); 
                   initializeStudentAnswers(fetchedSubmittedAssessment.submitted_questions);
                   console.log('✅ Online review data loaded');
               } else {
                   setError(`Failed to load review data.`);
               }
           } else {
-              // Offline review - get from local DB
               const reviewData = await getAssessmentReviewFromDb(id, user.email);
               if (reviewData) {
                   setSubmittedAssessment(reviewData);
+                  setShuffledQuestions(reviewData.submitted_questions); 
                   initializeStudentAnswers(reviewData.submitted_questions);
                   console.log('✅ Offline review data loaded');
               } else {
@@ -457,10 +419,9 @@ export default function AttemptQuizScreen() {
       } finally {
           setLoading(false);
       }
-      return; // Stop execution to avoid fetching attempt data
+      return;
   }
 
-    // Check for time manipulation before loading quiz data
     try {
       const timeCheck = await detectTimeManipulation(userEmail);
       if (!timeCheck.isValid) {
@@ -481,17 +442,32 @@ export default function AttemptQuizScreen() {
       if (isOffline === 'true') {
         console.log(`Offline: Fetching ${assessmentType} attempt from local DB.`);
         
+        // 1. Fetch data from local DB
         const localQuestions = await getQuizQuestionsFromDb(id, userEmail);
         const localAnswers = await getOfflineQuizAnswers(id, userEmail);
         const attemptStatusString = await getOfflineQuizAttemptStatus(id, userEmail);
         const isCompleted = attemptStatusString === 'completed' || attemptStatusString === 'error';
-
-        // Get the actual start time from the offline attempt
         const offlineAttempt = await getOfflineQuizAttempt(id, userEmail);
         const startTime = offlineAttempt?.start_time || new Date().toISOString();
-
+        
+        // 2. Get persisted shuffled order
+        let persistedOrder: number[] | null = null;
+        if (offlineAttempt?.shuffled_order) {
+            try {
+                const parsedOrder = typeof offlineAttempt.shuffled_order === 'string' 
+                    ? JSON.parse(offlineAttempt.shuffled_order) 
+                    : offlineAttempt.shuffled_order;
+                
+                if (Array.isArray(parsedOrder) && parsedOrder.every(qId => typeof qId === 'number')) {
+                    persistedOrder = parsedOrder;
+                }
+            } catch (e) {
+                console.error('❌ Failed to parse shuffled order from DB:', e);
+                persistedOrder = null;
+            }
+        }
+        
         if (localQuestions.length > 0) {
-          // Get duration and unavailable_at from the assessment data in the database
           const db = await getDb();
           const assessmentResult = await db.getFirstAsync(
             `SELECT duration_minutes, unavailable_at, type FROM offline_assessments WHERE id = ? AND user_email = ?;`,
@@ -501,14 +477,12 @@ export default function AttemptQuizScreen() {
           const unavailableAt = assessmentResult?.unavailable_at || null;
           const localAssessmentType = assessmentResult?.type || 'quiz';
           
-          console.log("📊 Assessment data found:", { durationMinutes, unavailableAt, localAssessmentType });
-          
-          const processedQuestions = localQuestions.map(q => {
+          const processedQuestions: SubmittedQuestion[] = localQuestions.map(q => {
+            // ... (unchanged logic for mapping local question data to SubmittedQuestion interface) ...
             let parsedOptions: any[] = [];
             
             // Special handling for true_false questions
             if (q.question_type === 'true_false') {
-              // If options exist, parse them
               if (q.options) {
                 try {
                   if (typeof q.options === 'string') {
@@ -529,16 +503,13 @@ export default function AttemptQuizScreen() {
                 }
               }
               
-              // If no options or empty options, create default True/False options
               if (parsedOptions.length === 0) {
-                console.log(`Creating default True/False options for question ${q.id}`);
                 parsedOptions = [
                   { id: 1, text: 'True', option_text: 'True', is_correct: false },
                   { id: 2, text: 'False', option_text: 'False', is_correct: false }
                 ];
               }
             } else {
-              // Handle other question types (existing logic)
               if (q.options) {
                 try {
                   if (typeof q.options === 'string') {
@@ -546,7 +517,6 @@ export default function AttemptQuizScreen() {
                     if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
                       parsedOptions = JSON.parse(q.options);
                     } else {
-                      console.warn(`Question ${q.id} has non-JSON options string:`, q.options);
                       parsedOptions = [];
                     }
                   } else if (Array.isArray(q.options)) {
@@ -556,7 +526,6 @@ export default function AttemptQuizScreen() {
                   }
                 } catch (e) {
                   console.error('Failed to parse options for question', q.id, 'Error:', e);
-                  console.error('Problematic options value:', q.options);
                   parsedOptions = [];
                 }
               }
@@ -567,12 +536,10 @@ export default function AttemptQuizScreen() {
               const optionId = option.id || index + 1;
               let isSelected = false;
 
-              // Check if this option was selected in the saved answers
               if (q.question_type === 'multiple_choice' || q.question_type === 'true_false') {
                 if (Array.isArray(submittedAnswer)) {
                   isSelected = submittedAnswer.includes(optionId);
                 } else if (submittedAnswer !== undefined && submittedAnswer !== null) {
-                  // For single-select, submittedAnswer will be a number, not an array.
                   isSelected = submittedAnswer === optionId;
                 }
               }
@@ -600,8 +567,25 @@ export default function AttemptQuizScreen() {
               is_correct: null,
               score_earned: null,
               submitted_options: submittedOptions,
-            };
+            } as SubmittedQuestion; 
           });
+
+          // 3. Apply persisted order if resuming
+          let finalQuestionOrder = processedQuestions;
+
+          if (persistedOrder && isCompleted === false) {
+            const questionMap = new Map(processedQuestions.map(q => [q.id, q]));
+            const reorderedQuestions = persistedOrder
+              .map(qId => questionMap.get(qId))
+              .filter((q): q is SubmittedQuestion => q !== undefined);
+            
+            if (reorderedQuestions.length === processedQuestions.length) {
+              finalQuestionOrder = reorderedQuestions;
+              console.log(`✅ Loaded persisted question order for assessment ${id}.`);
+            } else {
+              console.warn(`⚠️ Persisted order length mismatch. Using default order.`);
+            }
+          }
 
           const offlineSubmittedAssessment: SubmittedAssessmentData = {
             id: id,
@@ -612,7 +596,7 @@ export default function AttemptQuizScreen() {
             started_at: startTime,
             completed_at: isCompleted ? new Date().toISOString() : null,
             submitted_file_path: null,
-            submitted_questions: processedQuestions,
+            submitted_questions: finalQuestionOrder, // Use the reordered list
             assessment: {
               id: id,
               course_id: -1,
@@ -625,17 +609,10 @@ export default function AttemptQuizScreen() {
           };
 
           setSubmittedAssessment(offlineSubmittedAssessment);
+          setShuffledQuestions(finalQuestionOrder);
           initializeStudentAnswers(processedQuestions);
           console.log(`✅ Offline ${assessmentTypeCapitalized} Data Loaded Successfully with duration:`, durationMinutes);
           
-          console.log("🔍 Assessment data debug:", {
-            id: offlineSubmittedAssessment.id,
-            title: offlineSubmittedAssessment.assessment.title,
-            duration_minutes: offlineSubmittedAssessment.assessment.duration_minutes,
-            unavailable_at: offlineSubmittedAssessment.assessment.unavailable_at,
-            status: offlineSubmittedAssessment.status,
-            started_at: offlineSubmittedAssessment.started_at
-          });
         } else {
           setError(`Offline: ${assessmentTypeCapitalized} questions not found locally. Please start the ${assessmentType} first while online.`);
           Alert.alert(
@@ -645,7 +622,7 @@ export default function AttemptQuizScreen() {
           );
         }
       } else {
-        // ONLINE MODE - only fetch if online
+        // ONLINE MODE - unchanged logic
         if (!netInfo?.isInternetReachable) {
           setError(`No internet connection. Please connect to the internet to load this ${assessmentType}.`);
           setLoading(false);
@@ -657,13 +634,13 @@ export default function AttemptQuizScreen() {
           if (response.status === 200) {
             const fetchedSubmittedAssessment = response.data.submitted_assessment;
             setSubmittedAssessment(fetchedSubmittedAssessment);
+            setShuffledQuestions(fetchedSubmittedAssessment.submitted_questions); // Load fetched order
             initializeStudentAnswers(fetchedSubmittedAssessment.submitted_questions);
             console.log(`API Response for Submitted ${assessmentTypeCapitalized} Details:`, JSON.stringify(response.data, null, 2));
           } else {
             setError(`Failed to fetch submitted ${assessmentType} details.`);
           }
         } catch (err: any) {
-          // Only log error if online, otherwise suppress
           if (netInfo?.isInternetReachable) {
             console.error(`Failed to fetch ${assessmentType} data:`, err.response?.data || err.message);
           }
@@ -671,7 +648,6 @@ export default function AttemptQuizScreen() {
         }
       }
     } catch (err: any) {
-      // Only log error if online, otherwise suppress
       if (netInfo?.isInternetReachable) {
         console.error(`Failed to fetch ${assessmentType} data:`, err.response?.data || err.message);
       }
@@ -680,6 +656,7 @@ export default function AttemptQuizScreen() {
       setLoading(false);
     }
   };
+
 
   const initializeStudentAnswers = (questions: SubmittedQuestion[]) => {
     const initialAnswers: StudentAnswers = {};
@@ -694,11 +671,9 @@ export default function AttemptQuizScreen() {
     setStudentAnswers(initialAnswers);
   };
 
-  // Add this useEffect hook to your component to attempt sync when connection is restored
   useEffect(() => {
     let mounted = true;
     
-    // Check for connection and sync if online
     if (netInfo?.isInternetReachable && isOffline === 'true' && mounted) {
       console.log('🔄 Connection restored, attempting to sync offline assessments...');
       syncCompletedOfflineQuiz();
@@ -710,7 +685,6 @@ export default function AttemptQuizScreen() {
   }, [netInfo?.isInternetReachable]);
 
   const saveAnswer = async (submittedQuestionId: number) => {
-    // Check for time manipulation before saving
     const user = await getUserData();
     if (user?.email) {
       const timeCheck = await detectTimeManipulation(user.email);
@@ -728,7 +702,6 @@ export default function AttemptQuizScreen() {
 
     try {
       if (netInfo?.isInternetReachable && isOffline !== 'true') {
-        // ONLINE MODE - existing logic
         let payload: any = {};
         if (answerData.type === 'multiple_choice' || answerData.type === 'true_false') {
           payload.selected_option_ids = answerData.answer as number[];
@@ -744,19 +717,16 @@ export default function AttemptQuizScreen() {
             }));
           }
         } catch (err: any) {
-          // Only log error if online, otherwise suppress
           if (netInfo?.isInternetReachable) {
             console.error('Error saving answer:', err.response?.data || err);
           }
         }
       } else {
-        // OFFLINE MODE - Save answers to local database
         if (user && user.email && submittedAssessment) {
           const updatedAnswers = {
             ...studentAnswersRef.current,
             [submittedQuestionId]: answerData,
           };
-          // Use the new localDb function to update answers
           await updateOfflineQuizAnswers(submittedAssessment.assessment_id, user.email, updatedAnswers);
           setStudentAnswers(prev => ({
             ...prev,
@@ -765,7 +735,6 @@ export default function AttemptQuizScreen() {
         }
       }
     } catch (err: any) {
-      // Only log error if online, otherwise suppress
       if (netInfo?.isInternetReachable) {
         console.error('Error saving answer:', err.response?.data || err);
       }
@@ -783,7 +752,6 @@ export default function AttemptQuizScreen() {
     type: SubmittedQuestion['question_type'], 
     value: string | number | number[]
   ) => {
-    // Prevent answer changes if time manipulation is detected
     if (timeManipulationDetected) {
       Alert.alert(
         "Action Blocked",
@@ -798,19 +766,15 @@ export default function AttemptQuizScreen() {
       [submittedQuestionId]: { type, answer: value, isDirty: true },
     }));
 
-    // Clear existing debounce timer
     if (debounceTimers.current[submittedQuestionId]) {
       clearTimeout(debounceTimers.current[submittedQuestionId] as unknown as NodeJS.Timeout);
     }
 
-    // Set up debounced saving for both online and offline modes
     debounceTimers.current[submittedQuestionId] = setTimeout(() => {
       saveAnswer(submittedQuestionId);
     }, 1000);
   };
-  // --- END: Existing functions (no changes) ---
 
-  // ... (Keep your existing syncCompletedOfflineQuiz function) ...
   const syncCompletedOfflineQuiz = async () => {
     if (!netInfo?.isInternetReachable || !submittedAssessment || !assessmentId) return;
     
@@ -844,7 +808,6 @@ export default function AttemptQuizScreen() {
         
         setSavingAnswers(new Set([...Array.from(savingAnswers), -1]));
         
-        // --- MODIFICATION: Find the quiz to sync from the local DB ---
         const quizToSync = completedQuizzes.find(quiz => 
           quiz.assessment_id === parseInt(assessmentId as string)
         );
@@ -857,7 +820,6 @@ export default function AttemptQuizScreen() {
         const answersJson = quizToSync.answers;
         const startTime = quizToSync.start_time;
         const endTime = quizToSync.end_time;
-        // --- END MODIFICATION ---
 
         const syncSuccess = await syncOfflineQuiz(
           parseInt(assessmentId as string),
@@ -869,11 +831,9 @@ export default function AttemptQuizScreen() {
         if (syncSuccess) {
           console.log(`✅ Offline ${assessmentType} successfully synced with server`);
           
-          // ✅ DELETE LOCAL DATA
           await deleteCompletedOfflineQuizAttempt(parseInt(assessmentId as string), userEmail);
           console.log('🧹 Local offline attempt data cleaned up after sync');
           
-          // ✅ IMPORTANT: Show success message and navigate back
           Alert.alert(
             'Sync Complete',
             `Your offline ${assessmentType} has been successfully synced with the server.`,
@@ -881,8 +841,6 @@ export default function AttemptQuizScreen() {
               { 
                 text: 'OK', 
                 onPress: () => {
-                  // Navigate back to assessment details page
-                  // This will trigger a refresh and show the updated status
                   router.replace(`/courses/assessments/${assessmentId}`);
                 }
               }
@@ -927,11 +885,6 @@ export default function AttemptQuizScreen() {
   }, [netInfo?.isInternetReachable, submittedAssessment?.status, justSubmittedOnline]);
 
 
-  // --- ⬇️ ALL NEW/REFACTORED FUNCTIONS ⬇️ ---
-
-  /**
-   * NEW HELPER: Processes and formats the final answers for submission.
-   */
   const getFormattedAnswers = (): StudentAnswers => {
     const formattedAnswers: StudentAnswers = {};
         
@@ -979,15 +932,10 @@ export default function AttemptQuizScreen() {
         isDirty: false
       };
     }
-    // Update state with formatted answers
     setStudentAnswers(formattedAnswers);
     return formattedAnswers;
   };
 
-  /**
-   * NEW HELPER: Saves the quiz locally as "completed" and forces an app restart.
-   * This is the "truly offline" submission path.
-   */
   const saveQuizAsOffline = async (
     userEmail: string | undefined, 
     assessmentId: string | string[] | undefined, 
@@ -997,11 +945,10 @@ export default function AttemptQuizScreen() {
     if (userEmail && assessmentId) {
       try {
         await submitOfflineQuiz(parseInt(assessmentId as string), userEmail, formattedAnswers);
-        await deleteOfflineQuizAttempt(Number(assessmentId), userEmail); // Clean up in-progress attempt
+        await deleteOfflineQuizAttempt(Number(assessmentId), userEmail);
         setSubmittedAssessment(prev => prev ? { ...prev, status: 'completed', completed_at: new Date().toISOString() } : null);
         
         if (!isAutoSubmission) {
-          // Show alert requiring app restart for offline completion
           Alert.alert(
             `✅ ${assessmentTypeCapitalized} Completed Offline`,
             `Your ${assessmentType} has been saved locally and marked as completed.\n\n⚠️ The app needs to restart to properly save your offline progress.\n\nPress OK to restart the app now.`,
@@ -1014,10 +961,9 @@ export default function AttemptQuizScreen() {
                 }
               }
             ],
-            { cancelable: false } // Prevent dismissing the alert
+            { cancelable: false }
           );
         } else {
-          // For auto-submission, restart without additional alert
           console.log('🔄 Auto-submission complete, restarting app...');
           restartApp();
         }
@@ -1030,37 +976,30 @@ export default function AttemptQuizScreen() {
     }
   };
 
-
-  /**
-   * REFACTORED: This function now handles both online and offline submissions.
-   */
   const handleFinalizeQuiz = async (isAutoSubmission: boolean = false) => {
     try {
       setSubmitting(true);
       const user = await getUserData();
       const userEmail = user?.email;
       
-      // --- ⬇️ NEW: Check for unanswered questions ⬇️ ---
       if (!isAutoSubmission) {
         const unansweredQuestions: string[] = [];
         
-        // Use shuffledQuestions as it's what the user sees
         for (let i = 0; i < shuffledQuestions.length; i++) {
           const question = shuffledQuestions[i];
-          const answerData = studentAnswers[question.id]; // Get answer from state
+          const answerData = studentAnswers[question.id];
           
           let isAnswered = false;
           if (answerData) {
             if (answerData.type === 'multiple_choice' || answerData.type === 'true_false') {
               isAnswered = (answerData.answer as number[]).length > 0;
             } else {
-              // Check for non-empty string for essay/identification
               isAnswered = (answerData.answer as string).trim() !== '';
             }
           }
           
           if (!isAnswered) {
-            unansweredQuestions.push(`Q${i + 1}`); // Use the user-facing index
+            unansweredQuestions.push(`Q${i + 1}`);
           }
         }
 
@@ -1070,13 +1009,11 @@ export default function AttemptQuizScreen() {
             `Please answer all questions before submitting. You are missing: \n\n${unansweredQuestions.join(', ')}`,
             [{ text: 'OK' }]
           );
-          setSubmitting(false); // Stop the spinner
-          return; // 🛑 Stop the submission
+          setSubmitting(false);
+          return;
         }
       }
-      // --- ⬆️ END: Check for unanswered questions ⬆️ ---
       
-      // Final time manipulation check before submission (skip for auto-submission due to time manipulation)
       if (userEmail && !isAutoSubmission) {
         const timeCheck = await detectTimeManipulation(userEmail);
         if (!timeCheck.isValid) {
@@ -1086,17 +1023,13 @@ export default function AttemptQuizScreen() {
             `Time manipulation detected. ${assessmentTypeCapitalized} submission cannot proceed for security reasons.`,
             [{ text: "OK", onPress: () => router.back() }]
           );
-          setSubmitting(false); // Add this
+          setSubmitting(false);
           return;
         }
       }
       
-      // Get the final formatted answers *once*
       const formattedAnswers = getFormattedAnswers();
 
-      // --- ⬇️ NEW NETWORK-AWARE LOGIC ⬇️ ---
-
-      // CASE 1: User is ONLINE (even if quiz started in offline-first mode)
       if (isOffline === 'true' && netInfo?.isInternetReachable) {
         console.log(isAutoSubmission ? `Auto-submitting ONLINE (from offline-first mode)...` : `Submitting ONLINE (from offline-first mode)...`);
         
@@ -1105,7 +1038,6 @@ export default function AttemptQuizScreen() {
           const startTime = submittedAssessment.started_at;
           const endTime = new Date().toISOString();
 
-          // Attempt to sync directly to the server
           const syncSuccess = await syncOfflineQuiz(
             parseInt(assessmentId as string),
             answersJson,
@@ -1114,10 +1046,8 @@ export default function AttemptQuizScreen() {
           );
 
           if (syncSuccess) {
-            // SUCCESS! Bypassed the offline queue.
             console.log(`✅ Direct online sync successful for ${assessmentType} ${assessmentId}`);
             
-            // Clean up the 'in-progress' (is_completed = 0) local record
             await deleteOfflineQuizAttempt(Number(assessmentId), userEmail);
             
             if (!isAutoSubmission) {
@@ -1128,31 +1058,25 @@ export default function AttemptQuizScreen() {
                 [{ text: 'OK', onPress: () => router.replace(`/courses/assessments/${assessmentId}`) }]
               );
             }
-            // No app restart needed!
           } else {
-            // FAILED to sync directly. Fallback to saving locally.
             console.warn(`⚠️ Direct online sync failed. Falling back to offline save for ${assessmentType} ${assessmentId}.`);
             await saveQuizAsOffline(userEmail, assessmentId, isAutoSubmission, formattedAnswers);
           }
         } else {
-          // Should not happen, but fallback just in case
           console.error("❌ Missing user/assessment data during online submit. Saving offline.");
           await saveQuizAsOffline(userEmail, assessmentId, isAutoSubmission, formattedAnswers);
         }
       } 
-      // CASE 2: User is TRULY OFFLINE
       else if (isOffline === 'true') {
         console.log(isAutoSubmission ? `Auto-submitting OFFLINE...` : `Submitting OFFLINE...`);
         await saveQuizAsOffline(userEmail, assessmentId, isAutoSubmission, formattedAnswers);
       } 
-      // CASE 3: (Original Online Mode - currently unused but kept for safety)
       else {
         console.log(isAutoSubmission ? `Auto-submitting (original online mode)...` : `Submitting (original online mode)...`);
         if (!netInfo?.isInternetReachable) {
            Alert.alert('No Internet', `Cannot submit ${assessmentType} while offline. Please connect to the internet and try again.`);
            return;
         }
-        // ... (original online logic from your file) ...
         const response = await api.post(`/submitted-assessments/${submittedAssessmentId}/finalize-quiz`);
         if (response.status === 200 && response.data.submitted_assessment) {
           const reviewData = response.data.submitted_assessment;
@@ -1185,16 +1109,13 @@ export default function AttemptQuizScreen() {
 
   const formatTime = (totalSeconds: number | null) => {
     if (totalSeconds === null || totalSeconds < 0) return 'N/A';
-    
-    // Use Math.ceil to round up to the nearest minute
     const minutes = Math.ceil(totalSeconds / 60);
-
-    // Return just the minutes
-    // We add "min" for clarity, but you can remove it
     return `${minutes.toString()} min`;
   };
 
-  // ... (Keep the entire return (JSX) part of your component, it's all correct) ...
+  // NOTE: The handleStartQuizAttempt function has been removed from this file (attempt-quiz.tsx)
+  // as it belongs in the parent file ([assessmentId].tsx).
+
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -1215,7 +1136,6 @@ export default function AttemptQuizScreen() {
     );
   }
 
-  // ++ MODIFIED: Renamed 'quiz' to 'assessment' for clarity ++
   const assessment = submittedAssessment.assessment;
 
   return (
@@ -1302,24 +1222,17 @@ export default function AttemptQuizScreen() {
             <Text style={styles.questionText}>
               Q{qIndex + 1}. {question.question_text}
             </Text>
-            {savingAnswers.has(question.id) && isReview !== 'true' && (
-              <View style={styles.savingIndicator}>
-                <ActivityIndicator size="small" color="#007bff" />
-                <Text style={styles.savingText}>Saving...</Text>
-              </View>
-            )}
+            {/* REMOVED: Saving indicator from here */}
           </View>
 
           {(question.question_type === 'multiple_choice' || question.question_type === 'true_false') && (
             <View style={styles.optionsContainer}>
               {(question.submitted_options || []).map((option) => {
                 
-                {/* This determines if an option is selected, handling both review and attempt modes */}
                 const isSelectedByUser = isReview === 'true' 
                     ? option.is_selected 
                     : (studentAnswers[question.id]?.answer as number[] || []).includes(option.question_option_id);
                 
-                {/* These are specifically for review mode */}
                 const isCorrectOption = option.is_correct_option;
                 const reviewStyles = [];
                 if (isReview === 'true') {
@@ -1334,17 +1247,15 @@ export default function AttemptQuizScreen() {
                       styles.optionButton,
                       isSelectedByUser && isReview !== 'true' && styles.optionSelected,
                       (timeManipulationDetected || autoSubmitting) && styles.disabledOption,
-                      ...reviewStyles, // Apply review styles here
+                      ...reviewStyles,
                     ]}
                     onPress={() => {
                       if (isReview === 'true' || timeManipulationDetected || autoSubmitting) return;
                       
                       let newSelection: number[];
                       if (question.question_type === 'multiple_choice' || question.question_type === 'true_false') {
-                        // For single-choice behavior
                         newSelection = [option.question_option_id];
                       } else {
-                        // Logic for multi-select if you ever add it
                         const currentSelection = (studentAnswers[question.id]?.answer as number[] || []);
                         if (currentSelection.includes(option.question_option_id)) {
                           newSelection = currentSelection.filter(id => id !== option.question_option_id);
@@ -1354,10 +1265,8 @@ export default function AttemptQuizScreen() {
                       }
                       handleAnswerChange(question.id, question.question_type, newSelection);
                     }}
-                    // Disable button if not in progress OR if in review mode
                     disabled={submittedAssessment.status !== 'in_progress' || timeManipulationDetected || autoSubmitting || isReview === 'true'}
                   >
-                    {/* Your existing radio/checkbox UI */}
                     {question.question_type === 'true_false' ? (
                       <View style={styles.radioCircle}>{isSelectedByUser && <View style={styles.radioChecked} />}</View>
                     ) : (
@@ -1368,7 +1277,6 @@ export default function AttemptQuizScreen() {
                       {option.option_text}
                     </Text>
 
-                    {/* These icons will only appear in review mode */}
                     {isReview === 'true' && isSelectedByUser && !isCorrectOption && <Ionicons name="close-circle" size={22} color="#d93025" style={styles.correctnessIcon} />}
                     {isReview === 'true' && isCorrectOption && <Ionicons name="checkmark-circle" size={22} color="#137333" style={styles.correctnessIcon} />}
                   </TouchableOpacity>
@@ -1393,13 +1301,10 @@ export default function AttemptQuizScreen() {
                   : "Your answer..."
                 }
                 multiline={question.question_type === 'essay'}
-                // Show submitted answer in review, otherwise show current state for attempting
                 value={isReview === 'true' ? question.submitted_answer || '' : studentAnswers[question.id]?.answer as string || ''}
                 onChangeText={(text) => handleAnswerChange(question.id, question.question_type, text)}
-                // Disable editing if not in progress OR if in review mode
                 editable={submittedAssessment.status === 'in_progress' && !timeManipulationDetected && !autoSubmitting && isReview !== 'true'}
               />
-              {/* This block only appears in review mode for identification questions */}
               {isReview === 'true' && question.question_type === 'identification' && question.original_question && (
                 <View style={styles.correctAnswerContainer}>
                     <Text style={styles.correctAnswerLabel}>Correct Answer:</Text>
@@ -1408,21 +1313,24 @@ export default function AttemptQuizScreen() {
               )}
             </>
           )}
-          {/* --- MODIFICATION END --- */}
           
-          
-          {/* --- MODIFICATION START: Combined Logic for Points/Score Display --- */}
+          {/* MOVED: Saving indicator to the bottom */}
           <View style={styles.pointsContainer}>
             <Text style={styles.pointsText}>Points: {question.max_points}</Text>
-            {/* This block will only appear in review mode to show the score for the question */}
             {isReview === 'true' && question.score_earned !== null && (
                 <Text style={[styles.scoreText, question.is_correct ? styles.correctScore : styles.incorrectScore]}>
                     Score: {question.score_earned} / {question.max_points}
                     {question.is_correct !== null && (question.is_correct ? ' ✓' : ' ✗')}
                 </Text>
             )}
+            {/* NEW LOCATION */}
+            {savingAnswers.has(question.id) && isReview !== 'true' && (
+              <View style={styles.savingIndicatorBottom}>
+                <ActivityIndicator size="small" color="#1967d2" />
+                <Text style={styles.savingText}>Saving...</Text>
+              </View>
+            )}
           </View>
-          {/* --- MODIFICATION END --- */}
         </View>
       ))}
 
@@ -1467,7 +1375,6 @@ export default function AttemptQuizScreen() {
   );
 }
 
-// ... (Keep all your existing styles) ...
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -1612,10 +1519,17 @@ const styles = StyleSheet.create({
     color: '#202124',
     lineHeight: 24,
   },
+  // REMOVED: Saving indicator style from here
   savingIndicator: {
     flexDirection: 'row',
     alignItems: 'center',
     marginLeft: 12,
+  },
+  savingIndicatorBottom: { // ADDED NEW STYLE for bottom indicator
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginLeft: 12,
+    marginTop: 8,
   },
   savingText: {
     fontSize: 12,
@@ -1766,7 +1680,6 @@ const styles = StyleSheet.create({
   progressBarFill: {
     height: '100%',
     borderRadius: 4,
-    // backgroundColor is set dynamically in the component
   },
   correctOption: { borderColor: '#137333', backgroundColor: '#e6f4ea', borderWidth: 2 },
   incorrectOption: { borderColor: '#d93025', backgroundColor: '#fce8e6', borderWidth: 1.5 },
@@ -1774,7 +1687,12 @@ const styles = StyleSheet.create({
   correctAnswerContainer: { marginTop: 12, padding: 10, backgroundColor: '#e6f4ea', borderRadius: 8, borderLeftWidth: 4, borderLeftColor: '#137333' },
   correctAnswerLabel: { fontSize: 13, fontWeight: 'bold', color: '#137333', marginBottom: 4 },
   correctAnswerText: { fontSize: 15, color: '#0d652d' },
-  pointsContainer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 },
+  pointsContainer: { 
+    flexDirection: 'row', 
+    justifyContent: 'space-between', 
+    alignItems: 'center', 
+    marginTop: 12 
+  },
   completedContainer: {
     backgroundColor: '#fff',
     borderRadius: 8,

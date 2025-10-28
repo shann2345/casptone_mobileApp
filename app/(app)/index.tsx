@@ -24,7 +24,7 @@ import {
   syncAllAssessmentDetails,
   updateTimeSync
 } from '../../lib/localDb';
-import { showOfflineModeGuide, showOfflineModeWarningIfNeeded } from '../../lib/offlineWarning';
+import { showOfflineModeGuide } from '../../lib/offlineWarning';
 const { width, height } = Dimensions.get('window');
 
 interface Course {
@@ -374,15 +374,19 @@ export default function HomeScreen() {
     checkAssessmentsNeedingDetails();
   }, [enrolledCourses, isInitialized]);
 
-  useEffect(() => {
-    const checkOfflineWarning = async () => {
-      if (!netInfo?.isInternetReachable) {
-        await showOfflineModeWarningIfNeeded();
-      }
-    };
+  // // MODIFICATION: Updated the offline warning check
+  // useEffect(() => {
+  //   const checkOfflineWarning = async () => {
+  //     // This now strictly checks if the network is "false" (explicitly offline)
+  //     // and will no longer fire if netInfo is null or undefined.
+  //     if (netInfo?.isInternetReachable === false) {
+  //       await showOfflineModeWarningIfNeeded();
+  //     }
+  //   };
     
-    checkOfflineWarning();
-  }, [netInfo?.isInternetReachable]);
+  //   checkOfflineWarning();
+  // }, [netInfo?.isInternetReachable]);
+  // // END MODIFICATION
 
   const fetchAndSaveCompleteCoursesData = async (courses: EnrolledCourse[], userEmail: string) => {
     console.log('Starting to fetch complete course data for offline access...');

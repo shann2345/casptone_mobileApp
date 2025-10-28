@@ -1,16 +1,16 @@
 // app/(app)/_layout.tsx
+import { CustomHeader } from '@/components/CustomHeader';
 import { useNetworkSync } from '@/hooks/useNetworkSync';
 import { unregisterBackgroundSync } from '@/lib/backgroundSync';
 import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
-import { Tabs, useRouter } from 'expo-router';
+import { Tabs, usePathname, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   FlatList,
-  Image,
   Modal,
   StyleSheet,
   Text,
@@ -24,6 +24,7 @@ import { clearOfflineData } from '../../lib/localDb';
 
 export default function AppLayout() {
   const router = useRouter();
+  const pathname = usePathname();
   const { isConnected, netInfo } = useNetworkStatus();
   const [initials, setInitials] = useState<string>('');
   const [profileImage, setProfileImage] = useState<string | null>(null);
@@ -32,7 +33,6 @@ export default function AppLayout() {
   const [isNotificationModalVisible, setIsNotificationModalVisible] = useState<boolean>(false);
   const [isProfileMenuVisible, setIsProfileMenuVisible] = useState<boolean>(false);
   
-  // *** NEW *** - State for handling downloads
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<number>(0);
 
@@ -100,7 +100,6 @@ export default function AppLayout() {
     );
   };
 
-  // *** NEW *** - Function to handle downloading file from notification
   const handleDownloadNotificationAttachment = async (item: any) => {
     if (!netInfo?.isInternetReachable) {
       Alert.alert('Offline Mode', 'File downloading requires an internet connection.');
@@ -146,7 +145,7 @@ export default function AppLayout() {
 
       const downloadResumable = FileSystem.createDownloadResumable(
         downloadUrl, localUri,
-        { headers: { 'Authorization': authHeader } },
+        { headers: { 'Authorization': String(authHeader) } },
         ({ totalBytesWritten, totalBytesExpectedToWrite }) => {
           if (totalBytesExpectedToWrite > 0) {
             const progress = totalBytesWritten / totalBytesExpectedToWrite;
@@ -157,7 +156,7 @@ export default function AppLayout() {
 
       const result = await downloadResumable.downloadAsync();
       if (result?.uri) {
-        Alert.alert('Download Complete!', `"${material.title}" has been saved to your device.`);
+        Alert.alert('Download Complete!', `"${material.title}" has been saved to the app.`);
       } else {
         throw new Error('Download failed.');
       }
@@ -172,7 +171,7 @@ export default function AppLayout() {
   const loadNotifications = async () => {
     try {
       if (!netInfo?.isInternetReachable) {
-        console.log('📡 No internet connection - skipping notification fetch');
+        console.log('🔡 No internet connection - skipping notification fetch');
         return;
       }
       const userData = await getUserData();
@@ -253,7 +252,7 @@ export default function AppLayout() {
         clearInterval(notificationInterval);
         notificationInterval = null;
       }
-      console.log('📡 Offline mode - notification interval disabled');
+      console.log('🔡 Offline mode - notification interval disabled');
     }
     return () => {
       if (notificationInterval) {
@@ -327,21 +326,45 @@ export default function AppLayout() {
   const toggleNotificationModal = () => setIsNotificationModalVisible(!isNotificationModalVisible);
   const toggleProfileMenu = () => setIsProfileMenuVisible(!isProfileMenuVisible);
 
-  const headerRightComponent = (
-    <HeaderRight
-      initials={initials}
-      profileImage={profileImage}
-      toggleNotificationModal={netInfo?.isInternetReachable ? toggleNotificationModal : () => console.log('📡 Notifications disabled - no internet')}
-      toggleProfileMenu={toggleProfileMenu}
-      unreadCount={unreadCount}
-      isInternetReachable={netInfo?.isInternetReachable}
-    />
-  );
+  // Check if we're on a detail screen (within the courses stack but not the index)
+  const isOnCoursesDetailScreen = () => {
+    return pathname.includes('/courses/') && 
+           !pathname.endsWith('/courses') && 
+           !pathname.endsWith('/courses/');
+  };
+
+  // Get current screen title based on pathname
+  const getScreenTitle = () => {
+    if (pathname.includes('/to-do')) return 'To-do';
+    if (pathname.includes('/settings')) return 'Settings';
+    if (pathname === '/courses' || pathname === '/courses/') return 'My Courses';
+    return 'Dashboard';
+  };
+
+  // Check if we should hide notifications (on settings screen)
+  const shouldHideNotifications = pathname.includes('/settings');
+
+  // Only show header on tab screens, NOT on detail screens within courses
+  const shouldShowHeader = !isOnCoursesDetailScreen();
 
   return (
     <>
+      {shouldShowHeader && (
+        <CustomHeader
+          title={getScreenTitle()}
+          initials={initials}
+          profileImage={profileImage}
+          unreadCount={unreadCount}
+          onNotificationPress={netInfo?.isInternetReachable ? toggleNotificationModal : () => console.log('🔡 Notifications disabled - no internet')}
+          onProfilePress={toggleProfileMenu}
+          isInternetReachable={netInfo?.isInternetReachable ?? false}
+          hideNotifications={shouldHideNotifications}
+        />
+      )}
+      
       <Tabs
         screenOptions={{
+          headerShown: false,
           tabBarActiveTintColor: '#007bff',
           tabBarInactiveTintColor: '#888',
           tabBarStyle: { 
@@ -353,26 +376,36 @@ export default function AppLayout() {
             fontSize: 12, 
             fontWeight: '500',
           },
-          headerStyle: { 
-            backgroundColor: '#007bff',
-            elevation: 4,
-            shadowColor: '#000',
-            shadowOffset: { width: 0, height: 2 },
-            shadowOpacity: 0.1,
-            shadowRadius: 4,
-          },
-          headerTitleStyle: { 
-            fontWeight: 'bold',
-            fontSize: 20,
-          },
-          headerTintColor: '#fff',
-          headerShown: true,
         }}
       >
-        <Tabs.Screen name="index" options={{ tabBarLabel: 'Home', headerTitle: 'Dashboard', tabBarIcon: ({ color }) => <Ionicons name="home" size={24} color={color} />, headerRight: () => headerRightComponent }} />
-        <Tabs.Screen name="courses" options={{ tabBarLabel: 'Courses', tabBarIcon: ({ color }) => <Ionicons name="book" size={24} color={color} />, headerShown: false }} />
-        <Tabs.Screen name="to-do" options={{ tabBarLabel: 'To-do', headerTitle: 'To-do', tabBarIcon: ({ color }) => <Ionicons name="document-text" size={24} color={color} />, headerRight: () => headerRightComponent }} />
-        <Tabs.Screen name="settings" options={{ tabBarLabel: 'Settings', headerTitle: 'Settings', tabBarIcon: ({ color }) => <Ionicons name="settings" size={24} color={color} /> }} />
+        <Tabs.Screen 
+          name="index" 
+          options={{ 
+            tabBarLabel: 'Home', 
+            tabBarIcon: ({ color }) => <Ionicons name="home" size={24} color={color} /> 
+          }} 
+        />
+        <Tabs.Screen 
+          name="courses" 
+          options={{ 
+            tabBarLabel: 'Courses', 
+            tabBarIcon: ({ color }) => <Ionicons name="book" size={24} color={color} /> 
+          }} 
+        />
+        <Tabs.Screen 
+          name="to-do" 
+          options={{ 
+            tabBarLabel: 'To-do', 
+            tabBarIcon: ({ color }) => <Ionicons name="document-text" size={24} color={color} /> 
+          }} 
+        />
+        <Tabs.Screen 
+          name="settings" 
+          options={{ 
+            tabBarLabel: 'Settings', 
+            tabBarIcon: ({ color }) => <Ionicons name="settings" size={24} color={color} /> 
+          }} 
+        />
       </Tabs>
 
       {/* Notification Modal */}
@@ -395,7 +428,6 @@ export default function AppLayout() {
             <FlatList
               data={notifications}
               keyExtractor={(item) => item.id}
-              // *** MODIFIED *** - Updated renderItem with download button
               renderItem={({ item }) => (
                 <TouchableOpacity style={[styles.notificationItem, !item.read && styles.unreadNotification]} onPress={() => markAsRead(item.id)}>
                   <View style={styles.notificationContent}>
@@ -439,7 +471,7 @@ export default function AppLayout() {
               )}
               ListEmptyComponent={
                 <View style={styles.noNotificationsContainer}>
-                  <Text style={styles.noNotificationsIcon}>🔕</Text>
+                  <Text style={styles.noNotificationsIcon}>📕</Text>
                   <Text style={styles.noNotificationsText}>You're all caught up!</Text>
                 </View>
               }
@@ -469,69 +501,7 @@ export default function AppLayout() {
   );
 }
 
-const HeaderRight = ({
-  initials,
-  profileImage,
-  toggleNotificationModal,
-  toggleProfileMenu,
-  unreadCount,
-  isInternetReachable,
-}: {
-  initials: string;
-  profileImage: string | null;
-  toggleNotificationModal: () => void;
-  toggleProfileMenu: () => void;
-  unreadCount: number;
-  isInternetReachable?: boolean;
-}) => {
-  const { isConnected } = useNetworkStatus();
-
-  return (
-    <View style={styles.headerRightWrapper}>
-      <TouchableOpacity style={[styles.bellIconContainer, !isInternetReachable && styles.disabledBellIcon]} onPress={toggleNotificationModal} disabled={!isInternetReachable}>
-        <Ionicons name={isInternetReachable ? "notifications-outline" : "notifications-off-outline"} size={24} color={isInternetReachable ? "#fff" : "#ccc"} />
-        {unreadCount > 0 && isInternetReachable && (
-          <View style={styles.notificationBadge}>
-            <Text style={styles.notificationBadgeText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
-          </View>
-        )}
-      </TouchableOpacity>
-      
-      <TouchableOpacity onPress={toggleProfileMenu} style={styles.profileContainer}>
-        {profileImage ? (
-          <View style={styles.profileImageContainer}>
-            <Image source={{ uri: profileImage }} style={styles.profileImage} onError={() => console.log('Failed to load profile image')} />
-            <View style={[styles.statusDot, { backgroundColor: isConnected ? '#28a745' : '#dc3545' }]} />
-          </View>
-        ) : initials ? (
-          <View style={styles.initialsCircle}>
-            <Text style={styles.initialsText}>{initials}</Text>
-            <View style={[styles.statusDot, { backgroundColor: isConnected ? '#28a745' : '#dc3545' }]} />
-          </View>
-        ) : (
-          <View style={styles.defaultIconContainer}>
-            <Ionicons name="person-circle-outline" size={30} color="#fff" />
-            <View style={[styles.statusDot, { backgroundColor: isConnected ? '#28a745' : '#dc3545' }]} />
-          </View>
-        )}
-      </TouchableOpacity>
-    </View>
-  );
-};
-
 const styles = StyleSheet.create({
-  headerRightWrapper: { flexDirection: 'row', alignItems: 'center', marginRight: 16, gap: 12 },
-  bellIconContainer: { justifyContent: 'center', alignItems: 'center', position: 'relative', width: 44, height: 44, borderRadius: 22 },
-  disabledBellIcon: { opacity: 0.5 },
-  notificationBadge: { position: 'absolute', top: 2, right: 2, backgroundColor: '#dc3545', borderRadius: 12, minWidth: 22, height: 22, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 5, borderWidth: 2, borderColor: '#007bff' },
-  notificationBadgeText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
-  profileContainer: { position: 'relative', justifyContent: 'center', alignItems: 'center', width: 44, height: 44 },
-  profileImageContainer: { width: 44, height: 44, borderRadius: 22, borderWidth: 2.5, borderColor: '#fff', overflow: 'hidden', backgroundColor: '#fff' },
-  profileImage: { width: '100%', height: '100%', resizeMode: 'cover' },
-  initialsCircle: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#1E90FF', justifyContent: 'center', alignItems: 'center', borderWidth: 2.5, borderColor: '#fff' },
-  initialsText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
-  defaultIconContainer: { position: 'relative', justifyContent: 'center', alignItems: 'center' },
-  statusDot: { position: 'absolute', bottom: 0, right: 0, width: 14, height: 14, borderRadius: 7, borderWidth: 2.5, borderColor: '#007bff', zIndex: 2 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 },
   modalContainer: { width: '100%', maxWidth: 500, maxHeight: '85%', backgroundColor: '#fff', borderRadius: 20, padding: 24, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 10 },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: '#e5e7eb' },
@@ -560,8 +530,6 @@ const styles = StyleSheet.create({
   profileMenuItem: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingVertical: 14 },
   profileMenuItemText: { fontSize: 16, color: '#343a40', marginLeft: 14, fontWeight: '500' },
   profileMenuDivider: { height: 1, backgroundColor: '#e9ecef', marginVertical: 6, marginHorizontal: 12 },
-  
-  // *** NEW STYLES ***
   notificationMainContent: { flexDirection: 'row', alignItems: 'flex-start', gap: 14, flex: 1 },
   notificationActions: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   downloadButton: { padding: 8, borderRadius: 20, backgroundColor: '#e7f3ff' },

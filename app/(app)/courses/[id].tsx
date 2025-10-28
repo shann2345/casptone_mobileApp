@@ -26,6 +26,8 @@ import {
   clearManipulationFlag,
   getCourseDetailsFromDb,
   getSavedServerTime,
+  getUnlockedAssessmentIds, // <-- ADDED
+  markAssessmentAsUnlocked, // <-- ADDED
   saveCourseDetailsToDb
 } from '../../../lib/localDb';
 
@@ -100,6 +102,10 @@ export default function CourseDetailsScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [highlightedAssessmentId, setHighlightedAssessmentId] = useState<number | null>(null);
   const sectionListRef = useRef<SectionList<CourseItem>>(null);
+
+  // ++ ADDED THESE TWO LINES ++
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [unlockedAssessments, setUnlockedAssessments] = useState<Set<number>>(new Set());
 
   // 🔔 Pending sync notification (automatic detection)
   usePendingSyncNotification(netInfo?.isInternetReachable ?? null, 'course-details');
@@ -195,11 +201,12 @@ export default function CourseDetailsScreen() {
 
   const fetchCourseDetails = async () => {
   setLoading(true);
-  let userEmail = '';
+  let fetchedUserEmail = ''; // Use a local var for this operation
   try {
     const userData = await getUserData();
     if (userData && userData.email) {
-      userEmail = userData.email;
+      fetchedUserEmail = userData.email;
+      setUserEmail(userData.email); // <-- SET THE STATE
     } else {
       Alert.alert('Error', 'User data not found. Please log in again.');
       router.replace('/login');
@@ -230,9 +237,9 @@ export default function CourseDetailsScreen() {
           console.log('✅ Server time synced. Access validated.');
 
           // Check if the user was previously flagged to show a confirmation message.
-          const wasPreviouslyFlagged = await checkManipulationHistory(userEmail);
+          const wasPreviouslyFlagged = await checkManipulationHistory(fetchedUserEmail);
           if (wasPreviouslyFlagged) {
-            await clearManipulationFlag(userEmail); // Explicitly clear the flag just in case
+            await clearManipulationFlag(fetchedUserEmail); // Explicitly clear the flag just in case
             Alert.alert(
               '✅ Access Restored',
               'Your time has been re-synced with the server. Course access is restored.',
@@ -259,10 +266,10 @@ export default function CourseDetailsScreen() {
       if (response.status === 200) {
         const courseData = response.data.course;
         setCourseDetail(courseData);
-        await saveCourseDetailsToDb(courseData, userEmail);
+        await saveCourseDetailsToDb(courseData, fetchedUserEmail);
       } else {
         // If API fails, fall back to local data but trust the synced time.
-        const offlineData = await getCourseDetailsFromDb(Number(courseId), userEmail);
+        const offlineData = await getCourseDetailsFromDb(Number(courseId), fetchedUserEmail);
         setCourseDetail(offlineData);
       }
 
@@ -270,7 +277,7 @@ export default function CourseDetailsScreen() {
       // --- OFFLINE MODE ---
       // This logic can now safely assume the user is genuinely offline.
       console.log('⚠️ Offline: Checking local data and time validity...');
-      const canAccess = await canAccessOfflineContent(userEmail);
+      const canAccess = await canAccessOfflineContent(fetchedUserEmail);
       if (!canAccess) {
         setTimeManipulationDetected(true);
         setServerTime(null);
@@ -283,15 +290,23 @@ export default function CourseDetailsScreen() {
       } else {
         // It's safe to proceed with offline data.
         setTimeManipulationDetected(false);
-        const calculatedServerTime = await getSavedServerTime(userEmail);
+        const calculatedServerTime = await getSavedServerTime(fetchedUserEmail);
         if (calculatedServerTime) {
           setServerTime(new Date(calculatedServerTime));
         }
-        const offlineData = await getCourseDetailsFromDb(Number(courseId), userEmail);
+        const offlineData = await getCourseDetailsFromDb(Number(courseId), fetchedUserEmail);
         setCourseDetail(offlineData);
       }
     }
     // ++ CHANGE END ++
+    
+    // ++ ADD THIS BLOCK ++
+    // After all data is fetched (online or offline), load unlocked assessments
+    if (fetchedUserEmail) {
+      const unlockedIds = await getUnlockedAssessmentIds(fetchedUserEmail);
+      setUnlockedAssessments(unlockedIds);
+    }
+    // ++ END OF ADDED BLOCK ++
 
   } catch (error) {
     console.error('Failed to fetch course details:', error);
@@ -341,6 +356,15 @@ export default function CourseDetailsScreen() {
       return;
     }
     if (enteredAccessCode === currentAssessment.access_code) {
+      
+      // ++ ADD THIS BLOCK ++
+      // Mark as unlocked in DB and update local state
+      if (userEmail && currentAssessment) {
+        markAssessmentAsUnlocked(currentAssessment.id, userEmail);
+        setUnlockedAssessments(prev => new Set(prev).add(currentAssessment.id));
+      }
+      // ++ END OF ADDED BLOCK ++
+
       setAccessCodeModalVisible(false);
       setEnteredAccessCode('');
       router.push(`/courses/assessments/${currentAssessment.id}`);
@@ -567,12 +591,15 @@ export default function CourseDetailsScreen() {
                         return;
                       }
                       if (!disabled) {
-                        if (assessment.access_code) {
+                        // -- MODIFIED THIS BLOCK --
+                        if (assessment.access_code && !unlockedAssessments.has(assessment.id)) {
                           setCurrentAssessment(assessment);
                           setAccessCodeModalVisible(true);
                         } else {
+                          // Either no access code, or it's already unlocked
                           router.push(`/courses/assessments/${assessment.id}`);
                         }
+                        // -- END OF MODIFIED BLOCK --
                       } else {
                         Alert.alert('Access Denied', `This assessment is not currently available.`);
                       }
@@ -701,12 +728,15 @@ export default function CourseDetailsScreen() {
               return;
             }
             if (!disabled) {
-              if (assessment.access_code) {
+              // -- MODIFIED THIS BLOCK --
+              if (assessment.access_code && !unlockedAssessments.has(assessment.id)) {
                 setCurrentAssessment(assessment);
                 setAccessCodeModalVisible(true);
               } else {
+                // Either no access code, or it's already unlocked
                 router.push(`/courses/assessments/${assessment.id}`);
               }
+              // -- END OF MODIFIED BLOCK --
             } else {
               Alert.alert('Access Denied', `This assessment is not currently available.`);
             }

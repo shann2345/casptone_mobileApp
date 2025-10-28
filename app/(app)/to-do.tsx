@@ -7,7 +7,6 @@ import { ActivityIndicator, Alert, Dimensions, FlatList, RefreshControl, ScrollV
 import { useNetworkStatus } from '../../context/NetworkContext';
 import { getUserData } from '../../lib/api';
 import { getCompletedOfflineQuizzes, getDb, getOfflineAttemptCount, getUnsyncedSubmissions, initDb } from '../../lib/localDb';
-import { showOfflineModeWarningIfNeeded } from '../../lib/offlineWarning';
 
 // ... (Interface, Constants, and other imports remain the same)
 const { width } = Dimensions.get('window');
@@ -116,15 +115,15 @@ export default function TodoScreen() {
   }, [allTodoItems, selectedCategory, sortOption]);
 
 
-  useEffect(() => {
-    const checkOfflineWarning = async () => {
-      if (!netInfo?.isInternetReachable) {
-        await showOfflineModeWarningIfNeeded();
-      }
-    };
+  // useEffect(() => {
+  //   const checkOfflineWarning = async () => {
+  //     if (!netInfo?.isInternetReachable) {
+  //       await showOfflineModeWarningIfNeeded();
+  //     }
+  //   };
     
-    checkOfflineWarning();
-  }, [netInfo?.isInternetReachable]);
+  //   checkOfflineWarning();
+  // }, [netInfo?.isInternetReachable]);
   
   const loadTodoItems = async (forceRefresh = false) => {
     // ... (This function remains unchanged)

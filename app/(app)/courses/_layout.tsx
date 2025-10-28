@@ -1,31 +1,30 @@
 // app/(app)/courses/_layout.tsx
+import { CustomHeader } from '@/components/CustomHeader';
 import { unregisterBackgroundSync } from '@/lib/backgroundSync';
 import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
-import { Stack, useRouter } from 'expo-router';
+import { Stack, usePathname, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   FlatList,
-  Image,
   Modal,
-  Platform,
   StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
   View
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { useNetworkStatus } from '../../../context/NetworkContext'; // Adjust path as needed
+import { useNetworkStatus } from '../../../context/NetworkContext';
 import { API_BASE_URL, clearAuthToken, getAuthorizationHeader, getProfile, getUserData } from '../../../lib/api';
 import { clearOfflineData } from '../../../lib/localDb';
 
 export default function CoursesLayout() {
   const router = useRouter();
+  const pathname = usePathname();
   const { isConnected, netInfo } = useNetworkStatus();
   const [initials, setInitials] = useState<string>('');
   const [profileImage, setProfileImage] = useState<string | null>(null);
@@ -33,14 +32,10 @@ export default function CoursesLayout() {
   const [unreadCount, setUnreadCount] = useState<number>(0);
   const [isNotificationModalVisible, setIsNotificationModalVisible] = useState<boolean>(false);
   const [isProfileMenuVisible, setIsProfileMenuVisible] = useState<boolean>(false);
-  const insets = useSafeAreaInsets();
 
-  // *** NEW *** - State for handling downloads
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<number>(0);
 
-
-  // Logout function
   const handleLogout = async () => {
     Alert.alert(
       'Logout',
@@ -103,7 +98,6 @@ export default function CoursesLayout() {
     fetchUserProfile();
   }, [netInfo?.isInternetReachable]);
 
-  // *** NEW *** - Function to handle downloading file from notification
   const handleDownloadNotificationAttachment = async (item: any) => {
     if (!netInfo?.isInternetReachable) {
       Alert.alert('Offline Mode', 'File downloading requires an internet connection.');
@@ -149,7 +143,7 @@ export default function CoursesLayout() {
 
       const downloadResumable = FileSystem.createDownloadResumable(
         downloadUrl, localUri,
-        { headers: { 'Authorization': authHeader } },
+        { headers: { 'Authorization': String(authHeader) } },
         ({ totalBytesWritten, totalBytesExpectedToWrite }) => {
           if (totalBytesExpectedToWrite > 0) {
             const progress = totalBytesWritten / totalBytesExpectedToWrite;
@@ -330,41 +324,53 @@ export default function CoursesLayout() {
   const toggleNotificationModal = () => setIsNotificationModalVisible(!isNotificationModalVisible);
   const toggleProfileMenu = () => setIsProfileMenuVisible(!isProfileMenuVisible);
 
-  const headerHeight = Platform.OS === 'ios' ? 44 + insets.top : 56 + insets.top;
+  // Check if we're on a detail screen (not the courses index)
+  const isOnDetailScreen = () => {
+    return pathname.includes('/materials/') || 
+           pathname.includes('/assessments/') || 
+           (pathname.includes('/courses/') && !pathname.endsWith('/courses') && !pathname.endsWith('/courses/'));
+  };
 
-  const headerRightComponent = (
-    <HeaderRight
-      initials={initials}
-      profileImage={profileImage}
-      toggleNotificationModal={netInfo?.isInternetReachable ? toggleNotificationModal : () => console.log('🔵 Notifications disabled - no internet')}
-      toggleProfileMenu={toggleProfileMenu}
-      unreadCount={unreadCount}
-      isInternetReachable={netInfo?.isInternetReachable}
-    />
-  );
+  // Get title for detail screens
+  const getDetailScreenTitle = () => {
+    if (pathname.includes('/materials/')) return 'Material Details';
+    if (pathname.includes('/assessments/')) return 'Assessment Details';
+    return 'Course Details';
+  };
+
+  const handleBackPress = () => {
+    router.back();
+  };
 
   return (
     <>
-      <StatusBar barStyle="light-content" backgroundColor="#007bff" translucent={false} />
+      {/* Only show CustomHeader on detail screens */}
+      {isOnDetailScreen() && (
+        <>
+          <StatusBar barStyle="light-content" backgroundColor="#007bff" translucent={false} />
+          <CustomHeader
+            title={getDetailScreenTitle()}
+            initials={initials}
+            profileImage={profileImage}
+            unreadCount={unreadCount}
+            onNotificationPress={netInfo?.isInternetReachable ? toggleNotificationModal : () => console.log('🔵 Notifications disabled - no internet')}
+            onProfilePress={toggleProfileMenu}
+            showBackButton={true}
+            onBackPress={handleBackPress}
+            isInternetReachable={netInfo?.isInternetReachable ?? false}
+          />
+        </>
+      )}
+      
       <Stack
         screenOptions={{
-          headerStyle: {
-            backgroundColor: '#007bff',
-            elevation: 4,
-            shadowColor: '#000',
-            shadowOffset: { width: 0, height: 2 },
-            shadowOpacity: 0.1,
-            shadowRadius: 4,
-          } as any,
-          headerTitleStyle: { fontWeight: 'bold', fontSize: 20 },
-          headerTintColor: '#fff',
-          headerShown: true,
+          headerShown: false,
         }}
       >
-        <Stack.Screen name="index" options={{ title: 'My Courses', headerShown: true, headerRight: () => headerRightComponent }} />
-        <Stack.Screen name="[id]" options={{ headerRight: () => headerRightComponent }} />
-        <Stack.Screen name="assessments/[assessmentId]" options={{ headerRight: () => headerRightComponent }} />
-        <Stack.Screen name="materials/[materialId]" options={{ headerRight: () => headerRightComponent }} />
+        <Stack.Screen name="index" />
+        <Stack.Screen name="[id]" />
+        <Stack.Screen name="assessments/[assessmentId]" />
+        <Stack.Screen name="materials/[materialId]" />
       </Stack>
 
       {/* Notification Modal */}
@@ -387,7 +393,6 @@ export default function CoursesLayout() {
             <FlatList
               data={notifications}
               keyExtractor={(item) => item.id}
-              // *** MODIFIED *** - Updated renderItem with download button
               renderItem={({ item }) => (
                 <TouchableOpacity style={[styles.notificationItem, !item.read && styles.unreadNotification]} onPress={() => markAsRead(item.id)}>
                   <View style={styles.notificationContent}>
@@ -398,7 +403,7 @@ export default function CoursesLayout() {
                       <View style={styles.notificationTextContainer}>
                         <Text style={styles.notificationText}>{item.description}</Text>
                         {item.course && <Text style={styles.courseText}>📚 {item.course}</Text>}
-                        <Text style={styles.notificationDate}>�️ {formatDate(item.date)}</Text>
+                        <Text style={styles.notificationDate}>🗓️ {formatDate(item.date)}</Text>
                       </View>
                     </View>
                     
@@ -431,7 +436,7 @@ export default function CoursesLayout() {
               )}
               ListEmptyComponent={
                 <View style={styles.noNotificationsContainer}>
-                  <Text style={styles.noNotificationsIcon}>�</Text>
+                  <Text style={styles.noNotificationsIcon}>📕</Text>
                   <Text style={styles.noNotificationsText}>You're all caught up!</Text>
                 </View>
               }
@@ -461,68 +466,7 @@ export default function CoursesLayout() {
   );
 }
 
-const HeaderRight = ({
-  initials,
-  profileImage,
-  toggleNotificationModal,
-  toggleProfileMenu,
-  unreadCount,
-  isInternetReachable,
-}: {
-  initials: string;
-  profileImage: string | null;
-  toggleNotificationModal: () => void;
-  toggleProfileMenu: () => void;
-  unreadCount: number;
-  isInternetReachable?: boolean;
-}) => {
-  const { isConnected } = useNetworkStatus();
-
-  return (
-    <View style={styles.headerRightWrapper}>
-      <TouchableOpacity style={[styles.bellIconContainer, !isInternetReachable && styles.disabledBellIcon]} onPress={toggleNotificationModal} disabled={!isInternetReachable}>
-        <Ionicons name={isInternetReachable ? "notifications-outline" : "notifications-off-outline"} size={24} color={isInternetReachable ? "#fff" : "#ccc"} />
-        {unreadCount > 0 && isInternetReachable && (
-          <View style={styles.notificationBadge}>
-            <Text style={styles.notificationBadgeText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
-          </View>
-        )}
-      </TouchableOpacity>
-      <TouchableOpacity onPress={toggleProfileMenu} style={styles.profileContainer}>
-        {profileImage ? (
-          <View style={styles.profileImageContainer}>
-            <Image source={{ uri: profileImage }} style={styles.profileImage} onError={() => console.log('Failed to load profile image')} />
-            <View style={[styles.statusDot, { backgroundColor: isConnected ? '#28a745' : '#dc3545' }]} />
-          </View>
-        ) : initials ? (
-          <View style={styles.initialsCircle}>
-            <Text style={styles.initialsText}>{initials}</Text>
-            <View style={[styles.statusDot, { backgroundColor: isConnected ? '#28a745' : '#dc3545' }]} />
-          </View>
-        ) : (
-          <View style={styles.defaultIconContainer}>
-            <Ionicons name="person-circle-outline" size={30} color="#fff" />
-            <View style={[styles.statusDot, { backgroundColor: isConnected ? '#28a745' : '#dc3545' }]} />
-          </View>
-        )}
-      </TouchableOpacity>
-    </View>
-  );
-};
-
 const styles = StyleSheet.create({
-  headerRightWrapper: { flexDirection: 'row', alignItems: 'center', marginRight: 16, gap: 12 },
-  bellIconContainer: { justifyContent: 'center', alignItems: 'center', position: 'relative', width: 44, height: 44, borderRadius: 22 },
-  disabledBellIcon: { opacity: 0.5 },
-  notificationBadge: { position: 'absolute', top: 2, right: 2, backgroundColor: '#dc3545', borderRadius: 12, minWidth: 22, height: 22, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 5, borderWidth: 2, borderColor: '#007bff' },
-  notificationBadgeText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
-  profileContainer: { position: 'relative', justifyContent: 'center', alignItems: 'center', width: 44, height: 44 },
-  profileImageContainer: { width: 44, height: 44, borderRadius: 22, borderWidth: 2.5, borderColor: '#fff', overflow: 'hidden', backgroundColor: '#fff' },
-  profileImage: { width: '100%', height: '100%', resizeMode: 'cover' },
-  initialsCircle: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#1E90FF', justifyContent: 'center', alignItems: 'center', borderWidth: 2.5, borderColor: '#fff' },
-  initialsText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
-  defaultIconContainer: { position: 'relative', justifyContent: 'center', alignItems: 'center' },
-  statusDot: { position: 'absolute', bottom: 0, right: 0, width: 14, height: 14, borderRadius: 7, borderWidth: 2.5, borderColor: '#007bff', zIndex: 2 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 },
   modalContainer: { width: '100%', maxWidth: 500, maxHeight: '85%', backgroundColor: '#fff', borderRadius: 20, padding: 24, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 10 },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: '#e5e7eb' },
@@ -551,8 +495,6 @@ const styles = StyleSheet.create({
   profileMenuItem: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingVertical: 14 },
   profileMenuItemText: { fontSize: 16, color: '#343a40', marginLeft: 14, fontWeight: '500' },
   profileMenuDivider: { height: 1, backgroundColor: '#e9ecef', marginVertical: 6, marginHorizontal: 12 },
-
-  // *** NEW STYLES ***
   notificationMainContent: { flexDirection: 'row', alignItems: 'flex-start', gap: 14, flex: 1 },
   notificationActions: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   downloadButton: { padding: 8, borderRadius: 20, backgroundColor: '#e7f3ff' },

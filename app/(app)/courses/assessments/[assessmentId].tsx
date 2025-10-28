@@ -19,30 +19,31 @@ import {
 
 import { usePendingSyncNotification } from '@/hooks/usePendingSyncNotification';
 import { useNetworkStatus } from '../../../../context/NetworkContext';
-import api, { getUserData, syncOfflineSubmission } from '../../../../lib/api'; // Add syncOfflineSubmission here
+import api, { getUserData, syncOfflineSubmission } from '../../../../lib/api';
 import {
   checkIfAssessmentNeedsDetails,
   deleteOfflineSubmission,
   getAssessmentDetailsFromDb,
-  getCompletedOfflineQuizzes, // ++ ADDED: Import to check for pending offline quizzes
+  getCompletedOfflineQuizzes,
   getCurrentServerTime,
   getOfflineAttemptCount,
   getOfflineQuizAttempt,
+  getQuizQuestionsFromDb, // ADDED: Required for shuffling questions before start
   getUnsyncedSubmissions,
   hasAssessmentReviewSaved,
   hasQuizQuestionsSaved,
   saveAssessmentDetailsToDb,
-  saveAssessmentReviewToDb, // ++ ADDED: Import the save review function
+  saveAssessmentReviewToDb,
   saveAssessmentsToDb,
   saveOfflineSubmission,
-  startOfflineQuiz,
+  startOfflineQuiz, // ADDED: Required for saving the shuffled order
 } from '../../../../lib/localDb';
 
-// Interface definitions
+// Interface definitions (These should match your existing definitions)
 interface AssessmentDetail {
   id: number;
   course_id: number;
-  topic_id: number;
+  topic_id?: number; // Made optional as per typical data structure
   title: string;
   type: 'quiz' | 'exam' | 'assignment' | 'project' | 'activity';
   description: string;
@@ -50,7 +51,7 @@ interface AssessmentDetail {
   duration_minutes: number | null;
   available_at: string | null;
   unavailable_at: string | null;
-  created_by: number;
+  created_by?: number; // Made optional
   max_attempts: number | null;
   total_points: number | null;
   assessment_file_url?: string;
@@ -77,12 +78,40 @@ interface LatestAssignmentSubmission {
 }
 
 interface SubmittedAssessment {
-  id: number; // ++ MODIFIED: Added submission ID
+  id: number; 
   score: number | null;
   status: string;
 }
 
+interface SubmittedQuestion {
+  id: number;
+  submitted_assessment_id?: number;
+  question_id?: number;
+  question_text: string;
+  question_type: 'multiple_choice' | 'true_false' | 'essay' | 'identification';
+  max_points: number;
+  submitted_answer: string | null;
+  is_correct: boolean | null;
+  score_earned: number | null;
+  submitted_options?: any[];
+  original_question?: any;
+}
+
+
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
+
+// --- UTILITY FUNCTION: Fisher-Yates shuffle algorithm ---
+// NOTE: This utility needs to be here to shuffle questions before saving.
+const shuffleArray = (array: SubmittedQuestion[]): SubmittedQuestion[] => {
+    const newArray = [...array];
+    for (let i = newArray.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
+    }
+    return newArray;
+};
+// --- END UTILITY FUNCTION ---
+
 
 export default function AssessmentDetailsScreen() {
   const { id: courseId, assessmentId } = useLocalSearchParams();
@@ -96,16 +125,14 @@ export default function AssessmentDetailsScreen() {
   const [hasOfflineAttempt, setHasOfflineAttempt] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [submissionLoading, setSubmissionLoading] = useState(false);
-  const [isStartingAttempt, setIsStartingAttempt] = useState(false); // Renamed for clarity
+  const [isStartingAttempt, setIsStartingAttempt] = useState(false); 
   const [hasDetailedData, setHasDetailedData] = useState<boolean>(false);
 
-  // New states for submission modal and link input
   const [isSubmissionModalVisible, setSubmissionModalVisible] = useState(false);
   const [submissionType, setSubmissionType] = useState<'file' | 'link' | null>(null);
   const [selectedFile, setSelectedFile] = useState<DocumentPicker.DocumentPickerAsset | null>(null);
   const [submissionLink, setSubmissionLink] = useState('');
 
-  // ++ ADDED: New state for review data handling ++
   const [hasLocalReview, setHasLocalReview] = useState(false);
   const [downloadingReview, setDownloadingReview] = useState(false);
 
@@ -116,7 +143,6 @@ export default function AssessmentDetailsScreen() {
   const fetchAssessmentDetailsAndAttemptStatus = useCallback(async () => {
     if (!assessmentId) return;
 
-    // Use setLoading only for the initial full-screen load
     if (!assessmentDetail) {
       setLoading(true);
     }
@@ -159,7 +185,6 @@ export default function AssessmentDetailsScreen() {
           if (attemptStatusResponse.status === 200) {
             newAttemptStatus = attemptStatusResponse.data;
             
-            // ++ FIX: Check for pending offline quizzes before overwriting attempt count
             if (newAttemptStatus) {
               const completedOfflineQuizzes = await getCompletedOfflineQuizzes(userEmail);
               const pendingOfflineQuiz = completedOfflineQuizzes.find(
@@ -167,14 +192,11 @@ export default function AssessmentDetailsScreen() {
               );
               
               if (pendingOfflineQuiz) {
-                // There's an unsynced offline quiz - use local attempt count
                 const localAttemptCount = await getOfflineAttemptCount(parseInt(assessmentId as string), userEmail);
                 console.log(`⚠️ Found pending offline quiz. Server attempts: ${newAttemptStatus.attempts_made}, Local attempts: ${localAttemptCount.attempts_made}`);
                 
-                // Use the higher count to avoid data loss
                 newAttemptStatus.attempts_made = Math.max(newAttemptStatus.attempts_made, localAttemptCount.attempts_made);
                 
-                // Recalculate attempts_remaining if there's a max limit
                 if (newAttemptStatus.max_attempts !== null) {
                   newAttemptStatus.attempts_remaining = Math.max(0, newAttemptStatus.max_attempts - newAttemptStatus.attempts_made);
                 }
@@ -182,7 +204,6 @@ export default function AssessmentDetailsScreen() {
                 console.log(`✅ Using corrected attempt count: ${newAttemptStatus.attempts_made} attempts made`);
               }
             }
-            // -- END FIX --
             
             setAttemptStatus(newAttemptStatus);
           }
@@ -229,10 +250,9 @@ export default function AssessmentDetailsScreen() {
         }
       }
 
-      // ++ ADDED: Check for local review data after fetching other details
       const localReviewExists = await hasAssessmentReviewSaved(parseInt(assessmentId as string), userEmail);
       setHasLocalReview(localReviewExists);
-      // -- END ADDED --
+
     } catch (err: any) {
       console.error('Failed to fetch details:', err.response?.data || err.message);
       setError('Network error or unable to load assessment details.');
@@ -241,7 +261,6 @@ export default function AssessmentDetailsScreen() {
     }
   }, [assessmentId, courseId, netInfo?.isInternetReachable]);
 
-  // Other functions like getStatusIcon, formatDate, etc. remain unchanged.
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'completed':
@@ -379,6 +398,7 @@ export default function AssessmentDetailsScreen() {
     }
   };
 
+  // ++ RE-INSERTED & CORRECTED: handleStartQuizAttempt with persistent shuffle logic ++
   const handleStartQuizAttempt = async () => {
     if (!assessmentDetail) return;
 
@@ -399,12 +419,16 @@ export default function AssessmentDetailsScreen() {
       setIsStartingAttempt(false);
       return;
     }
+    
+    // Check if questions are downloaded
     const hasQuestions = await hasQuizQuestionsSaved(assessmentDetail.id, userEmail);
     if (!hasQuestions) {
       Alert.alert(`${assessmentTypeCapitalized} Not Downloaded`, `Please go online to download questions before attempting.`);
       setIsStartingAttempt(false);
       return;
     }
+
+    // Check for existing attempt (Resume logic)
     const existingAttempt = await getOfflineQuizAttempt(assessmentDetail.id, userEmail);
     if (existingAttempt) {
       Alert.alert(
@@ -416,6 +440,7 @@ export default function AssessmentDetailsScreen() {
             text: 'Resume',
             onPress: () => {
               setIsStartingAttempt(false);
+              // Navigate to the attempt screen
               router.replace({ pathname: `/courses/assessments/[assessmentId]/attempt-quiz`, params: { assessmentId: assessmentDetail.id, isOffline: 'true' } });
             },
           },
@@ -423,11 +448,15 @@ export default function AssessmentDetailsScreen() {
       );
       return;
     }
+    
+    // Check attempt limits
     if (attemptStatus && attemptStatus.attempts_remaining !== null && attemptStatus.attempts_remaining <= 0) {
       Alert.alert('Attempt Limit Reached', `You have used all attempts.`);
       setIsStartingAttempt(false);
       return;
     }
+
+    // Logic for Starting a NEW attempt
     Alert.alert(
       'Important Notice',
       `Please read carefully:\n\n` +
@@ -441,7 +470,19 @@ export default function AssessmentDetailsScreen() {
           text: `Start ${assessmentTypeCapitalized}`,
           onPress: async () => {
             try {
-              await startOfflineQuiz(parseInt(assessmentId as string), userEmail);
+              // 1. Fetch questions to get the list for shuffling
+              // NOTE: This array contains the full question objects
+              const rawQuestions = await getQuizQuestionsFromDb(assessmentDetail.id, userEmail);
+              
+              // 2. Generate a new shuffled order of question objects
+              const shuffledQuestionObjects = shuffleArray(rawQuestions as SubmittedQuestion[]); 
+              
+              // 3. Extract the ID array for persistent storage
+              const shuffledOrderIds = shuffledQuestionObjects.map(q => q.id);
+              
+              // 4. Save the new attempt along with the shuffled order to the local DB
+              await startOfflineQuiz(assessmentDetail.id, userEmail, shuffledOrderIds);
+              
               Alert.alert(`${assessmentTypeCapitalized} Started`, `Good luck!`, [
                 {
                   text: 'OK',
@@ -453,6 +494,7 @@ export default function AssessmentDetailsScreen() {
                 },
               ]);
             } catch (error) {
+              console.error('Error starting attempt locally:', error);
               Alert.alert('Error', `Failed to start attempt locally.`);
             } finally {
               setIsStartingAttempt(false);
@@ -462,6 +504,7 @@ export default function AssessmentDetailsScreen() {
       ]
     );
   };
+  // --- END RE-INSERTED & CORRECTED: handleStartQuizAttempt ---
 
   const handleDownloadReviewData = async () => {
     if (!netInfo?.isInternetReachable) {
@@ -485,26 +528,20 @@ export default function AssessmentDetailsScreen() {
 
       console.log(`📊 Fetching latest completed submission details for assessment ${assessmentDetail.id}...`);
 
-      // --- FIX: Call the NEW backend endpoint ---
-      // This endpoint directly returns the full review data if a completed submission exists.
       const reviewResponse = await api.get(`/assessments/${assessmentDetail.id}/latest-completed-submission`);
-      // --- END FIX ---
 
       if (reviewResponse.status === 200 && reviewResponse.data.submitted_assessment) {
         const reviewData = reviewResponse.data.submitted_assessment;
 
-        // Basic validation of received data
         if (!reviewData.submitted_questions) {
             throw new Error('Review data received from server is incomplete (missing questions).');
         }
 
         console.log(`✅ Review data fetched: ${reviewData.submitted_questions.length} questions`);
 
-        // Save the complete review data locally
         await saveAssessmentReviewToDb(assessmentDetail.id, userEmail, reviewData);
         console.log(`💾 Review data saved to offline_assessment_reviews table`);
 
-        // Update UI state
         setHasLocalReview(true);
 
         Alert.alert(
@@ -513,36 +550,31 @@ export default function AssessmentDetailsScreen() {
           [{ text: 'OK' }]
         );
 
-        // OPTIONAL: Refresh local attempt status (good practice)
         try {
             const attemptResponse = await api.get(`/assessments/${assessmentDetail.id}/attempt-status`);
             if (attemptResponse.status === 200) {
                 await saveAssessmentDetailsToDb(assessmentDetail.id, userEmail, attemptResponse.data, latestAssignmentSubmission);
-                setAttemptStatus(attemptResponse.data); // Update component state
+                setAttemptStatus(attemptResponse.data); 
             }
         } catch(attemptError){
             console.warn("Could not refresh attempt status after download, but review saved.");
         }
 
       } else {
-        // This case should ideally not happen if the backend returns 404 correctly,
-        // but handle it just in case.
         throw new Error('Failed to fetch review data from the server (unexpected response).');
       }
     } catch (error: any) {
       console.error('❌ Error downloading review data:', error);
 
-      let alertMessage = 'Could not download the review data. Please try again.'; // Default
+      let alertMessage = 'Could not download the review data. Please try again.'; 
 
       if (error.response?.status === 404) {
-        // Specific message if backend explicitly says no completed submission exists
         alertMessage = error.response.data?.message || 'No completed submission was found for this assessment.';
         Alert.alert('Not Found', alertMessage);
       } else if (error.message?.includes('incomplete')) {
         alertMessage = 'The review data from the server seems incomplete. Please contact support.';
         Alert.alert('Data Error', alertMessage);
       } else if (error.response) {
-        // Handle other API errors (500, 401, 403 etc.)
         const status = error.response.status;
         const backendMessage = error.response.data?.message;
         alertMessage = `Server error (${status}): ${backendMessage || 'Please try again later.'}`;
@@ -710,31 +742,39 @@ export default function AssessmentDetailsScreen() {
   const assessmentType = assessmentDetail?.type || 'assessment';
   const assessmentTypeCapitalized = assessmentType.charAt(0).toUpperCase() + assessmentType.slice(1);
   let quizButtonText = `Start ${assessmentTypeCapitalized}`;
+  
+  // Logic for the quiz button text and disabled state
   if (assessmentDetail && (assessmentDetail.type === 'quiz' || assessmentDetail.type === 'exam')) {
     if (hasOfflineAttempt) {
-      quizButtonText = `Resume ${assessmentTypeCapitalized}`;
+      quizButtonText = `Resume ${assessmentTypeCapitalized} (Offline)`;
       isQuizAttemptButtonDisabled = false;
     } else if (!isAssessmentCurrentlyOpen) {
       isQuizAttemptButtonDisabled = true;
       quizButtonText = 'Assessment Unavailable';
     } else if (attemptStatus) {
       if (attemptStatus.has_in_progress_attempt) {
-        quizButtonText = 'Resume Quiz';
-        isQuizAttemptButtonDisabled = isStartingAttempt; // Use isStartingAttempt
+        quizButtonText = `Resume ${assessmentTypeCapitalized}`;
+        isQuizAttemptButtonDisabled = isStartingAttempt; 
       } else if (attemptStatus.attempts_remaining !== null && attemptStatus.attempts_remaining <= 0) {
         quizButtonText = 'Attempt Limit Reached';
         isQuizAttemptButtonDisabled = true;
+      } else if (!netInfo?.isInternetReachable && !hasDetailedData) {
+        // Must be checked specifically for offline starts
+        isQuizAttemptButtonDisabled = true;
+        quizButtonText = 'Download Assessment Details First';
       }
     }
   } else if (!isAssessmentCurrentlyOpen) {
     isQuizAttemptButtonDisabled = true;
     quizButtonText = 'Assessment Unavailable';
   }
+  
+  // Final check for offline access conditions
   if (!netInfo?.isInternetReachable) {
     if (assessmentDetail?.type === 'quiz' || assessmentDetail?.type === 'exam') {
       if (hasOfflineAttempt) {
         isQuizAttemptButtonDisabled = false;
-        quizButtonText = 'Resume assessment (Offline)';
+        quizButtonText = 'Resume Assessment (Offline)';
       } else if (!hasDetailedData) {
         isQuizAttemptButtonDisabled = true;
         quizButtonText = 'Download Assessment Details First (Offline)';
@@ -744,14 +784,19 @@ export default function AssessmentDetailsScreen() {
       } else if (!isAssessmentCurrentlyOpen) {
         isQuizAttemptButtonDisabled = true;
         quizButtonText = 'Assessment Unavailable (Offline)';
-      } else {
+      } else if (hasDetailedData && isAssessmentCurrentlyOpen) {
         isQuizAttemptButtonDisabled = false;
         quizButtonText = 'Start Assessment (Offline)';
+      } else {
+        isQuizAttemptButtonDisabled = true;
+        quizButtonText = 'Requires Online Details';
       }
-    } else {
-      isQuizAttemptButtonDisabled = true; // Disable assignment submission offline if not handled
+    } else if (isAssignmentType) {
+        // Allow submission modal to open, but actual submit is handled inside handleSubmitAssignment
+        isQuizAttemptButtonDisabled = false; // The button in the JSX is for submission modal
     }
   }
+
 
   return (
     <View style={styles.container}>
@@ -969,7 +1014,7 @@ export default function AssessmentDetailsScreen() {
                 onPress={handleStartQuizAttempt}
                 disabled={isQuizAttemptButtonDisabled || isStartingAttempt}
               >
-                {isStartingAttempt ? ( // Use isStartingAttempt
+                {isStartingAttempt ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
                   <>
@@ -979,7 +1024,6 @@ export default function AssessmentDetailsScreen() {
                 )}
               </TouchableOpacity>
 
-              {/* ++ MODIFIED: Fully refactored View Answers button logic ++ */}
               {attemptStatus && attemptStatus.attempts_made >= 1 && (() => {
                 const now = new Date().getTime();
                 const isPastDueDate = assessmentDetail.unavailable_at ? now > new Date(assessmentDetail.unavailable_at).getTime() : true;
@@ -1038,7 +1082,6 @@ export default function AssessmentDetailsScreen() {
                   </TouchableOpacity>
                 );
               })()}
-              {/* -- END MODIFIED -- */}
             </View>
           )}
         </View>
