@@ -89,10 +89,27 @@ export default function VerificationNoticeScreen() {
         verification_code: verificationCode,
       });
 
+      // --- THIS BLOCK IS NOW FIXED ---
       if (response.data.is_verified) {
-        Alert.alert('Success', response.data.message);
         setVerificationStatus('verified');
-        router.replace('/(app)'); // Navigate to main app
+        
+        // The Alert now controls the navigation
+        Alert.alert(
+          'Success', 
+          response.data.message,
+          [
+            {
+              text: 'OK',
+              onPress: () => {
+                // Navigation only happens AFTER user presses OK
+                router.replace({
+                  pathname: '/(app)',
+                  params: { isNewUser: 'true' }
+                });
+              }
+            }
+          ]
+        );
       } else {
         Alert.alert('Verification Failed', response.data.message || 'Invalid code. Please try again.');
       }
@@ -116,7 +133,8 @@ export default function VerificationNoticeScreen() {
     try {
       const response = await api.post('/email/verification-notification');
       Alert.alert('Resent!', response.data.message);
-    } catch (error: any) {
+    } catch (error: any)
+      {
       console.error('Error resending code:', error);
       Alert.alert('Resend Failed', error.response?.data?.message || 'Could not resend code. Please try again.');
     } finally {

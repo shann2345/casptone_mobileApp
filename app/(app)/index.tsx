@@ -1,15 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Dimensions, FlatList, Modal, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Animated, Dimensions, FlatList, Image, Modal, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import { useNetworkStatus } from '../../context/NetworkContext';
-import api, { clearAuthToken, getAuthToken, getServerTime, getUserData, syncOfflineQuiz, syncOfflineSubmission } from '../../lib/api';
+import api, { clearAuthToken, getAuthToken, getServerTime, getUserData, hasCompletedTutorial, setTutorialCompleted, syncOfflineQuiz, syncOfflineSubmission, } from '../../lib/api';
 import {
   deleteOfflineQuizAttempt,
   deleteOfflineSubmission,
   downloadAllQuizQuestions,
-  getAssessmentsNeedingSync,
   getAssessmentsWithoutDetails,
   getCompletedOfflineQuizzes,
   getDb,
@@ -52,8 +51,58 @@ interface EnrolledCourse extends Course {
   };
 }
 
+// 1. UPDATED TUTORIAL STEPS ARRAY
+const tutorialSteps = [
+  {
+    image: require('@/assets/images/dashboard.jpg'),
+    title: 'Welcome to Your Dashboard!',
+    text: 'This is your central hub. It gives you an overview of your progress and key application features.'
+  },
+  {
+    image: require('@/assets/images/Discover-courses.jpg'),
+    title: 'Discover New Courses',
+    text: 'Tap the "Discover new courses" button to search for and enroll in new classes. This feature requires an active internet connection.'
+  },
+  {
+    image: require('@/assets/images/Settings.jpg'),
+    title: 'Manage Your Settings',
+    text: 'Access your profile to update your information, manage notification preferences, and view privacy details.'
+  },
+  {
+    image: require('@/assets/images/Course-details.jpg'),
+    title: 'Course Details',
+    text: 'Tap on any enrolled course to view detailed information, including course materials, topics, and assessments.'
+  },
+  {
+    image: require('@/assets/images/Assigned.jpg'),
+    title: 'Assigned Tasks',
+    text: 'Keep track of all your assigned assessments, exams, and upcoming deadlines in this section.'
+  },
+  {
+    image: require('@/assets/images/Missing.jpg'),
+    title: 'Missing Submissions',
+    text: 'Don\'t fall behind! This tab helps you quickly identify and submit any missing or overdue assignments.'
+  },
+  {
+    image: require('@/assets/images/To-sync.jpg'),
+    title: 'Offline Sync Status',
+    text: 'When you go back online, submissions and quiz attempts completed offline will be sent to the server. Check here for unsynced items.'
+  },
+  {
+    image: require('@/assets/images/Done.jpg'),
+    title: 'Completed Work',
+    text: 'View all your successfully completed assignments and track your overall academic progress.'
+  },
+  {
+    image: require('@/assets/images/My-courses.jpg'),
+    title: 'My Courses Overview',
+    text: 'Your enrolled courses are displayed here. Swipe horizontally to view them all, and tap one to start learning!'
+  }
+];
+
 export default function HomeScreen() {
   const router = useRouter();
+  const { isNewUser } = useLocalSearchParams();
   const [userName, setUserName] = useState<string>('Guest');
   const [isSearchModalVisible, setSearchModalVisible] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -72,6 +121,11 @@ export default function HomeScreen() {
   const {isConnected, netInfo } = useNetworkStatus();
   const enrolledCoursesFlatListRef = useRef<FlatList<EnrolledCourse>>(null);
   const [offlineStatus, setOfflineStatus] = useState<{ remainingHours: number; totalHours: number } | null>(null);
+  const [isTutorialModalVisible, setIsTutorialModalVisible] = useState(false);
+  const [tutorialStep, setTutorialStep] = useState(0);
+  const tutorialFadeAnim = useRef(new Animated.Value(0)).current;
+
+  const tutorialScaleAnim = useRef(new Animated.Value(0.9)).current;
 
   // NEW: State for enrollment modal
   const [isEnrollModalVisible, setIsEnrollModalVisible] = useState<boolean>(false);
@@ -357,6 +411,39 @@ export default function HomeScreen() {
   }, [netInfo?.isInternetReachable, isInitialized]);
 
   useEffect(() => {
+    if (!isInitialized) return; // Wait for app to be ready
+
+    const checkTutorial = async () => {
+      const alreadyCompleted = await hasCompletedTutorial();
+
+      if (isNewUser === 'true' && !alreadyCompleted) {
+        // Reset animations
+        tutorialFadeAnim.setValue(0);
+        tutorialScaleAnim.setValue(0.9); // Start slightly small
+        
+        setIsTutorialModalVisible(true);
+        setTutorialStep(0);
+        
+        // Run animations in parallel
+        Animated.parallel([
+          Animated.spring(tutorialScaleAnim, {
+            toValue: 1,
+            friction: 6, // Gives it a slight bounce
+            useNativeDriver: true,
+          }),
+          Animated.timing(tutorialFadeAnim, {
+            toValue: 1,
+            duration: 200,
+            useNativeDriver: true,
+          })
+        ]).start();
+      }
+    };
+
+    checkTutorial();
+  }, [isInitialized, isNewUser]);
+
+  useEffect(() => {
     const checkAssessmentsNeedingDetails = async () => {
       if (!isInitialized) return;
       
@@ -398,7 +485,7 @@ export default function HomeScreen() {
         const courseId = typeof course.id === 'string' ? parseInt(course.id, 10) : course.id;
         
         if (!courseId || isNaN(courseId) || courseId <= 0) {
-          console.error('â Œ Invalid course ID detected:', {
+          console.error('⚠️ Invalid course ID detected:', {
             originalId: course.id,
             convertedId: courseId,
             courseTitle: course.title
@@ -502,7 +589,7 @@ export default function HomeScreen() {
           try {
             await saveCourseToDb(course, userEmail);
           } catch (saveError) {
-            console.error(' Failed to save basic course to DB:', saveError);
+            console.error(' ❌ Failed to save basic course to DB:', saveError);
           }
         }
         console.log('Basic course info synced to local DB.');
@@ -510,14 +597,14 @@ export default function HomeScreen() {
         // Fetch and save complete course details including materials and assessments
         await fetchAndSaveCompleteCoursesData(courses, userEmail);
 
-        // âœ… Enhanced: Auto-download assessment data with smart logic
+        // ✅ Enhanced: Auto-download assessment data with smart logic
         if (courses.length > 0) {
           setSyncStatus('Auto-syncing assessment data...');
           await autoDownloadAssessmentData(userEmail);
         }
 
       } else {
-        console.log('âš ï¸  Offline or no internet reachability: Fetching courses from local DB.');
+        console.log('⚠️ Offline or no internet reachability: Fetching courses from local DB.');
         const offlineCourses = await getEnrolledCoursesFromDb(userEmail);
         setEnrolledCourses(offlineCourses as EnrolledCourse[]);
       }
@@ -526,12 +613,12 @@ export default function HomeScreen() {
 
       const hasRealInternet = netInfo?.isInternetReachable === true;
       if (hasRealInternet) {
-        console.log('ðŸ”„ API failed, falling back to local DB...');
+        console.log('🔄 API failed, falling back to local DB...');
         try {
           const offlineCourses = await getEnrolledCoursesFromDb(userEmail);
           setEnrolledCourses(offlineCourses as EnrolledCourse[]);
         } catch (localError) {
-          console.error('â Œ Local DB fallback also failed:', localError);
+          console.error('❌ Local DB fallback also failed:', localError);
           Alert.alert('Error', 'Failed to load your enrolled courses.');
         }
       } else {
@@ -574,12 +661,12 @@ export default function HomeScreen() {
                 await saveServerTime(userData.email, apiServerTime, new Date().toISOString());
               }
             } catch (timeError) {
-              console.error('âš ï¸  Periodic server time sync failed:', timeError);
+              console.error('⚠️ Periodic server time sync failed:', timeError);
             }
           }
         }
       } catch (error) {
-        console.error('â Œ Periodic time sync error:', error);
+        console.error('❌ Periodic time sync error:', error);
       }
     }, 60000);
 
@@ -610,7 +697,7 @@ export default function HomeScreen() {
         return;
       }
 
-      console.log('ðŸ”„ Starting enhanced refresh with incremental updates...');
+      console.log('🔄 Starting enhanced refresh with incremental updates...');
       setSyncStatus('Fetching course updates...');
       
       let refreshSuccessful = false;
@@ -662,18 +749,18 @@ export default function HomeScreen() {
         refreshSuccessful = syncResult.success;
         
         if (refreshSuccessful) {
-          setSyncStatus('âœ… Refresh completed successfully');
-          console.log('âœ… Enhanced refresh completed successfully');
+          setSyncStatus('✅ Refresh completed successfully');
+          console.log('✅ Enhanced refresh completed successfully');
         }
         
       } catch (downloadError) {
-        console.warn('âš ï¸  Refresh failed, keeping existing offline data:', downloadError);
-        setSyncStatus('âš ï¸  Refresh failed, using offline data');
+        console.warn('⚠️ Refresh failed, keeping existing offline data:', downloadError);
+        setSyncStatus('⚠️ Refresh failed, using offline data');
         // Fallback to existing data
         try {
           await fetchCourses();
         } catch (fallbackError) {
-          console.error('â Œ Fallback fetch also failed:', fallbackError);
+          console.error('❌ Fallback fetch also failed:', fallbackError);
         }
       }
 
@@ -684,8 +771,8 @@ export default function HomeScreen() {
       Alert.alert('Refresh Complete', message, [{ text: 'OK' }]);
 
     } catch (error) {
-      console.error('â Œ Enhanced refresh failed:', error);
-      setSyncStatus('â Œ Refresh failed');
+      console.error('❌ Enhanced refresh failed:', error);
+      setSyncStatus('❌ Refresh failed');
       Alert.alert('Error', 'Failed to refresh data. Please try again.');
     } finally {
       setIsRefreshing(false);
@@ -761,7 +848,7 @@ export default function HomeScreen() {
         return;
       }
     } catch (error) {
-      console.error('â Œ Error getting user data:', error);
+      console.error('❌ Error getting user data:', error);
       Alert.alert('Error', 'User data not found. Please log in again.');
       router.replace('/login');
       setIsEnrolling(false);
@@ -783,7 +870,7 @@ export default function HomeScreen() {
           await saveCourseDetailsToDb(courseDetailResponse.data.course, userEmail);
         }
       } catch (saveError) {
-        console.error('âš ï¸  Failed to save enrolled course to local DB:', saveError);
+        console.error('⚠️ Failed to save enrolled course to local DB:', saveError);
       }
 
       setIsEnrollModalVisible(false);
@@ -808,7 +895,7 @@ export default function HomeScreen() {
           const offlineCourses = await getEnrolledCoursesFromDb(userEmail);
           setEnrolledCourses(offlineCourses as EnrolledCourse[]);
         } catch (localError) {
-          console.error('â Œ Local DB fallback failed:', localError);
+          console.error('❌ Local DB fallback failed:', localError);
         }
       } finally {
         setIsLoadingEnrolledCourses(false);
@@ -884,104 +971,56 @@ export default function HomeScreen() {
     setIsAdVisible(!isAdVisible);
   };
 
-  const handleAdButtonPress = async () => {
-    if (!netInfo?.isInternetReachable) {
-      Alert.alert('Offline Mode', 'You must be online to download assessment details.');
-      return;
+  const handleTutorialNext = () => {
+    if (tutorialStep < tutorialSteps.length - 1) {
+      Animated.timing(tutorialFadeAnim, {
+        toValue: 0,
+        duration: 150, // Fast fade out
+        useNativeDriver: true,
+      }).start(() => {
+        setTutorialStep(prev => prev + 1);
+        Animated.timing(tutorialFadeAnim, {
+          toValue: 1,
+          duration: 150, // Fast fade in
+          useNativeDriver: true,
+        }).start();
+      });
     }
+  };
 
-    try {
-      const userData = await getUserData();
-      if (!userData?.email) {
-        Alert.alert('Error', 'User data not found. Please log in again.');
-        return;
-      }
-
-      setSyncStatus('Checking assessment data...');
-
-      // Enhanced: Use retry logic for initial checks
-      const syncNeeded = await retryWithBackoff(async () => {
-        return await getAssessmentsNeedingSync(userData.email, api);
-      }, 2, 1000);
-
-      const totalToSync = syncNeeded.missing.length + syncNeeded.outdated.length;
-      
-      if (totalToSync === 0) {
-        setSyncStatus('All data is up to date');
-        Alert.alert('Information', 
-          `All assessment data is current!\n\nðŸ“Š Last sync: ${lastSyncTime ? new Date(lastSyncTime).toLocaleString() : 'Never'}\n\nðŸ”’ Your offline data is ready for use.`, 
-          [{ text: 'OK', onPress: toggleAd }]
-        );
-        setTimeout(() => setSyncStatus(''), 2000);
-        return;
-      }
-      
-      // Enhanced dialog with data freshness info
-      Alert.alert(
-        'Enhanced Smart Download',
-        `Analysis Complete:\n${syncNeeded.missing.length} new assessments\n${syncNeeded.outdated.length} updates available\n\nFeatures:\nPreserves existing offline data\nChunked download for performance\nAutomatic retry on failures\n\nProceed with smart download?`,
-        [
-          { text: 'Cancel', style: 'cancel', onPress: () => setSyncStatus('') },
-          {
-            text: 'Smart Download',
-            onPress: async () => {
-              setIsDownloadingData(true);
-              setDownloadProgress({ current: 0, total: totalToSync });
-              setSyncStatus('Starting enhanced download...');
-
-              try {
-                // Enhanced: Use the improved autoDownloadAssessmentData function
-                const result = await autoDownloadAssessmentData(userData.email, true);
-
-                if (result.success) {
-                  const now = new Date().toISOString();
-                  setLastSyncTime(now);
-                  
-                  let message = 'Enhanced Download Complete!\n\n';
-                  
-                  if (result.downloaded > 0) {
-                    message += `Successfully processed ${result.downloaded} items\n`;
-                  }
-                  
-                  if (result.failed > 0) {
-                    message += `${result.failed} items failed (data preserved)\n`;
-                  }
-
-                  message += `\nLast sync: ${new Date(now).toLocaleString()}`;
-                  message += '\nAll offline data preserved and optimized!';
-
-                  Alert.alert('Success', message, [{ text: 'OK', onPress: toggleAd }]);
-
-                  // Update assessment count
-                  const remainingAssessments = await getAssessmentsWithoutDetails(userData.email);
-                  setAssessmentsNeedingDetails(remainingAssessments.length);
-                } else {
-                  throw new Error('Download operation failed');
-                }
-
-              } catch (error) {
-                console.error('Enhanced download failed:', error);
-                setSyncStatus('Download failed - data preserved');
-                Alert.alert(
-                  'Download Error',
-                  'â Œ Enhanced download encountered issues.\n\nðŸ”’ Your existing offline data is preserved and safe.\n\nðŸ’¡ Try again when network is stable.',
-                  [{ text: 'OK' }]
-                );
-              } finally {
-                setIsDownloadingData(false);
-                setDownloadProgress({ current: 0, total: 0 });
-                setTimeout(() => setSyncStatus(''), 3000);
-              }
-            }
-          }
-        ]
-      );
-    } catch (error) {
-      console.error('Error in enhanced handleAdButtonPress:', error);
-      setSyncStatus('Error occurred');
-      Alert.alert('Error', 'An unexpected error occurred. Please try again.');
-      setTimeout(() => setSyncStatus(''), 3000);
+  const handleTutorialPrev = () => {
+    if (tutorialStep > 0) {
+      Animated.timing(tutorialFadeAnim, {
+        toValue: 0,
+        duration: 150,
+        useNativeDriver: true,
+      }).start(() => {
+        setTutorialStep(prev => prev - 1);
+        Animated.timing(tutorialFadeAnim, {
+          toValue: 1,
+          duration: 150,
+          useNativeDriver: true,
+        }).start();
+      });
     }
+  };
+
+  const handleTutorialFinish = async () => {
+    Animated.parallel([
+      Animated.timing(tutorialFadeAnim, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+      Animated.timing(tutorialScaleAnim, {
+        toValue: 0.9,
+        duration: 200,
+        useNativeDriver: true,
+      })
+    ]).start(async () => {
+      setIsTutorialModalVisible(false);
+      await setTutorialCompleted(); // Save that the user finished
+    });
   };
 
   if (!isInitialized) {
@@ -1296,6 +1335,81 @@ export default function HomeScreen() {
           </View>
         </Modal>
       </ScrollView>
+
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={isTutorialModalVisible}
+        onRequestClose={handleTutorialFinish} // Allow closing with back button
+      >
+        <View style={styles.tutorialModalOverlay}>
+          <Animated.View style={[styles.tutorialModalContent, { opacity: tutorialFadeAnim }]}>
+            <View style={styles.tutorialIconContainer}>
+              {/* This renders an icon OR an image based on your config array */}
+              {tutorialSteps[tutorialStep].icon ? (
+                <Ionicons 
+                  name={tutorialSteps[tutorialStep].icon as any} 
+                  size={80} 
+                  color="#1967d2" 
+                />
+              ) : (
+                <Image 
+                  source={tutorialSteps[tutorialStep].image} 
+                  style={styles.tutorialImage} // <--- Using the updated style
+                />
+              )}
+            </View>
+
+            <Text style={styles.tutorialTitle}> 
+              {tutorialSteps[tutorialStep].title}
+            </Text>
+            <Text style={styles.tutorialText}> 
+              {tutorialSteps[tutorialStep].text}
+            </Text>
+
+            {/* Step Indicators */}
+            <View style={styles.tutorialStepIndicatorContainer}>
+              {tutorialSteps.map((_, index) => (
+                <View 
+                  key={index} 
+                  style={[
+                    styles.tutorialStepDot,
+                    index === tutorialStep ? styles.tutorialStepDotActive : {}
+                  ]} 
+                />
+              ))}
+            </View>
+
+            {/* Button Container */}
+            <View style={styles.tutorialButtonContainer}>
+              {tutorialStep > 0 && (
+                <TouchableOpacity 
+                  style={styles.tutorialButtonPrev} 
+                  onPress={handleTutorialPrev}
+                >
+                  <Text style={styles.tutorialButtonPrevText}>Previous</Text>
+                </TouchableOpacity>
+              )}
+
+              {tutorialStep < tutorialSteps.length - 1 ? (
+                <TouchableOpacity 
+                  style={styles.tutorialButtonNext} 
+                  onPress={handleTutorialNext}
+                >
+                  <Text style={styles.tutorialButtonNextText}>Next</Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity 
+                  style={styles.tutorialButtonNext} 
+                  onPress={handleTutorialFinish}
+                >
+                  <Text style={styles.tutorialButtonNextText}>Get Started!</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </Animated.View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1750,6 +1864,104 @@ const styles = StyleSheet.create({
   cancelButtonText: {
     color: '#5f6368',
     fontSize: 14,
+    fontWeight: '500',
+  },
+  tutorialModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  tutorialModalContent: {
+    width: '100%',
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 25,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  tutorialIconContainer: {
+    // Increased size to make the container larger for a larger image
+    width: width * 0.7, 
+    height: width * 0.7 * 0.7, // Maintain a specific aspect ratio (e.g., 70% of width, then adjust height)
+    backgroundColor: '#e8f0fe',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20,
+    borderRadius: 12, // More squared corners for images
+    overflow: 'hidden',
+  },
+  // 2. INCREASED IMAGE SIZE FOR TUTORIAL MODAL
+  tutorialImage: {
+    width: '100%', // Fills the container
+    height: '100%', // Fills the container
+    resizeMode: 'contain', // Ensure the image fits within the container while maintaining aspect ratio
+  },
+  // DECREASED TITLE AND TEXT SIZE
+  tutorialTitle: {
+    fontSize: 20, // Reduced from 22
+    fontWeight: '600',
+    color: '#202124',
+    textAlign: 'center',
+    marginBottom: 12, // Reduced margin
+  },
+  tutorialText: {
+    fontSize: 14, // Reduced from 16
+    color: '#5f6368',
+    textAlign: 'center',
+    marginBottom: 20, // Reduced margin
+    lineHeight: 20, // Adjusted line height
+    minHeight: 60, // Reduced minHeight to save space
+  },
+  tutorialStepIndicatorContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    marginBottom: 25,
+  },
+  tutorialStepDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#dadce0',
+    marginHorizontal: 4,
+  },
+  tutorialStepDotActive: {
+    backgroundColor: '#1967d2',
+    width: 12, // Make the active one slightly wider
+  },
+  tutorialButtonContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%',
+  },
+  tutorialButtonPrev: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginRight: 5, // Space between buttons
+  },
+  tutorialButtonPrevText: {
+    color: '#5f6368',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  tutorialButtonNext: {
+    flex: 1,
+    backgroundColor: '#1967d2',
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginLeft: 5, // Space between buttons
+  },
+  tutorialButtonNextText: {
+    color: '#fff',
+    fontSize: 16,
     fontWeight: '500',
   },
 });

@@ -143,7 +143,10 @@ export default function LoginScreen() {
                 text: 'OK',
                 onPress: () => {
                   console.log('➡️ Navigating to /(app)');
-                  router.replace('/(app)');
+                  router.replace({
+                    pathname: '/(app)',
+                    params: { isNewUser: result.isNewUser ? 'true' : 'false' }
+                  });
                 }
               }
             ]

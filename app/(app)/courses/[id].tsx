@@ -448,7 +448,7 @@ export default function CourseDetailsScreen() {
                 <View style={styles.metaDivider} />
                 <View style={styles.metaItem}>
                   <Ionicons name="list-outline" size={16} color="#5f6368" />
-                  <Text style={styles.metaText}>{courseDetail.sorted_content.length} Items</Text>
+                  <Text style={styles.metaText}>{courseDetail.sorted_content.length} Topic</Text>
                 </View>
                 <View style={styles.metaDivider} />
                 <View style={styles.metaItem}>

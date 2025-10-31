@@ -852,4 +852,23 @@ export const resetSyncState = () => {
   console.log('🔄 Sync state reset');
 };
 
+export const setTutorialCompleted = async () => {
+  try {
+    await SecureStore.setItemAsync('has_completed_tutorial', 'true');
+    console.log('✅ Tutorial completion status saved.');
+  } catch (error) {
+    console.error('❌ Failed to save tutorial status:', error);
+  }
+};
+
+export const hasCompletedTutorial = async () => {
+  try {
+    const status = await SecureStore.getItemAsync('has_completed_tutorial');
+    return status === 'true';
+  } catch (error) {
+    console.error('❌ Failed to check tutorial status:', error);
+    return false; // Default to false if check fails
+  }
+};
+
 export default api;

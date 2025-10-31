@@ -40,30 +40,50 @@ export default function AppLayout() {
 
   useEffect(() => {
     const fetchUserProfile = async () => {
+      let foundName = false; // Flag to track if we set initials
       try {
         if (netInfo?.isInternetReachable) {
           try {
             const profileData = await getProfile();
-            if (profileData && profileData.name) {
-              const firstLetter = profileData.name.charAt(0).toUpperCase();
-              setInitials(firstLetter);
+            if (profileData) {
+              // ALWAYS set the profile image from the API response (it's null if not set, which is correct)
               setProfileImage(profileData.profile_image);
-              return;
+              
+              // Try to set initials from API
+              if (profileData.name) {
+                const firstLetter = profileData.name.charAt(0).toUpperCase();
+                setInitials(firstLetter);
+                foundName = true; // We found a name from the API
+              }
+              // *** KEY CHANGE: REMOVED THE `return;` STATEMENT ***
+              // This allows the code to continue to the fallback logic if no name was found
             }
           } catch (profileError) {
             console.log('Profile fetch failed, falling back to user data:', profileError);
           }
         }
-        const userData = await getUserData();
-        if (userData && userData.name) {
-          const firstLetter = userData.name.charAt(0).toUpperCase();
-          setInitials(firstLetter);
-        } else {
+        
+        // --- FALLBACK LOGIC ---
+        // Run this if:
+        // 1. We are offline.
+        // 2. We are online BUT the API didn't provide a name (foundName is false).
+        if (!foundName) {
+          const userData = await getUserData();
+          if (userData && userData.name) {
+            const firstLetter = userData.name.charAt(0).toUpperCase();
+            setInitials(firstLetter);
+            foundName = true; // We found a name from local data
+          }
+        }
+
+        // If after all checks, we still have no name, set '?'
+        if (!foundName) {
           setInitials('?');
         }
+
       } catch (error) {
         console.error('Error fetching user profile for header:', error);
-        setInitials('?');
+        setInitials('?'); // Error fallback
       }
     };
     fetchUserProfile();
