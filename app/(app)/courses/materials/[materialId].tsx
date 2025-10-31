@@ -12,6 +12,7 @@ import {
   Image,
   Linking,
   Modal,
+  Platform,
   RefreshControl,
   SafeAreaView,
   ScrollView,
@@ -23,6 +24,7 @@ import {
 
 import { getCompletedOfflineQuizzes, getMaterialDetailsFromDb, getUnsyncedSubmissions } from '@/lib/localDb';
 import { syncAllOfflineData } from '@/lib/offlineSync';
+import * as IntentLauncher from 'expo-intent-launcher';
 import { useNetworkStatus } from '../../../../context/NetworkContext';
 import api, { getAuthorizationHeader, getUserData, initializeAuth } from '../../../../lib/api';
 
@@ -39,6 +41,51 @@ interface MaterialDetail {
 }
 
 type FileType = 'image' | 'pdf' | 'document' | 'video' | 'audio' | 'code' | 'other';
+
+const getMimeType = (filePath: string): string => {
+  const extension = filePath.split('.').pop()?.toLowerCase();
+  switch (extension) {
+    // Documents
+    case 'pdf': return 'application/pdf';
+    case 'doc': return 'application/msword';
+    case 'docx': return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    case 'xls': return 'application/vnd.ms-excel';
+    case 'xlsx': return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    case 'ppt': return 'application/vnd.ms-powerpoint';
+    case 'pptx': return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+    case 'txt': return 'text/plain';
+    
+    // Images
+    case 'jpg':
+    case 'jpeg': return 'image/jpeg';
+    case 'png': return 'image/png';
+    case 'gif': return 'image/gif';
+    case 'webp': return 'image/webp';
+    case 'bmp': return 'image/bmp';
+    case 'svg': return 'image/svg+xml';
+    
+    // Audio
+    case 'mp3': return 'audio/mpeg';
+    case 'wav': return 'audio/wav';
+    case 'm4a': return 'audio/mp4';
+    case 'ogg': return 'audio/ogg';
+    
+    // Video
+    case 'mp4': return 'video/mp4';
+    case 'mov': return 'video/quicktime';
+    case 'mkv': return 'video/x-matroska';
+    case 'webm': return 'video/webm';
+    
+    // Code (as text)
+    case 'js': return 'text/javascript';
+    case 'json': return 'application/json';
+    case 'html': return 'text/html';
+    case 'css': return 'text/css';
+    
+    // Fallback
+    default: return 'application/octet-stream';
+  }
+};
 
 const getMaterialIcon = (type: string) => {
   const lowerType = type.toLowerCase();
@@ -277,7 +324,34 @@ export default function MaterialDetailsScreen() {
     }
   };
 
-  const handleDownload = async () => {
+  const promptDownloadOptions = async () => {
+    if (!netInfo?.isInternetReachable) {
+      Alert.alert('Offline Mode', 'File downloading requires an internet connection.');
+      return;
+    }
+
+    Alert.alert(
+      'Download File',
+      'Choose where you want to save this file:',
+      [
+        {
+          text: 'Download in the app',
+          onPress: downloadToAppStorage // Calls the renamed function
+        },
+        {
+          text: 'Download in device',
+          onPress: downloadToDeviceExternal // Calls the new external function
+        },
+        {
+          text: 'Cancel',
+          style: 'cancel'
+        }
+      ],
+      { cancelable: true }
+    );
+  };
+
+  const downloadToAppStorage = async () => {
     if (!materialDetail?.file_path || !materialDetail?.id) return;
     if (!netInfo?.isInternetReachable) {
       Alert.alert('Offline Mode', 'File downloading requires an internet connection.');
@@ -335,6 +409,38 @@ export default function MaterialDetailsScreen() {
     }
   };
 
+  const downloadToDeviceExternal = async () => {
+    if (!netInfo?.isInternetReachable) {
+      Alert.alert('Offline Mode', 'Downloading to your device requires an internet connection.');
+      return;
+    }
+    if (!materialDetail?.id) {
+      Alert.alert('Error', 'Cannot find material to download.');
+      return;
+    }
+
+    try {
+      // Get the same authenticated URL we use for viewing
+      const fileUrl = await getAuthenticatedFileUrl();
+      if (!fileUrl) {
+        Alert.alert('Error', 'Could not get a valid download link.');
+        return;
+      }
+
+      // Open this URL in the device's browser (e.g., Chrome)
+      // The browser will handle the file download process.
+      const supported = await Linking.canOpenURL(fileUrl);
+      if (supported) {
+        await Linking.openURL(fileUrl);
+      } else {
+        Alert.alert("Cannot Open Link", "No application (like a browser) is available to handle this download.");
+      }
+    } catch (error) {
+      console.error("Failed to open URL with Linking:", error);
+      Alert.alert('Error', 'Could not open the download link. Please try again.');
+    }
+  };
+
   useEffect(() => {
     if (downloadedFileUri && materialDetail) {
       const fileType = getFileType(materialDetail.file_path || '');
@@ -355,11 +461,11 @@ export default function MaterialDetailsScreen() {
 
     const fileType = getFileType(materialDetail?.file_path || '');
     
-    // For documents and PDFs, offer viewing options
+    // For documents and PDFs, offer viewing in Google Docs
     if (['pdf', 'document'].includes(fileType)) {
       Alert.alert(
         'Choose Viewer',
-        'Select how you want to view this document:',
+        'We recommend using Google Docs Viewer to open this file.',
         [
           {
             text: 'Google Docs',
@@ -376,43 +482,6 @@ export default function MaterialDetailsScreen() {
                 Alert.alert('Error', 'Could not open with Google Docs Viewer.');
                 console.error('Google Docs Viewer error:', error);
               }
-            }
-          },
-          {
-            text: 'Microsoft Office',
-            onPress: async () => {
-              try {
-                // Office Online Viewer for better rendering of Office documents
-                const officeViewerUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(fileUrl)}`;
-                const supported = await Linking.canOpenURL(officeViewerUrl);
-                if (supported) {
-                  await Linking.openURL(officeViewerUrl);
-                } else {
-                  Alert.alert('Error', 'Cannot open Office Viewer.');
-                }
-              } catch (error) {
-                Alert.alert('Error', 'Could not open with Office Viewer.');
-                console.error('Office Viewer error:', error);
-              }
-            }
-          },
-          {
-            text: 'Download & Open',
-            onPress: async () => {
-              Alert.alert(
-                'Download Required',
-                'This will download the file to your device for offline viewing. Continue?',
-                [
-                  {
-                    text: 'Cancel',
-                    style: 'cancel'
-                  },
-                  {
-                    text: 'Download',
-                    onPress: handleDownload
-                  }
-                ]
-              );
             }
           },
           {
@@ -440,16 +509,41 @@ export default function MaterialDetailsScreen() {
   const handleOpenFile = async () => {
     if (!downloadedFileUri) return;
 
-    try {
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(downloadedFileUri, {
-          dialogTitle: `Open ${materialDetail?.title}`,
+    // This is an Android-only approach
+    if (Platform.OS === 'android') {
+      try {
+        // 1. Get the shareable content:// URI
+        // This is why we removed /legacy from the FileSystem import
+        const contentUri = await FileSystem.getContentUriAsync(downloadedFileUri);
+
+        // 2. Get the file's MIME type
+        const mimeType = getMimeType(downloadedFileUri);
+        
+        // 3. Launch the "Open with" (ACTION_VIEW) dialog
+        await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+          data: contentUri,
+          flags: 1, // This is FLAG_GRANT_READ_URI_PERMISSION
+          type: mimeType,
         });
-      } else {
-        Alert.alert('Not available', 'File opening is not available on this device.');
+
+      } catch (error) {
+        console.error('Error opening file with IntentLauncher', error);
+        Alert.alert('Error', 'Could not find an app to open this file.');
       }
-    } catch (error) {
-      Alert.alert('Error', 'Could not open the file.');
+    } else {
+      // Fallback for other platforms (though you said Android-only)
+      // We can just use the original sharing method here if needed
+      try {
+        if (await Sharing.isAvailableAsync()) {
+          await Sharing.shareAsync(downloadedFileUri, {
+            dialogTitle: `Open ${materialDetail?.title}`,
+          });
+        } else {
+          Alert.alert('Not available', 'File opening is not available on this device.');
+        }
+      } catch (error) {
+        Alert.alert('Error', 'Could not open the file.');
+      }
     }
   };
 
@@ -516,7 +610,7 @@ export default function MaterialDetailsScreen() {
                 <Text style={styles.progressText}>{downloadProgress}%</Text>
               </View>
             ) : (
-              <TouchableOpacity style={styles.downloadPromptButton} onPress={handleDownload} disabled={isDownloading}>
+              <TouchableOpacity style={styles.downloadPromptButton} onPress={promptDownloadOptions} disabled={isDownloading}>
                 <Ionicons name="download" size={20} color="#fff" />
                 <Text style={styles.downloadPromptButtonText}>Download for Offline Access</Text>
               </TouchableOpacity>
@@ -569,7 +663,7 @@ export default function MaterialDetailsScreen() {
           <Text style={styles.documentSubtext}>This file is downloaded and ready to be opened in a compatible app.</Text>
           <TouchableOpacity style={[styles.primaryDocumentButton, { backgroundColor: docInfo.color }]} onPress={handleOpenFile}>
             <Ionicons name="open-outline" size={20} color="#fff" />
-            <Text style={styles.primaryDocumentButtonText}>Open with App</Text>
+            <Text style={styles.primaryDocumentButtonText}>Open in...</Text>
           </TouchableOpacity>
         </View>
         <View style={styles.downloadedIndicator}>
@@ -687,7 +781,7 @@ export default function MaterialDetailsScreen() {
         <Ionicons name={getFileIcon(getFileType(materialDetail?.file_path || ''))} size={64} color="#4285f4" />
         <Text style={styles.genericFileName}>{materialDetail?.title}</Text>
         <TouchableOpacity style={styles.openFileButton} onPress={handleOpenFile}>
-          <Text style={styles.openFileButtonText}>Open with App</Text>
+          <Text style={styles.openFileButtonText}>Open in...</Text>
         </TouchableOpacity>
       </View>
       <View style={styles.downloadedIndicator}>
@@ -826,7 +920,7 @@ export default function MaterialDetailsScreen() {
               {!downloadedFileUri && !isDownloading && (
                 <TouchableOpacity 
                   style={[styles.actionCard, !netInfo?.isInternetReachable && styles.actionCardDisabled]} 
-                  onPress={handleDownload} 
+                  onPress={promptDownloadOptions} 
                   disabled={!netInfo?.isInternetReachable}
                 >
                   <View style={styles.actionCardContent}>

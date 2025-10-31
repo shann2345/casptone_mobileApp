@@ -11,7 +11,8 @@ import {
   getDb,
   getUnsyncedSubmissions,
   resetTimeCheckData,
-  saveAssessmentDetailsToDb, // ADDED: Required to update local status after sync
+  saveAssessmentDetailsToDb,
+  saveAssessmentSyncTimestamp, // ADDED: Required to update local status after sync
   saveCourseDetailsToDb,
   saveCourseToDb,
   saveServerTime,
@@ -250,6 +251,8 @@ export const useNetworkSync = () => {
 
                         // 3. Save the new online status to the local offline_assessment_data table
                         await saveAssessmentDetailsToDb(assessmentId, userEmail, attemptStatus, latestSubmission);
+                        
+                        await saveAssessmentSyncTimestamp(assessmentId, userEmail, new Date().toISOString());
                         
                         console.log(`✅ [Smart Sync] Refreshed status for assessment ID: ${assessmentId}`);
                         syncResults.assessmentDetailsUpdated++; 
