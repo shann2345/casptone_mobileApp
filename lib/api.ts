@@ -645,24 +645,18 @@ export const syncOfflineSubmission = async (assessmentId: number, fileUri: strin
   try {
     const formData = new FormData();
     
-    // --- MODIFICATION START ---
-    // Check if the URI is a web link or a local file path
     const isLink = fileUri.startsWith('http://') || fileUri.startsWith('https://');
 
     if (isLink) {
-      // If it's a link, send it as the 'submission_link' field
       formData.append('submission_link', fileUri);
     } else {
-      // Otherwise, treat it as a file to upload
       formData.append('assignment_file', {
         uri: fileUri,
         name: originalFilename,
-        type: 'application/octet-stream', // Generic type for offline files
+        type: 'application/octet-stream', 
       } as any);
     }
-    // --- MODIFICATION END ---
     
-    // Add the original submission timestamp to preserve offline submission time
     formData.append('submitted_at', submittedAt);
 
     console.log(`🔄 Attempting to sync offline submission for assessment ${assessmentId} with original timestamp: ${submittedAt}`);
@@ -673,14 +667,21 @@ export const syncOfflineSubmission = async (assessmentId: number, fileUri: strin
       },
     });
 
-    if (response.status === 200) {
-      console.log(`✅ Sync successful for assessment ${assessmentId}`);
-      return true;
+    // --- START OF FIX ---
+    // We check for a specific response from the backend, not just "200 OK".
+    // A captive portal will return 200, but response.data will be HTML,
+    // so response.data.submission_id will be undefined.
+    if (response.status === 200 && response.data && response.data.submission_id) {
+      console.log(`✅ Sync successful for assessment ${assessmentId}. New submission ID: ${response.data.submission_id}`);
+      return true; // <-- This is now a REAL success
     } else {
-      console.error(`❌ Sync failed for assessment ${assessmentId}:`, response.data.message);
-      return false;
+      console.error(`❌ Sync failed for assessment ${assessmentId}: Unexpected response from server.`, response.data);
+      return false; // <-- This will now correctly fire on a bad WiFi
     }
+    // --- END OF FIX ---
+
   } catch (err: any) {
+    // This catch block will handle DNS errors, timeouts, and other network failures
     console.error(`❌ Error syncing offline submission for assessment ${assessmentId}:`, err.response?.data || err.message);
     return false;
   }

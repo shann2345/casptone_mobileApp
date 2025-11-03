@@ -284,13 +284,19 @@ export default function MaterialDetailsScreen() {
     }
   };
 
-  const getAuthenticatedFileUrl = async () => {
-    if (!materialDetail?.file_path || !materialDetail?.id) return '';
+  const getAuthenticatedFileUrl = async (): Promise<string | null> => { // More specific return type
+    if (!materialDetail?.file_path || !materialDetail?.id) return null;
     try {
       const response = await api.get(`/materials/${materialDetail.id}/view-link`);
-      return response.data?.url || `${api.defaults.baseURL}/materials/${materialDetail.id}/view`;
+
+      // **FIX 1:** Only return the pre-signed URL. If it's missing, return null.
+      return response.data?.url || null; 
+
     } catch (error) {
-      return `${api.defaults.baseURL}/materials/${materialDetail.id}/view`;
+      console.error('Failed to get authenticated file URL', error);
+
+      // **FIX 2:** On error, return null, NOT the fallback link.
+      return null; 
     }
   };
 
@@ -410,34 +416,72 @@ export default function MaterialDetailsScreen() {
   };
 
   const downloadToDeviceExternal = async () => {
+    if (!materialDetail?.file_path || !materialDetail?.id) return;
     if (!netInfo?.isInternetReachable) {
-      Alert.alert('Offline Mode', 'Downloading to your device requires an internet connection.');
-      return;
-    }
-    if (!materialDetail?.id) {
-      Alert.alert('Error', 'Cannot find material to download.');
+      Alert.alert('Offline Mode', 'File downloading requires an internet connection.');
       return;
     }
 
+    // 1. Request permissions to write to a directory
+    let directoryUri: string | null = null;
     try {
-      // Get the same authenticated URL we use for viewing
-      const fileUrl = await getAuthenticatedFileUrl();
-      if (!fileUrl) {
-        Alert.alert('Error', 'Could not get a valid download link.');
+      const permissions = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
+      if (!permissions.granted) {
+        Alert.alert('Permission Required', 'We need permission to save files to your device.');
         return;
       }
+      directoryUri = permissions.directoryUri;
+    } catch (err) {
+      console.error('Failed to get directory permissions', err);
+      Alert.alert('Error', 'Could not get storage permissions.');
+      return;
+    }
 
-      // Open this URL in the device's browser (e.g., Chrome)
-      // The browser will handle the file download process.
-      const supported = await Linking.canOpenURL(fileUrl);
-      if (supported) {
-        await Linking.openURL(fileUrl);
-      } else {
-        Alert.alert("Cannot Open Link", "No application (like a browser) is available to handle this download.");
+    // 2. Set up file details
+    const downloadUrl = `${api.defaults.baseURL}/materials/${materialDetail.id}/view`;
+    const fileExtension = materialDetail.file_path.split('.').pop();
+    const sanitizedTitle = materialDetail.title.replace(/[^a-zA-Z0-9]/g, '_');
+    const fileName = `${sanitizedTitle}_${materialDetail.id}${fileExtension ? `.${fileExtension}` : ''}`;
+    // Get the MIME type, which is crucial for this method
+    const mimeType = getMimeType(materialDetail.file_path);
+
+    let fileUri: string | null = null;
+
+    try {
+      // 3. Create the file in the selected directory *first*
+      fileUri = await FileSystem.StorageAccessFramework.createFileAsync(directoryUri, fileName, mimeType);
+
+      // 4. Download the file *directly* into the new file's URI
+      const downloadResumable = FileSystem.createDownloadResumable(
+        downloadUrl,
+        fileUri, // Download directly to the final destination
+        { headers: { 'Authorization': getAuthorizationHeader() } }
+      );
+
+      const result = await downloadResumable.downloadAsync();
+      // Check for a successful HTTP status
+      if (!result || result.status !== 200) {
+        throw new Error('Download failed, server returned status ' + result?.status);
       }
-    } catch (error) {
-      console.error("Failed to open URL with Linking:", error);
-      Alert.alert('Error', 'Could not open the download link. Please try again.');
+
+      console.log('File downloaded to public folder:', result.uri);
+      Alert.alert(
+        'Download Complete',
+        `File "${fileName}" saved to your selected folder.`
+      );
+
+    } catch (err) {
+      console.error('Failed to download to device:', err);
+      Alert.alert('Download Failed', 'Could not save the file. Please try again.');
+
+      // 5. Clean up the partially created file on error
+      if (fileUri) {
+        try {
+          await FileSystem.StorageAccessFramework.deleteAsync(fileUri);
+        } catch (deleteErr) {
+          console.error('Failed to delete partial file:', deleteErr);
+        }
+      }
     }
   };
 

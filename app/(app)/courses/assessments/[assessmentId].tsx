@@ -127,7 +127,7 @@ export default function AssessmentDetailsScreen() {
   const [submissionLoading, setSubmissionLoading] = useState(false);
   const [isStartingAttempt, setIsStartingAttempt] = useState(false); 
   const [hasDetailedData, setHasDetailedData] = useState<boolean>(false);
-
+  const [hasOfflineAssignment, setHasOfflineAssignment] = useState<boolean>(false);
   const [isSubmissionModalVisible, setSubmissionModalVisible] = useState(false);
   const [submissionType, setSubmissionType] = useState<'file' | 'link' | null>(null);
   const [selectedFile, setSelectedFile] = useState<DocumentPicker.DocumentPickerAsset | null>(null);
@@ -157,6 +157,12 @@ export default function AssessmentDetailsScreen() {
     }
 
     try {
+      const unsyncedSubmissions = await getUnsyncedSubmissions(userEmail);
+      const pendingOfflineAssignment = unsyncedSubmissions.find(
+        (sub: any) => sub.assessment_id === parseInt(assessmentId as string)
+      );
+      setHasOfflineAssignment(!!pendingOfflineAssignment);
+
       if (netInfo?.isInternetReachable) {
         // --- ONLINE MODE ---
         console.log('✅ Online: Fetching all assessment data from API.');
@@ -356,7 +362,15 @@ export default function AssessmentDetailsScreen() {
   const formatDate = (dateString?: string) => {
     if (!dateString) return 'N/A';
     const options: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' };
-    return new Date(dateString).toLocaleDateString(undefined, options);
+    
+    // Create the date object from the UTC string
+    const date = new Date(dateString);
+    
+    // Manually add 8 hours
+    date.setHours(date.getHours() + 8);
+    
+    // Format the newly adjusted date
+    return date.toLocaleDateString(undefined, options);
   };
 
   const handlePickDocument = async () => {
@@ -741,6 +755,12 @@ export default function AssessmentDetailsScreen() {
   let isQuizAttemptButtonDisabled = false;
   const assessmentType = assessmentDetail?.type || 'assessment';
   const assessmentTypeCapitalized = assessmentType.charAt(0).toUpperCase() + assessmentType.slice(1);
+  
+  // --- NEW VARS for Assignment Button ---
+  const hasSubmittedAssignment = (latestAssignmentSubmission?.has_submitted_file || hasOfflineAssignment);
+  const assignmentButtonText = hasSubmittedAssignment ? 'Edit Submission' : 'Submit Assessment';
+  const assignmentButtonIcon = hasSubmittedAssignment ? 'create-outline' : 'add-circle';
+
   let quizButtonText = `Start ${assessmentTypeCapitalized}`;
   
   // Logic for the quiz button text and disabled state
@@ -985,8 +1005,8 @@ export default function AssessmentDetailsScreen() {
                   onPress={() => setSubmissionModalVisible(true)}
                   disabled={!isAssessmentCurrentlyOpen || submissionLoading}
                 >
-                  <Ionicons name="add-circle" size={24} color="#fff" style={{ marginRight: 8 }} />
-                  <Text style={styles.submitButtonText}>Submit Assessment</Text>
+                  <Ionicons name={assignmentButtonIcon} size={24} color="#fff" style={{ marginRight: 8 }} />
+                  <Text style={styles.submitButtonText}>{assignmentButtonText}</Text>
                 </TouchableOpacity>
               )}
               {(submissionType === 'file' || submissionType === 'link') && (

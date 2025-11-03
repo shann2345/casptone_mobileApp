@@ -1,6 +1,5 @@
-// components/CustomHeader.tsx
 import { Ionicons } from '@expo/vector-icons';
-import React from 'react';
+import React, { useState } from 'react'; // Import useState
 import { Image, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -16,7 +15,7 @@ interface CustomHeaderProps {
   onBackPress?: () => void;
   showBackButton?: boolean;
   isInternetReachable?: boolean;
-  hideNotifications?: boolean; // NEW: For hiding notifications on certain screens
+  hideNotifications?: boolean;
 }
 
 export const CustomHeader: React.FC<CustomHeaderProps> = ({
@@ -29,10 +28,21 @@ export const CustomHeader: React.FC<CustomHeaderProps> = ({
   onBackPress,
   showBackButton = false,
   isInternetReachable,
-  hideNotifications = false, // NEW: Default to false
+  hideNotifications = false,
 }) => {
   const { isConnected } = useNetworkStatus();
   const insets = useSafeAreaInsets();
+
+  // NEW STATE: Track if profile image has failed to load
+  const [profileImageFailed, setProfileImageFailed] = useState(false);
+
+  // Reset state when profileImage prop changes
+  React.useEffect(() => {
+    setProfileImageFailed(false); // Reset failure state when profileImage changes
+  }, [profileImage]);
+
+  // Determine if a valid image URL is provided AND hasn't failed
+  const hasValidProfileImage = profileImage && profileImage.trim().length > 0 && !profileImageFailed;
 
   return (
     <View style={[styles.headerContainer, { paddingTop: insets.top }]}>
@@ -81,12 +91,13 @@ export const CustomHeader: React.FC<CustomHeaderProps> = ({
 
           {/* Profile Icon */}
           <TouchableOpacity onPress={onProfilePress} style={styles.profileContainer}>
-            {profileImage ? (
+            {hasValidProfileImage ? (
               <View style={styles.profileImageContainer}>
                 <Image
                   source={{ uri: profileImage }}
                   style={styles.profileImage}
-                  onError={() => console.log('Failed to load profile image')}
+                  // On error, set state to true to trigger fallback
+                  onError={() => setProfileImageFailed(true)}
                 />
                 <View
                   style={[
@@ -226,7 +237,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#fff',
     overflow: 'hidden',
-    backgroundColor: '#fff',
+    backgroundColor: '#fff', // This white background could be the culprit if Image fails
   },
   profileImage: {
     width: '100%',

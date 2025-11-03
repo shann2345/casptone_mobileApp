@@ -822,6 +822,7 @@ export default function HomeScreen() {
     setIsEnrollModalVisible(true);
   };
   
+  // --- MODIFICATION START ---
   // NEW: Function to handle the final enrollment submission
   const confirmEnrollment = async () => {
     if (!netInfo?.isInternetReachable) {
@@ -863,15 +864,8 @@ export default function HomeScreen() {
       });
       Alert.alert('Success', response.data.message || `Successfully enrolled in ${courseToEnroll.title}`);
 
-      try {
-        await saveCourseToDb(courseToEnroll, userEmail);
-        const courseDetailResponse = await api.get(`/courses/${courseToEnroll.id}`);
-        if (courseDetailResponse.status === 200) {
-          await saveCourseDetailsToDb(courseDetailResponse.data.course, userEmail);
-        }
-      } catch (saveError) {
-        console.error('⚠️ Failed to save enrolled course to local DB:', saveError);
-      }
+      // --- REMOVED Redundant save logic ---
+      // The logic below will handle all saving and downloading.
 
       setIsEnrollModalVisible(false);
       setSearchModalVisible(false);
@@ -881,16 +875,34 @@ export default function HomeScreen() {
 
       try {
         setIsLoadingEnrolledCourses(true);
+        
+        // Add status updates to give user feedback
+        setSyncStatus('Refreshing course list...');
+        
         const updatedEnrolledCoursesResponse = await api.get('/my-courses');
         const updatedCourses = updatedEnrolledCoursesResponse.data.courses || [];
         setEnrolledCourses(updatedCourses);
 
+        setSyncStatus('Saving new course data...');
+        // This will save basic info AND detailed info for all courses, including the new one
+        for (const course of updatedCourses) {
+          try {
+            await saveCourseToDb(course, userEmail);
+          } catch (saveError) {
+            console.error(' ❌ Failed to save basic course to DB:', saveError);
+          }
+        }
         await fetchAndSaveCompleteCoursesData(updatedCourses, userEmail);
-        // Auto-download assessment data for newly enrolled course
+        
+        setSyncStatus('Downloading assessment data...');
+        // This will download all assessment details and quiz questions
         await autoDownloadAssessmentData(userEmail);
+        
+        setSyncStatus('✅ Enrollment complete!');
 
       } catch (refreshError) {
         console.error('Error refreshing enrolled courses after enrollment:', refreshError);
+        setSyncStatus('⚠️ Error syncing new course.');
         try {
           const offlineCourses = await getEnrolledCoursesFromDb(userEmail);
           setEnrolledCourses(offlineCourses as EnrolledCourse[]);
@@ -899,6 +911,8 @@ export default function HomeScreen() {
         }
       } finally {
         setIsLoadingEnrolledCourses(false);
+        // Clear status after a delay
+        setTimeout(() => setSyncStatus(''), 3000);
       }
     } catch (error: any) {
       console.error('Enrollment error:', error.response?.data || error.message);
@@ -907,6 +921,7 @@ export default function HomeScreen() {
       setIsEnrolling(false);
     }
   };
+  // --- MODIFICATION END ---
 
   const renderCourseItem = ({ item }: { item: Course }) => (
     <View style={styles.courseResultCard}>

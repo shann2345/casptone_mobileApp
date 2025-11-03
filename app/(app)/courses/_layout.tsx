@@ -425,7 +425,7 @@ export default function CoursesLayout() {
                     </View>
                     
                     <View style={styles.notificationActions}>
-                      {item.type === 'material' && item.material_type?.toLowerCase() !== 'link' && (
+                      {item.type === 'material' && item.has_file && (
                         <View>
                           {downloadingId === item.id ? (
                             <View style={styles.progressContainer}>
