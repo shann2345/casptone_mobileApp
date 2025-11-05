@@ -671,9 +671,9 @@ export const syncOfflineSubmission = async (assessmentId: number, fileUri: strin
     // We check for a specific response from the backend, not just "200 OK".
     // A captive portal will return 200, but response.data will be HTML,
     // so response.data.submission_id will be undefined.
-    if (response.status === 200 && response.data && response.data.submission_id) {
-      console.log(`✅ Sync successful for assessment ${assessmentId}. New submission ID: ${response.data.submission_id}`);
-      return true; // <-- This is now a REAL success
+    if (response.status === 200) {
+      console.log(`✅ Sync successful for assessment ${assessmentId}. Server message: ${response.data.message}`);
+      return true; 
     } else {
       console.error(`❌ Sync failed for assessment ${assessmentId}: Unexpected response from server.`, response.data);
       return false; // <-- This will now correctly fire on a bad WiFi

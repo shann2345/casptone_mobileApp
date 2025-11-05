@@ -3,7 +3,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -19,10 +19,9 @@ import {
 
 import { usePendingSyncNotification } from '@/hooks/usePendingSyncNotification';
 import { useNetworkStatus } from '../../../../context/NetworkContext';
-import api, { getUserData, syncOfflineSubmission } from '../../../../lib/api';
+import api, { getUserData } from '../../../../lib/api';
 import {
   checkIfAssessmentNeedsDetails,
-  deleteOfflineSubmission,
   getAssessmentDetailsFromDb,
   getCompletedOfflineQuizzes,
   getCurrentServerTime,
@@ -36,7 +35,7 @@ import {
   saveAssessmentReviewToDb,
   saveAssessmentsToDb,
   saveOfflineSubmission,
-  startOfflineQuiz, // ADDED: Required for saving the shuffled order
+  startOfflineQuiz
 } from '../../../../lib/localDb';
 
 // Interface definitions (These should match your existing definitions)
@@ -320,37 +319,37 @@ export default function AssessmentDetailsScreen() {
     }, [fetchAssessmentDetailsAndAttemptStatus])
   );
 
-  useEffect(() => {
-    const syncSubmissions = async () => {
-      if (netInfo?.isInternetReachable) {
-        console.log('Network is back online. Checking for unsynced submissions...');
-        const user = await getUserData();
-        if (!user || !user.email) return;
+  // useEffect(() => {
+  //   const syncSubmissions = async () => {
+  //     if (netInfo?.isInternetReachable) {
+  //       console.log('Network is back online. Checking for unsynced submissions...');
+  //       const user = await getUserData();
+  //       if (!user || !user.email) return;
 
-        const unsyncedSubmissions = await getUnsyncedSubmissions(user.email);
-        if (unsyncedSubmissions.length > 0) {
-          Alert.alert('Synchronization', `Found ${unsyncedSubmissions.length} offline submission(s) to sync.`, [{ text: 'OK' }]);
+  //       const unsyncedSubmissions = await getUnsyncedSubmissions(user.email);
+  //       if (unsyncedSubmissions.length > 0) {
+  //         Alert.alert('Synchronization', `Found ${unsyncedSubmissions.length} offline submission(s) to sync.`, [{ text: 'OK' }]);
 
-          for (const submission of unsyncedSubmissions) {
-            const success = await syncOfflineSubmission(
-              submission.assessment_id,
-              submission.file_uri,
-              submission.original_filename,
-              submission.submitted_at
-            );
+  //         for (const submission of unsyncedSubmissions) {
+  //           const success = await syncOfflineSubmission(
+  //             submission.assessment_id,
+  //             submission.file_uri,
+  //             submission.original_filename,
+  //             submission.submitted_at
+  //           );
 
-            if (success) {
-              await deleteOfflineSubmission(submission.id);
-            }
-          }
+  //           if (success) {
+  //             await deleteOfflineSubmission(submission.id);
+  //           }
+  //         }
 
-          fetchAssessmentDetailsAndAttemptStatus();
-        }
-      }
-    };
+  //         fetchAssessmentDetailsAndAttemptStatus();
+  //       }
+  //     }
+  //   };
 
-    syncSubmissions();
-  }, [netInfo?.isInternetReachable]);
+  //   syncSubmissions();
+  // }, [netInfo?.isInternetReachable]);
 
   const isAssessmentOpen = (assessment: AssessmentDetail) => {
     const now = new Date().getTime();

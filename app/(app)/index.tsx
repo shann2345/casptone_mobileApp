@@ -4,17 +4,13 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Animated, Dimensions, FlatList, Image, Modal, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import { useNetworkStatus } from '../../context/NetworkContext';
-import api, { clearAuthToken, getAuthToken, getServerTime, getUserData, hasCompletedTutorial, setTutorialCompleted, syncOfflineQuiz, syncOfflineSubmission, } from '../../lib/api';
+import api, { clearAuthToken, getAuthToken, getServerTime, getUserData, hasCompletedTutorial, setTutorialCompleted } from '../../lib/api';
 import {
-  deleteOfflineQuizAttempt,
-  deleteOfflineSubmission,
   downloadAllQuizQuestions,
   getAssessmentsWithoutDetails,
-  getCompletedOfflineQuizzes,
   getDb,
   getEnrolledCoursesFromDb,
   getOfflineTimeStatus,
-  getUnsyncedSubmissions,
   initDb,
   resetTimeCheckData,
   saveCourseDetailsToDb,
@@ -333,82 +329,82 @@ export default function HomeScreen() {
     return parts.join(', ');
   }
 
-  useEffect(() => {
-    const syncSubmissions = async () => {
-      if (!isInitialized) return;
+  // useEffect(() => {
+  //   const syncSubmissions = async () => {
+  //     if (!isInitialized) return;
 
-      const hasRealInternet = netInfo?.isInternetReachable === true;
-      if (hasRealInternet) {
-        console.log('Network is back online. Checking for unsynced submissions...');
-        const user = await getUserData();
-        if (!user || !user.email) {
-          console.log('User not found. Cannot sync submissions.');
-          return;
-        }
+  //     const hasRealInternet = netInfo?.isInternetReachable === true;
+  //     if (hasRealInternet) {
+  //       console.log('Network is back online. Checking for unsynced submissions...');
+  //       const user = await getUserData();
+  //       if (!user || !user.email) {
+  //         console.log('User not found. Cannot sync submissions.');
+  //         return;
+  //       }
 
-        // Check and sync for assignment submissions
-        const unsyncedAssignments = await getUnsyncedSubmissions(user.email);
-        if (unsyncedAssignments.length > 0) {
-          Alert.alert(
-            'Synchronization',
-            `Found ${unsyncedAssignments.length} offline assignment submission(s) to sync.`,
-            [{ text: 'OK' }]
-          );
-          for (const submission of unsyncedAssignments) {
-            console.log(`Attempting to sync assignment for assessment ID: ${submission.assessment_id}`);
-            const success = await syncOfflineSubmission(
-              submission.assessment_id,
-              submission.file_uri,
-              submission.original_filename,
-              submission.submitted_at
-            );
-            if (success) {
-              await deleteOfflineSubmission(submission.id);
-              console.log(`Successfully synced and deleted local record for assignment ${submission.assessment_id}`);
-            } else {
-              console.warn(`Failed to sync assignment for assessment ${submission.assessment_id}`);
-            }
-          }
-        }
+  //       // Check and sync for assignment submissions
+  //       const unsyncedAssignments = await getUnsyncedSubmissions(user.email);
+  //       if (unsyncedAssignments.length > 0) {
+  //         Alert.alert(
+  //           'Synchronization',
+  //           `Found ${unsyncedAssignments.length} offline assignment submission(s) to sync.`,
+  //           [{ text: 'OK' }]
+  //         );
+  //         for (const submission of unsyncedAssignments) {
+  //           console.log(`Attempting to sync assignment for assessment ID: ${submission.assessment_id}`);
+  //           const success = await syncOfflineSubmission(
+  //             submission.assessment_id,
+  //             submission.file_uri,
+  //             submission.original_filename,
+  //             submission.submitted_at
+  //           );
+  //           if (success) {
+  //             await deleteOfflineSubmission(submission.id);
+  //             console.log(`Successfully synced and deleted local record for assignment ${submission.assessment_id}`);
+  //           } else {
+  //             console.warn(`Failed to sync assignment for assessment ${submission.assessment_id}`);
+  //           }
+  //         }
+  //       }
         
-        // Check and sync for quiz attempts
-        const completedOfflineQuizzes = await getCompletedOfflineQuizzes(user.email);
-        if (completedOfflineQuizzes.length > 0) {
-          Alert.alert(
-            'Synchronization',
-            `Found ${completedOfflineQuizzes.length} offline quiz attempt(s) to sync.`,
-            [{ text: 'OK' }]
-          );
+  //       // Check and sync for quiz attempts
+  //       const completedOfflineQuizzes = await getCompletedOfflineQuizzes(user.email);
+  //       if (completedOfflineQuizzes.length > 0) {
+  //         Alert.alert(
+  //           'Synchronization',
+  //           `Found ${completedOfflineQuizzes.length} offline quiz attempt(s) to sync.`,
+  //           [{ text: 'OK' }]
+  //         );
 
-          for (const quizAttempt of completedOfflineQuizzes) {
-            console.log(`Attempting to sync quiz for assessment ID: ${quizAttempt.assessment_id}`);
+  //         for (const quizAttempt of completedOfflineQuizzes) {
+  //           console.log(`Attempting to sync quiz for assessment ID: ${quizAttempt.assessment_id}`);
             
-            if (!quizAttempt.answers || !quizAttempt.start_time || !quizAttempt.end_time) {
-              console.warn(`Skipping sync for quiz ${quizAttempt.assessment_id} - missing required data`);
-              continue;
-            }
+  //           if (!quizAttempt.answers || !quizAttempt.start_time || !quizAttempt.end_time) {
+  //             console.warn(`Skipping sync for quiz ${quizAttempt.assessment_id} - missing required data`);
+  //             continue;
+  //           }
 
-            const success = await syncOfflineQuiz(
-              quizAttempt.assessment_id,
-              quizAttempt.answers,
-              quizAttempt.start_time,
-              quizAttempt.end_time
-            );
-            if (success) {
-              await deleteOfflineQuizAttempt(quizAttempt.assessment_id, user.email);
-              console.log(`Successfully synced and deleted local record for quiz attempt ${quizAttempt.assessment_id}`);
-            } else {
-              console.warn(`Failed to sync quiz attempt ${quizAttempt.assessment_id}`);
-            }
-          }
-        }
+  //           const success = await syncOfflineQuiz(
+  //             quizAttempt.assessment_id,
+  //             quizAttempt.answers,
+  //             quizAttempt.start_time,
+  //             quizAttempt.end_time
+  //           );
+  //           if (success) {
+  //             await deleteOfflineQuizAttempt(quizAttempt.assessment_id, user.email);
+  //             console.log(`Successfully synced and deleted local record for quiz attempt ${quizAttempt.assessment_id}`);
+  //           } else {
+  //             console.warn(`Failed to sync quiz attempt ${quizAttempt.assessment_id}`);
+  //           }
+  //         }
+  //       }
         
-        // After attempting to sync, refresh the course list to get updated submission statuses
-        fetchCourses();
-      }
-    };
-    syncSubmissions();
-  }, [netInfo?.isInternetReachable, isInitialized]);
+  //       // After attempting to sync, refresh the course list to get updated submission statuses
+  //       fetchCourses();
+  //     }
+  //   };
+  //   syncSubmissions();
+  // }, [netInfo?.isInternetReachable, isInitialized]);
 
   useEffect(() => {
     if (!isInitialized) return; // Wait for app to be ready

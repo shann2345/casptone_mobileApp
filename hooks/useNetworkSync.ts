@@ -92,7 +92,7 @@ const SYNC_CONFIG = {
 export const useNetworkSync = () => {
   const { netInfo } = useNetworkStatus();
   const isInternetReachable = netInfo?.isInternetReachable;
-  const previousConnectionState = useRef(isInternetReachable);
+  const previousConnectionState = useRef<boolean | null | undefined>(null);
   const isSyncing = useRef(false);
   const lastSyncAttempt = useRef(0);
 
@@ -224,29 +224,43 @@ export const useNetworkSync = () => {
             if (submittedAssessmentIds.size > 0) {
                 console.log(`📡 [Smart Sync] Refreshing local status for ${submittedAssessmentIds.size} submitted assessment(s)...`);
 
+                const db = await getDb();
+
                 for (const assessmentId of submittedAssessmentIds) {
                     try {
                         let latestSubmission: LatestAssignmentSubmission | null = null;
                         let attemptStatus: any = null;
 
-                        // 1. Fetch latest assignment submission details (for assignment types)
-                        try {
-                            const latestResponse = await api.get(`/assessments/${assessmentId}/latest-assignment-submission`);
-                            if (latestResponse.status === 200) {
-                                latestSubmission = latestResponse.data as LatestAssignmentSubmission;
-                            }
-                        } catch (e) {
-                            // This assessment might be a quiz/exam, or no submission found yet.
-                        }
+                        const assessment = await db.getFirstAsync<{ type: string }>(
+                          `SELECT type FROM offline_assessments WHERE id = ? AND user_email = ?;`,
+                          [assessmentId, userEmail]
+                        );
+                        const assessmentType = assessment?.type;
 
-                        // 2. Fetch latest attempt status (for quiz/exam types)
-                        try {
-                            const attemptResponse = await api.get(`/assessments/${assessmentId}/attempt-status`);
-                            if (attemptResponse.status === 200) {
-                                attemptStatus = attemptResponse.data;
-                            }
-                        } catch (e) {
-                            // Ignore 404/etc, means no attempt status yet.
+                        if (assessmentType === 'quiz' || assessmentType === 'exam') {
+                          // 2. It's a quiz, get attempt status
+                          console.log(`   -> Refreshing quiz status for ${assessmentId}...`);
+                          try {
+                              const attemptResponse = await api.get(`/assessments/${assessmentId}/attempt-status`);
+                              if (attemptResponse.status === 200) {
+                                  attemptStatus = attemptResponse.data;
+                              }
+                          } catch (e) {
+                              // Ignore 404/etc, means no attempt status yet.
+                          }
+                        } else if (assessmentType === 'assignment' || assessmentType === 'project' || assessmentType === 'activity') {
+                          // 3. It's an assignment, get latest submission data
+                          console.log(`   -> Refreshing assignment status for ${assessmentId}...`);
+                          try {
+                              const latestResponse = await api.get(`/assessments/${assessmentId}/latest-assignment-submission`);
+                              if (latestResponse.status === 200) {
+                                  latestSubmission = latestResponse.data as LatestAssignmentSubmission;
+                              }
+                          } catch (e) {
+                              // This assessment might be a quiz/exam, or no submission found yet.
+                          }
+                        } else {
+                          console.warn(`   -> Unknown assessment type '${assessmentType}' for ID ${assessmentId}. Skipping status refresh.`);
                         }
 
                         // 3. Save the new online status to the local offline_assessment_data table
