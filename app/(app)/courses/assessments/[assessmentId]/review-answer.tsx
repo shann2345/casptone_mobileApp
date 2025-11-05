@@ -2,9 +2,9 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import * as ScreenCapture from 'expo-screen-capture';
+// import * as ScreenCapture from 'expo-screen-capture';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { useNetworkStatus } from '../../../../../context/NetworkContext';
 import api, { getUserData } from '../../../../../lib/api';
@@ -65,15 +65,15 @@ export default function ReviewAnswerScreen() {
   const [error, setError] = useState<string | null>(null);
 
   // Screenshot prevention useEffect (no changes)
-  useEffect(() => {
-    const activateScreenshotPrevention = async () => { await ScreenCapture.preventScreenCaptureAsync(); };
-    const deactivateScreenshotPrevention = async () => { await ScreenCapture.allowScreenCaptureAsync(); };
-    activateScreenshotPrevention();
-    const subscription = ScreenCapture.addScreenshotListener(() => {
-      Alert.alert('Screenshot Not Allowed', 'For security reasons, taking screenshots is not allowed during assessment review. This attempt has been noted.', [{ text: 'OK' }]);
-    });
-    return () => { deactivateScreenshotPrevention(); subscription.remove(); };
-  }, []);
+  // useEffect(() => {
+  //   const activateScreenshotPrevention = async () => { await ScreenCapture.preventScreenCaptureAsync(); };
+  //   const deactivateScreenshotPrevention = async () => { await ScreenCapture.allowScreenCaptureAsync(); };
+  //   activateScreenshotPrevention();
+  //   const subscription = ScreenCapture.addScreenshotListener(() => {
+  //     Alert.alert('Screenshot Not Allowed', 'For security reasons, taking screenshots is not allowed during assessment review. This attempt has been noted.', [{ text: 'OK' }]);
+  //   });
+  //   return () => { deactivateScreenshotPrevention(); subscription.remove(); };
+  // }, []);
 
   // fetchReviewData useEffect (no changes)
   useEffect(() => {

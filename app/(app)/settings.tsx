@@ -72,7 +72,7 @@ export default function SettingsScreen() {
     pushNotifications: false,
     emailNotifications: false,
     courseUpdates: false,
-    assignmentReminders: false,
+    assignmentReminders: true,
     gradeNotifications: false,
     materialReminders: true,
   });
@@ -638,7 +638,7 @@ const NotificationSettingsModal = ({ visible, onClose, settings, onSettingChange
           disabled={true}
         />
         <NotificationToggle
-          title="Assignment Reminders"
+          title="Assessment Notifications"
           subtitle="Reminders for upcoming assignments"
           value={settings.assignmentReminders}
           onValueChange={(value: boolean) => onSettingChange('assignmentReminders', value)}

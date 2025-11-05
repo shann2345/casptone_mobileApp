@@ -3,13 +3,15 @@ import { CustomHeader } from '@/components/CustomHeader';
 import { useNetworkSync } from '@/hooks/useNetworkSync';
 import { unregisterBackgroundSync } from '@/lib/backgroundSync';
 import { Ionicons } from '@expo/vector-icons';
+import NetInfo from '@react-native-community/netinfo';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
 import { Tabs, usePathname, useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   FlatList,
   Modal,
   StyleSheet,
@@ -17,9 +19,8 @@ import {
   TouchableOpacity,
   View
 } from 'react-native';
-
 import { useNetworkStatus } from '../../context/NetworkContext';
-import { API_BASE_URL, clearAuthToken, getAuthorizationHeader, getProfile, getUserData } from '../../lib/api';
+import { API_BASE_URL, clearAuthToken, getAuthorizationHeader, getProfile, getServerTime, getUserData } from '../../lib/api';
 import { clearOfflineData } from '../../lib/localDb';
 
 export default function AppLayout() {
@@ -32,12 +33,62 @@ export default function AppLayout() {
   const [unreadCount, setUnreadCount] = useState<number>(0);
   const [isNotificationModalVisible, setIsNotificationModalVisible] = useState<boolean>(false);
   const [isProfileMenuVisible, setIsProfileMenuVisible] = useState<boolean>(false);
-  
+  const appState = useRef(AppState.currentState);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<number>(0);
 
   useNetworkSync();
 
+  useEffect(() => {
+    // This listener checks if the app is coming from the background
+    const subscription = AppState.addEventListener('change', async (nextAppState) => {
+      if (
+        appState.current.match(/inactive|background/) &&
+        nextAppState === 'active'
+      ) {
+        // App has come to the foreground!
+        console.log('✅ [GLOBAL] App has come to the foreground!');
+        
+        // --- START OF FIX ---
+        // We MUST check the network state *at this exact moment*
+        // by fetching it directly.
+        const currentState = await NetInfo.fetch();
+        
+        if (currentState.isInternetReachable) {
+          // If we are ONLINE, we must re-sync with the server time.
+          // This establishes a new valid baseline and prevents
+          // the time spent in the background from being counted as
+          // "offline time".
+          console.log('🔄 [GLOBAL] App is ONLINE. Re-syncing server time...');
+          try {
+            // getServerTime(true) fetches from API and saves the new baseline.
+            // This is the correct function to call.
+            await getServerTime(true); 
+            console.log('✅ [GLOBAL] Server time baseline reset.');
+          } catch (error) {
+            console.error('❌ [GLOBAL] Failed to re-sync server time on app resume:', error);
+          }
+        } else {
+          // If we are OFFLINE, we must *not* update any time.
+          // The app's existing logic (e.g., in [id].tsx) will
+          // check validity based on the *last known* server time.
+          // Calling updateTimeSync() here would *cause* a
+          // false positive for time manipulation.
+          console.log('⚠️ [GLOBAL] App is OFFLINE. Skipping time sync to prevent false positive.');
+        }
+        // --- END OF FIX ---
+      }
+
+      // Update the current state
+      appState.current = nextAppState;
+    });
+
+    return () => {
+      // Clean up the listener when the component unmounts
+      subscription.remove();
+    };
+  }, []);
+  
   useEffect(() => {
     const fetchUserProfile = async () => {
       let foundName = false; // Flag to track if we set initials

@@ -4,12 +4,14 @@ import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
 interface OAuthContextType {
   isProcessing: boolean;
-  startProcessing: () => void;
+  message: string; // NEW: To hold the current message
+  startProcessing: (message: string) => void; // UPDATED: Now accepts a message
   stopProcessing: () => void;
 }
 
 const OAuthContext = createContext<OAuthContextType>({
   isProcessing: false,
+  message: '',
   startProcessing: () => {},
   stopProcessing: () => {},
 });
@@ -17,28 +19,39 @@ const OAuthContext = createContext<OAuthContextType>({
 export const useOAuth = () => useContext(OAuthContext);
 
 export const OAuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [isProcessing, setIsProcessing] = useState(false);
+  // UPDATED: State is now the message string, or null if not processing
+  const [processingMessage, setProcessingMessage] = useState<string | null>(null);
 
-  const startProcessing = () => {
-    console.log('🔄 OAuth processing started');
-    setIsProcessing(true);
+  const startProcessing = (message: string) => {
+    console.log(`🔄 OAuth processing started: ${message}`);
+    setProcessingMessage(message);
   };
 
   const stopProcessing = () => {
     console.log('✅ OAuth processing stopped');
-    setIsProcessing(false);
+    setProcessingMessage(null);
   };
 
+  const isProcessing = processingMessage !== null;
+
   return (
-    <OAuthContext.Provider value={{ isProcessing, startProcessing, stopProcessing }}>
+    <OAuthContext.Provider
+      value={{
+        isProcessing,
+        message: processingMessage || '', // Provide the message
+        startProcessing,
+        stopProcessing,
+      }}>
       {children}
-      
+
       {/* Global OAuth Processing Overlay */}
+      {/* UPDATED: Show if isProcessing is true */}
       {isProcessing && (
         <View style={styles.overlay}>
           <View style={styles.content}>
             <ActivityIndicator size="large" color="#007bff" />
-            <Text style={styles.text}>Completing sign in...</Text>
+            {/* UPDATED: Render the dynamic message from state */}
+            <Text style={styles.text}>{processingMessage}</Text>
             <Text style={styles.subText}>Please wait a moment</Text>
           </View>
         </View>
@@ -47,6 +60,7 @@ export const OAuthProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   );
 };
 
+// Styles remain exactly the same
 const styles = StyleSheet.create({
   overlay: {
     position: 'absolute',
@@ -57,7 +71,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.8)',
     justifyContent: 'center',
     alignItems: 'center',
-    zIndex: 99999, // Very high z-index to cover everything
+    zIndex: 99999,
   },
   content: {
     backgroundColor: '#ffffff',

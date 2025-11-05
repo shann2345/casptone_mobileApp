@@ -1,3 +1,5 @@
+// (auth)/login.tsx
+
 import { Ionicons } from '@expo/vector-icons';
 import * as Google from 'expo-auth-session/providers/google';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -19,7 +21,7 @@ import {
 import api, { googleAuth, prepareOfflineMode, storeAuthToken, storeUserData } from '@/lib/api';
 import { registerBackgroundSync } from '@/lib/backgroundSync';
 import { useNetworkStatus } from '../../context/NetworkContext';
-import { useOAuth } from '../../context/OAuthContext'; // NEW IMPORT
+import { useOAuth } from '../../context/OAuthContext'; // Correct import
 import { initDb, resetTimeCheckData } from '../../lib/localDb';
 
 WebBrowser.maybeCompleteAuthSession();
@@ -49,7 +51,7 @@ export default function LoginScreen() {
   const slideAnim = React.useRef(new Animated.Value(50)).current;
 
   const { isConnected, netInfo } = useNetworkStatus();
-  const { startProcessing, stopProcessing } = useOAuth(); // NEW: Use global OAuth context
+  const { startProcessing, stopProcessing } = useOAuth(); // Use global OAuth context
 
   React.useEffect(() => {
     Animated.parallel([
@@ -66,18 +68,17 @@ export default function LoginScreen() {
     ]).start();
   }, []);
 
-  // UPDATED: This useEffect now handles success, cancellation, or failure of the Google login
+  // UPDATED: This useEffect now handles success, cancellation, or failure
   React.useEffect(() => {
     if (googleResponse?.type === 'success') {
       handleGoogleSuccess(googleResponse.authentication?.accessToken);
     } else if (googleResponse?.type === 'dismiss' || googleResponse?.type === 'cancel' || googleResponse?.type === 'error') {
-      // Handle cases where the user closes the login window or an error occurs
       console.log('Google Auth was dismissed, cancelled, or failed:', googleResponse.type);
       stopProcessing(); // Hide the loading overlay
     }
   }, [googleResponse]);
 
-  // UPDATED: Starts the loading overlay before opening the Google prompt
+  // UPDATED: Starts the loading overlay with a specific message
   const handleGoogleLogin = () => {
     if (!isConnected) {
       Alert.alert(
@@ -87,18 +88,22 @@ export default function LoginScreen() {
       return;
     }
     
-    startProcessing(); // Show loading overlay immediately
+    // UPDATED: Pass a message to startProcessing
+    startProcessing('Contacting Google...'); // Show loading overlay immediately
     googlePromptAsync();
   };
 
   const handleGoogleSuccess = async (accessToken: string | undefined) => {
     if (!accessToken) {
       Alert.alert('Error', 'Google authentication failed - no access token received');
-      stopProcessing();
+      stopProcessing(); // Make sure to stop processing on failure
       return;
     }
     
     try {
+      // UPDATED: Show a new message while we verify with our backend
+      startProcessing('Verifying your account...');
+
       const userInfoResponse = await fetch(
         `https://www.googleapis.com/oauth2/v2/userinfo?access_token=${accessToken}`
       );
@@ -117,6 +122,15 @@ export default function LoginScreen() {
 
       if (result.success) {
         console.log('✅ Google auth result:', result);
+
+        // --- THIS IS THE KEY CHANGE ---
+        // UPDATED: Show a specific message based on sign-up or sign-in
+        const setupMessage = result.isNewUser 
+          ? 'Finalizing account setup...' 
+          : 'Preparing your app...';
+        startProcessing(setupMessage);
+        // -----------------------------
+
         await resetTimeCheckData(result.user.email);
         
         // Initialize database and prepare offline mode
@@ -137,7 +151,8 @@ export default function LoginScreen() {
         if (result.isVerified) {
           Alert.alert(
             'Success', 
-            'Signed in successfully!',
+            // UPDATED: Custom alert text
+            result.isNewUser ? 'Account created successfully!' : 'Signed in successfully!', 
             [
               {
                 text: 'OK',
@@ -167,7 +182,7 @@ export default function LoginScreen() {
           );
         }
       } else {
-        stopProcessing();
+        stopProcessing(); // Stop on failure
         console.error('❌ Google auth failed:', result.message);
         
         if (result.error === 'invalid_role') {
@@ -181,7 +196,7 @@ export default function LoginScreen() {
         }
       }
     } catch (error: any) {
-      stopProcessing();
+      stopProcessing(); // Stop on error
       console.error('Google auth error:', error);
       Alert.alert('Error', 'Failed to authenticate with Google. Please try again.');
     }
@@ -295,6 +310,7 @@ export default function LoginScreen() {
               </Animated.View>
             )}
             
+            {/* The commented-out email/password form from your file */}
             {/* <View style={styles.inputGroup}>
               <Text style={styles.label}>
                 <Ionicons name="mail-outline" size={16} color="#495057" /> Email
@@ -349,7 +365,7 @@ export default function LoginScreen() {
               {errors.password && (
                 <View style={styles.errorContainer}>
                   <Ionicons name="alert-circle-outline" size={14} color="#dc3545" />
-                  <Text style={styles.errorText}>{errors.password}</Text>
+                  <Text style={styles.errorText}>{errors.email}</Text>
                 </View>
               )}
             </View> */}
@@ -400,6 +416,7 @@ export default function LoginScreen() {
   );
 }
 
+// Styles remain unchanged
 const styles = StyleSheet.create({
   gradientBackground: {
     flex: 1,

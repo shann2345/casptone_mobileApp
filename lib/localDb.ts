@@ -804,7 +804,7 @@ export const saveAssessmentsToDb = async (assessments: any[], courseId: number, 
             assessment.unavailable_at || null,
             assessment.max_attempts || null,
             assessment.duration_minutes || null,
-            assessment.points || 0,
+            assessment.total_points ?? assessment.points ?? 0,
             assessment.assessment_file_path || null,
             assessment.assessment_file_url || null,
             assessment.allow_answer_review ? 1 : 0, // Add this field
@@ -1042,7 +1042,8 @@ export const getAssessmentDetailsFromDb = async (assessmentId: number | string, 
     // Convert allow_answer_review from INTEGER to boolean
     const assessmentData = {
       ...assessmentResult,
-      allow_answer_review: assessmentResult.allow_answer_review === 1
+      allow_answer_review: assessmentResult.allow_answer_review === 1,
+      total_points: assessmentResult.points
     };
 
     // Then, get the dynamic data (attempt status, submission)

@@ -493,30 +493,30 @@ export default function TodoScreen() {
     );
   };
   
-  useEffect(() => {
-    // This hook refreshes the To-do list UI after a sync
-    const checkForSyncUpdates = async () => {
-      if (netInfo?.isInternetReachable) {
-        const user = await getUserData();
-        if (!user || !user.email) return;
+  // useEffect(() => {
+  //   // This hook refreshes the To-do list UI after a sync
+  //   const checkForSyncUpdates = async () => {
+  //     if (netInfo?.isInternetReachable) {
+  //       const user = await getUserData();
+  //       if (!user || !user.email) return;
 
-        // MODIFIED: Check for both unsynced submissions AND quizzes
-        const unsyncedSubmissions = await getUnsyncedSubmissions(user.email);
-        const unsyncedQuizzes = await getCompletedOfflineQuizzes(user.email);
+  //       // MODIFIED: Check for both unsynced submissions AND quizzes
+  //       const unsyncedSubmissions = await getUnsyncedSubmissions(user.email);
+  //       const unsyncedQuizzes = await getCompletedOfflineQuizzes(user.email);
 
-        // If either list has items, schedule a UI refresh
-        if (unsyncedSubmissions.length > 0 || unsyncedQuizzes.length > 0) {
-          // This timeout gives the global useNetworkSync hook a chance to run first
-          setTimeout(async () => {
-            console.log('🔄 [To-do] Refreshing list after network change...');
-            await loadTodoItems(true);
-          }, 1500); // 1.5 second delay
-        }
-      }
-    };
+  //       // If either list has items, schedule a UI refresh
+  //       if (unsyncedSubmissions.length > 0 || unsyncedQuizzes.length > 0) {
+  //         // This timeout gives the global useNetworkSync hook a chance to run first
+  //         setTimeout(async () => {
+  //           console.log('🔄 [To-do] Refreshing list after network change...');
+  //           await loadTodoItems(true);
+  //         }, 1500); // 1.5 second delay
+  //       }
+  //     }
+  //   };
 
-    checkForSyncUpdates();
-  }, [netInfo?.isInternetReachable]);
+  //   checkForSyncUpdates();
+  // }, [netInfo?.isInternetReachable]);
 
   useFocusEffect(
     // ... (This useFocusEffect remains unchanged)

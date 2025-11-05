@@ -422,7 +422,7 @@ export default function MaterialDetailsScreen() {
       return;
     }
 
-    // 1. Request permissions to write to a directory
+    // 1. Get directory permissions (This part was working correctly)
     let directoryUri: string | null = null;
     try {
       const permissions = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
@@ -437,52 +437,68 @@ export default function MaterialDetailsScreen() {
       return;
     }
 
+    // --- START: NEW, MORE RELIABLE LOGIC ---
+
     // 2. Set up file details
     const downloadUrl = `${api.defaults.baseURL}/materials/${materialDetail.id}/view`;
     const fileExtension = materialDetail.file_path.split('.').pop();
     const sanitizedTitle = materialDetail.title.replace(/[^a-zA-Z0-9]/g, '_');
     const fileName = `${sanitizedTitle}_${materialDetail.id}${fileExtension ? `.${fileExtension}` : ''}`;
-    // Get the MIME type, which is crucial for this method
     const mimeType = getMimeType(materialDetail.file_path);
 
-    let fileUri: string | null = null;
+    // 3. Download to a *temporary* file first
+    const tempUri = FileSystem.cacheDirectory + fileName;
+    console.log('Downloading to temp file:', tempUri);
 
     try {
-      // 3. Create the file in the selected directory *first*
-      fileUri = await FileSystem.StorageAccessFramework.createFileAsync(directoryUri, fileName, mimeType);
-
-      // 4. Download the file *directly* into the new file's URI
       const downloadResumable = FileSystem.createDownloadResumable(
         downloadUrl,
-        fileUri, // Download directly to the final destination
+        tempUri, // Download to a local file:// cache URI
         { headers: { 'Authorization': getAuthorizationHeader() } }
       );
 
       const result = await downloadResumable.downloadAsync();
-      // Check for a successful HTTP status
       if (!result || result.status !== 200) {
         throw new Error('Download failed, server returned status ' + result?.status);
       }
 
-      console.log('File downloaded to public folder:', result.uri);
+      console.log('Temp download complete:', result.uri);
+
+      // 4. Now, move the file to the user's chosen directory
+
+      // Read the temp file as base64
+      const fileContentBase64 = await FileSystem.readAsStringAsync(result.uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      // 5. Create the *final* file in the selected directory
+      const finalFileUri = await FileSystem.StorageAccessFramework.createFileAsync(directoryUri, fileName, mimeType);
+
+      // 6. Write the base64 content to the new file
+      await FileSystem.writeAsStringAsync(finalFileUri, fileContentBase64, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      // 7. Clean up the temp file
+      await FileSystem.deleteAsync(tempUri, { idempotent: true });
+
       Alert.alert(
         'Download Complete',
         `File "${fileName}" saved to your selected folder.`
       );
 
     } catch (err) {
-      console.error('Failed to download to device:', err);
+      console.error('Failed to download or save file:', err);
       Alert.alert('Download Failed', 'Could not save the file. Please try again.');
 
-      // 5. Clean up the partially created file on error
-      if (fileUri) {
-        try {
-          await FileSystem.StorageAccessFramework.deleteAsync(fileUri);
-        } catch (deleteErr) {
-          console.error('Failed to delete partial file:', deleteErr);
-        }
+      // Clean up the temp file on error
+      try {
+        await FileSystem.deleteAsync(tempUri, { idempotent: true });
+      } catch (deleteErr) {
+        console.error('Failed to delete temp file on error:', deleteErr);
       }
     }
+    
   };
 
   useEffect(() => {

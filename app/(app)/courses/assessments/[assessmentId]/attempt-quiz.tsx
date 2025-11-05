@@ -1,7 +1,7 @@
 // attempt-quiz.tsx
 import { Ionicons } from '@expo/vector-icons';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import * as ScreenCapture from 'expo-screen-capture';
+// import * as ScreenCapture from 'expo-screen-capture';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -125,28 +125,28 @@ export default function AttemptQuizScreen() {
   // --- END UTILITY FUNCTION ---
 
   // --- START: All existing hooks (mostly untouched) ---
-  useEffect(() => {
-    const activateScreenshotPrevention = async () => {
-      await ScreenCapture.preventScreenCaptureAsync();
-    };
-    const deactivateScreenshotPrevention = async () => {
-      await ScreenCapture.allowScreenCaptureAsync();
-    };
+  // useEffect(() => {
+  //   const activateScreenshotPrevention = async () => {
+  //     await ScreenCapture.preventScreenCaptureAsync();
+  //   };
+  //   const deactivateScreenshotPrevention = async () => {
+  //     await ScreenCapture.allowScreenCaptureAsync();
+  //   };
 
-    activateScreenshotPrevention();
-    const subscription = ScreenCapture.addScreenshotListener(() => {
-      Alert.alert(
-        'Screenshot Not Allowed',
-        `For security reasons, taking screenshots is not allowed during this ${assessmentType}. This attempt has been noted.`,
-        [{ text: 'OK' }]
-      );
-    });
+  //   activateScreenshotPrevention();
+  //   const subscription = ScreenCapture.addScreenshotListener(() => {
+  //     Alert.alert(
+  //       'Screenshot Not Allowed',
+  //       `For security reasons, taking screenshots is not allowed during this ${assessmentType}. This attempt has been noted.`,
+  //       [{ text: 'OK' }]
+  //     );
+  //   });
 
-    return () => {
-      deactivateScreenshotPrevention();
-      subscription.remove();
-    };
-  }, [assessmentType]);
+  //   return () => {
+  //     deactivateScreenshotPrevention();
+  //     subscription.remove();
+  //   };
+  // }, [assessmentType]);
 
   useEffect(() => {
     if (!submittedAssessment || !submittedAssessment.assessment.duration_minutes || 
