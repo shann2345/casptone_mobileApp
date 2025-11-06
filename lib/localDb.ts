@@ -65,22 +65,21 @@ const openDatabase = async (): Promise<SQLite.SQLiteDatabase> => {
 };
 
 export const getDb = async (): Promise<SQLite.SQLiteDatabase> => {
-  // If we already have an instance and it's initialized, return it
+  // If it's fully initialized, just return it.
   if (dbInstance && dbInitialized) {
     return dbInstance;
   }
 
-  // If initialization is in progress, wait for it
-  if (initializationPromise) {
-    await initializationPromise;
-    if (dbInstance) {
-      return dbInstance;
-    }
-  }
+  // If not initialized, call initDb().
+  // The logic inside initDb() (with initializationPromise)
+  // will handle any race conditions and ensure it only runs once.
+  await initDb();
 
-  // Open a new database instance only if we don't have one
+  // After initDb() completes, dbInstance *must* be set.
   if (!dbInstance) {
-    dbInstance = await openDatabase();
+    // This is a critical failure state.
+    console.error('❌ CRITICAL: Database initialization failed, dbInstance is null.');
+    throw new Error('Database initialization failed, dbInstance is null.');
   }
   
   return dbInstance;
