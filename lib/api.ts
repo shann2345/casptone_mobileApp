@@ -671,7 +671,7 @@ export const syncOfflineSubmission = async (assessmentId: number, fileUri: strin
     // We check for a specific response from the backend, not just "200 OK".
     // A captive portal will return 200, but response.data will be HTML,
     // so response.data.submission_id will be undefined.
-    if (response.status === 200) {
+    if (response.status === 200 && response.data.message) {
       console.log(`✅ Sync successful for assessment ${assessmentId}. Server message: ${response.data.message}`);
       return true; 
     } else {

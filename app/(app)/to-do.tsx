@@ -5,7 +5,8 @@ import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Dimensions, FlatList, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useNetworkStatus } from '../../context/NetworkContext';
-import { getUserData } from '../../lib/api';
+// MODIFIED: Added manualSync
+import { getUserData, manualSync } from '../../lib/api';
 import { getCompletedOfflineQuizzes, getDb, getOfflineAttemptCount, getUnsyncedSubmissions, initDb } from '../../lib/localDb';
 
 // ... (Interface, Constants, and other imports remain the same)
@@ -27,6 +28,7 @@ interface TodoItem {
 }
 
 const TODO_CATEGORIES = [
+  // ... (This array remains unchanged)
   { 
     key: 'unfinished', 
     title: 'Assigned', 
@@ -69,6 +71,9 @@ export default function TodoScreen() {
   
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  // NEW: State to manage our high-priority sync
+  const [isSyncing, setIsSyncing] = useState(false);
+  
   const [allTodoItems, setAllTodoItems] = useState<TodoItem[]>([]); 
   const [todoItems, setTodoItems] = useState<TodoItem[]>([]); 
   const [sortOption, setSortOption] = useState<'dueDate' | 'submissionDate'>('dueDate');
@@ -89,23 +94,21 @@ export default function TodoScreen() {
     loadTodoItems();
   }, []);
   
-  // MODIFIED: This useEffect hook is updated to be more robust for all tabs.
   useEffect(() => {
+    // ... (This sorting useEffect remains unchanged)
     const filtered = allTodoItems.filter(item => item.status === selectedCategory);
   
     const sorted = [...filtered].sort((a, b) => {
       const getDate = (dateStr: string | undefined) => dateStr ? new Date(dateStr).getTime() : 0;
   
       if (sortOption === 'submissionDate') {
-        // Sort by submission date DESC. Fallback to due date if submission date is missing.
         const dateA = getDate(a.submitted_at) || getDate(a.due_date);
         const dateB = getDate(b.submitted_at) || getDate(b.due_date);
         return dateB - dateA; // Most recent date first
-      } else { // 'dueDate'
-        // Sort by due date ASC. Fallback to submission date.
+      } else { 
         const dateA = getDate(a.due_date) || getDate(a.submitted_at);
         const dateB = getDate(b.due_date) || getDate(b.submitted_at);
-        if (dateA === 0) return 1;  // Items with no date at all go to the end
+        if (dateA === 0) return 1;
         if (dateB === 0) return -1;
         return dateA - dateB; // Closest date first
       }
@@ -113,22 +116,11 @@ export default function TodoScreen() {
   
     setTodoItems(sorted);
   }, [allTodoItems, selectedCategory, sortOption]);
-
-
-  // useEffect(() => {
-  //   const checkOfflineWarning = async () => {
-  //     if (!netInfo?.isInternetReachable) {
-  //       await showOfflineModeWarningIfNeeded();
-  //     }
-  //   };
-    
-  //   checkOfflineWarning();
-  // }, [netInfo?.isInternetReachable]);
   
   const loadTodoItems = async (forceRefresh = false) => {
     // ... (This function remains unchanged)
     try {
-      if (!isRefreshing) setIsLoading(true);
+      if (!isRefreshing && !isSyncing) setIsLoading(true); // Don't show loading indicator if we are syncing
       await initDb();
       
       const userData = await getUserData();
@@ -142,9 +134,8 @@ export default function TodoScreen() {
       }
 
       const allItems = await getAllTodoItems(userData.email, forceRefresh);
-      setAllTodoItems(allItems); // Update the main list of all items
+      setAllTodoItems(allItems); 
 
-      // Calculate counts from the complete list
       const counts = {
         unfinished: allItems.filter(item => item.status === 'unfinished').length,
         missing: allItems.filter(item => item.status === 'missing').length,
@@ -285,6 +276,62 @@ export default function TodoScreen() {
     return items;
   };
 
+  // NEW: High-priority targeted sync function
+  const runTargetedSync = async (isManualClick = false) => {
+    // Prevent duplicate syncs
+    if (isSyncing) return;
+  
+    // Only run if we are online
+    if (!isConnected) {
+      if (isManualClick) {
+        Alert.alert("Offline", "Please connect to the internet to sync your work.");
+      }
+      return;
+    }
+  
+    // Check if there is anything to sync
+    if (categoryCounts.to_sync === 0) {
+      if (isManualClick) {
+        Alert.alert("All Synced", "Your work is already up to date.");
+      }
+      return;
+    }
+  
+    console.log('🔄 [Targeted Sync] Starting high-priority sync...');
+    setIsSyncing(true);
+  
+    try {
+      const { success, failed } = await manualSync();
+  
+      if (success > 0 && failed === 0) {
+        Alert.alert(
+          'Work Submitted',
+          `Successfully submitted ${success} item${success > 1 ? 's' : ''}.`
+        );
+      } else if (success > 0 && failed > 0) {
+        Alert.alert(
+          'Partial Sync',
+          `Successfully submitted ${success} item${success > 1 ? 's' : ''}, but ${failed} failed. Please try again.`
+        );
+      } else if (failed > 0) {
+        Alert.alert(
+          'Sync Failed',
+          `Could not sync ${failed} item${failed > 1 ? 's' : ''}. Please check your connection and try again.`
+        );
+      }
+      
+      // Refresh the to-do list *after* sync is complete
+      await loadTodoItems(true);
+  
+    } catch (error) {
+      console.error('❌ [Targeted Sync] Critical error:', error);
+      Alert.alert('Error', 'An unexpected error occurred during sync.');
+    } finally {
+      console.log('✅ [Targeted Sync] Sync finished.');
+      setIsSyncing(false);
+    }
+  };
+
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -305,7 +352,7 @@ export default function TodoScreen() {
   };
 
   const handleCategoryPress = (categoryKey: string) => {
-    // This logic is still useful for setting a smart default sort order
+    // ... (This function remains unchanged)
     if (categoryKey === 'to_sync' || categoryKey === 'done') {
       setSortOption('submissionDate');
     } else {
@@ -493,33 +540,17 @@ export default function TodoScreen() {
     );
   };
   
-  // useEffect(() => {
-  //   // This hook refreshes the To-do list UI after a sync
-  //   const checkForSyncUpdates = async () => {
-  //     if (netInfo?.isInternetReachable) {
-  //       const user = await getUserData();
-  //       if (!user || !user.email) return;
-
-  //       // MODIFIED: Check for both unsynced submissions AND quizzes
-  //       const unsyncedSubmissions = await getUnsyncedSubmissions(user.email);
-  //       const unsyncedQuizzes = await getCompletedOfflineQuizzes(user.email);
-
-  //       // If either list has items, schedule a UI refresh
-  //       if (unsyncedSubmissions.length > 0 || unsyncedQuizzes.length > 0) {
-  //         // This timeout gives the global useNetworkSync hook a chance to run first
-  //         setTimeout(async () => {
-  //           console.log('🔄 [To-do] Refreshing list after network change...');
-  //           await loadTodoItems(true);
-  //         }, 1500); // 1.5 second delay
-  //       }
-  //     }
-  //   };
-
-  //   checkForSyncUpdates();
-  // }, [netInfo?.isInternetReachable]);
+  // NEW: useEffect to trigger the high-priority sync
+  useEffect(() => {
+    // Automatically run sync if we are connected and have items to sync
+    // We check !isLoading to make sure loadTodoItems has finished running
+    if (isConnected && categoryCounts.to_sync > 0 && !isLoading && !isSyncing) {
+      runTargetedSync();
+    }
+  }, [isConnected, categoryCounts.to_sync, isLoading]);
 
   useFocusEffect(
-    // ... (This useFocusEffect remains unchanged)
+    // This hook now populates the categoryCounts, which triggers the sync hook above
      useCallback(() => {
       setTimeout(() => {
         loadTodoItems(true);
@@ -530,30 +561,41 @@ export default function TodoScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        {/* ... (Header content remains unchanged) */}
         <View style={styles.headerContent}>
           <Text style={styles.headerTitle}>To-do</Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            
+            {/* MODIFIED: This button is now connected to runTargetedSync and isSyncing state */}
             {hasPendingSync && netInfo?.isInternetReachable && (
               <TouchableOpacity 
                 style={styles.syncIndicatorButton}
-                onPress={manualCheck}
+                onPress={() => runTargetedSync(true)} // Pass true for manual click
+                disabled={isSyncing} 
               >
-                <Ionicons name="cloud-upload" size={20} color="#e37400" />
-                <Text style={styles.syncIndicatorText}>Sync</Text>
+                {isSyncing ? (
+                  <>
+                    <ActivityIndicator size="small" color="#e37400" />
+                    <Text style={[styles.syncIndicatorText, { marginLeft: 8 }]}>Syncing...</Text>
+                  </>
+                ) : (
+                  <>
+                    <Ionicons name="cloud-upload" size={20} color="#e37400" />
+                    <Text style={styles.syncIndicatorText}>Sync</Text>
+                  </>
+                )}
               </TouchableOpacity>
             )}
             
             <TouchableOpacity 
               style={styles.refreshButton} 
               onPress={handleManualRefresh}
-              disabled={isLoading || isRefreshing}
+              disabled={isLoading || isRefreshing || isSyncing} // Also disable on sync
             >
               <Ionicons 
                 name="refresh" 
                 size={24} 
                 color="#5f6368" 
-                style={[(isLoading || isRefreshing) && { opacity: 0.5 }]}
+                style={[(isLoading || isRefreshing || isSyncing) && { opacity: 0.5 }]}
               />
             </TouchableOpacity>
           </View>
@@ -596,7 +638,12 @@ export default function TodoScreen() {
                     styles.tabBadgeText,
                     selectedCategory === category.key && styles.tabBadgeTextActive
                   ]}>
-                    {categoryCounts[category.key]}
+                    {/* Show spinner in 'To sync' tab badge while syncing */}
+                    {category.key === 'to_sync' && isSyncing ? (
+                      <ActivityIndicator size="small" color="#e37400" />
+                    ) : (
+                      categoryCounts[category.key]
+                    )}
                   </Text>
                 </View>
               )}
@@ -606,8 +653,8 @@ export default function TodoScreen() {
       </View>
 
       <View style={styles.content}>
-        {/* MODIFIED: The conditional rendering is removed, so the sort button always shows */}
         <View style={styles.sortContainer}>
+          {/* ... (Sort container remains unchanged) */}
           <TouchableOpacity
             style={styles.sortButton}
             onPress={() => setSortOption(prev => prev === 'dueDate' ? 'submissionDate' : 'dueDate')}
@@ -619,9 +666,11 @@ export default function TodoScreen() {
           </TouchableOpacity>
         </View>
       
-        {isLoading ? (
+        {/* MODIFIED: Show loading indicator if *either* isLoading OR isSyncing is true */}
+        {(isLoading && !isRefreshing) || (isSyncing && todoItems.length === 0) ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#1967d2" />
+            {isSyncing && <Text style={{ marginTop: 10, color: '#5f6368' }}>Syncing your work...</Text>}
           </View>
         ) : (
           <FlatList
@@ -683,6 +732,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     borderColor: '#e37400',
+    minHeight: 34, // Added for consistent height
   },
   syncIndicatorText: {
     fontSize: 12,
@@ -740,7 +790,9 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     backgroundColor: '#e8eaed',
     borderRadius: 10,
-    minWidth: 20,
+    minWidth: 20, // ensure badge has size
+    minHeight: 20, // ensure badge has size
+    justifyContent: 'center',
     alignItems: 'center',
   },
   tabBadgeText: {
@@ -778,6 +830,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    padding: 20, // Added padding
   },
   listContent: {
     padding: 12,

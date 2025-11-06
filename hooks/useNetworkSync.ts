@@ -78,7 +78,7 @@ interface LatestAssignmentSubmission {
 // SMART SYNC CONFIGURATION
 // ============================================
 const SYNC_CONFIG = {
-  COOLDOWN: 30000,              // 30 seconds between any sync attempts
+  COOLDOWN: 5000,              // 30 seconds between any sync attempts
   COURSE_FRESHNESS: 600000,     // 10 minutes - courses don't change often
   ASSESSMENT_FRESHNESS: 300000, // 5 minutes - assessments update more frequently
   QUIZ_FRESHNESS: 600000,       // 10 minutes - quiz questions rarely change
@@ -98,16 +98,42 @@ export const useNetworkSync = () => {
 
   useEffect(() => {
     const performSmartSync = async () => {
-      // Only sync when going from offline → online
-      const wasOffline = previousConnectionState.current === false || previousConnectionState.current === null;
+      // =================================================================
+      // --- MODIFICATION START ---
+      //
+      // We no longer need to check if we *were* offline. We only
+      // care if we *are* online right now.
+      //
+      // REMOVED: const wasOffline = previousConnectionState.current !== true;
+      //
+      // --- MODIFICATION END ---
+      // =================================================================
+      
       const isNowOnline = isInternetReachable === true;
 
       // Check cooldown
       const now = Date.now();
       const timeSinceLastSync = now - lastSyncAttempt.current;
 
-      if (wasOffline && isNowOnline && !isSyncing.current && timeSinceLastSync > SYNC_CONFIG.COOLDOWN) {
-        console.log('🔄 [Smart Sync] Internet reconnected, analyzing what needs updating...');
+      // =================================================================
+      // --- MODIFICATION START ---
+      //
+      // REMOVED: The `wasOffline` check from the if statement.
+      //
+      // Old condition:
+      // if (wasOffline && isNowOnline && !isSyncing.current && timeSinceLastSync > SYNC_CONFIG.COOLDOWN) {
+      //
+      // New condition:
+      if (isNowOnline && !isSyncing.current && timeSinceLastSync > SYNC_CONFIG.COOLDOWN) {
+        //
+        // --- MODIFICATION END ---
+        // =================================================================
+        
+        // --- MODIFICATION START ---
+        // Changed log message to be more general.
+        console.log('🔄 [Smart Sync] Online. Analyzing what needs updating...');
+        // --- MODIFICATION END ---
+        
         isSyncing.current = true;
         lastSyncAttempt.current = now;
 
@@ -159,15 +185,22 @@ export const useNetworkSync = () => {
           // ============================================
           // PHASE 2: SYNC OFFLINE SUBMISSIONS (Always, Alert Only This!)
           // ============================================
-          const unsyncedSubmissions = await getUnsyncedSubmissions(userEmail) as UnsyncedSubmission[];
-          const unsyncedQuizzes = await getCompletedOfflineQuizzes(userEmail) as UnsyncedQuiz[];
-          
+          const unsyncedSubmissions = (await getUnsyncedSubmissions(
+            userEmail
+          )) as UnsyncedSubmission[];
+          const unsyncedQuizzes = (await getCompletedOfflineQuizzes(
+            userEmail
+          )) as UnsyncedQuiz[];
+
           if (unsyncedSubmissions.length > 0 || unsyncedQuizzes.length > 0) {
-            console.log(`📤 [Smart Sync] Phase 2: Syncing ${unsyncedSubmissions.length} submissions & ${unsyncedQuizzes.length} quizzes...`);
-            
+            console.log(
+              `📤 [Smart Sync] Phase 2: Syncing ${unsyncedSubmissions.length} submissions & ${unsyncedQuizzes.length} quizzes...`
+            );
+
             // NEW: Track IDs of assessments that need a post-sync status refresh
+            // We will NOW ONLY ADD QUIZZES to this.
             const submittedAssessmentIds = new Set<number>();
-            
+
             // Sync submissions
             for (const submission of unsyncedSubmissions) {
               try {
@@ -179,9 +212,45 @@ export const useNetworkSync = () => {
                 );
 
                 if (syncResult) {
+                  // --- START OF FIX: OPTIMISTIC UPDATE ---
+
+                  // 1. Delete the local "to sync" record
                   await deleteOfflineSubmission(submission.id);
-                  submittedAssessmentIds.add(submission.assessment_id); // <-- TRACK ID
+                  
+                  // 2. Increment the counter (so the alert shows!)
                   syncResults.assessmentsSubmitted++;
+
+                  // 3. Manually create a "Done" status object
+                  //    This is what to-do.tsx expects to see in the local DB.
+                  console.log(
+                    `✅ [Smart Sync] Optimistically updating status for assignment ${submission.assessment_id}...`
+                  );
+                  const optimisticSubmissionStatus: LatestAssignmentSubmission = {
+                    has_submitted_file: true,
+                    submitted_file_path: null, // Not needed for the 'Done' check
+                    submitted_file_url: null, // Not needed for the 'Done' check
+                    submitted_file_name: submission.original_filename,
+                    original_filename: submission.original_filename,
+                    submitted_at: submission.submitted_at,
+                    status: 'submitted', // This marks it as done
+                  };
+
+                  // 4. Save this new "Done" status to the local database
+                  await saveAssessmentDetailsToDb(
+                    submission.assessment_id,
+                    userEmail,
+                    null, // no attemptStatus for assignments
+                    optimisticSubmissionStatus
+                  );
+
+                  // 5. Update the sync timestamp
+                  await saveAssessmentSyncTimestamp(
+                    submission.assessment_id,
+                    userEmail,
+                    new Date().toISOString()
+                  );
+
+                  // --- END OF FIX ---
                 } else {
                   syncResults.errors.push(`Submission ${submission.id} failed`);
                 }
@@ -190,7 +259,7 @@ export const useNetworkSync = () => {
               }
             }
 
-            // Sync quizzes
+            // Sync quizzes (This logic remains the same)
             for (const quiz of unsyncedQuizzes) {
               try {
                 if (!quiz.answers || !quiz.start_time || !quiz.end_time) {
@@ -206,9 +275,11 @@ export const useNetworkSync = () => {
                 );
 
                 if (syncResult) {
-                  // Use the new, correct delete function
                   await deleteCompletedOfflineQuizAttempt(quiz.assessment_id, userEmail);
-                  submittedAssessmentIds.add(quiz.assessment_id); // <-- TRACK ID
+                  
+                  // We ONLY add quizzes to the refresh loop, since they are fast
+                  submittedAssessmentIds.add(quiz.assessment_id); // <-- KEEP THIS
+                  
                   syncResults.quizzesSynced++;
                 } else {
                   syncResults.errors.push(`Quiz ${quiz.assessment_id} failed`);
@@ -217,14 +288,17 @@ export const useNetworkSync = () => {
                 syncResults.errors.push(`Quiz ${quiz.assessment_id} error`);
               }
             }
-            
+
             // ==========================================================
             //  ✅ CRITICAL FIX: REFRESH ASSIGNMENT/QUIZ STATUS
             // ==========================================================
+            // This loop will now ONLY run for quizzes, which is correct!
             if (submittedAssessmentIds.size > 0) {
-                console.log(`📡 [Smart Sync] Refreshing local status for ${submittedAssessmentIds.size} submitted assessment(s)...`);
+              console.log(
+                `📡 [Smart Sync] Refreshing local status for ${submittedAssessmentIds.size} submitted QUERIES...`
+              );
 
-                const db = await getDb();
+              const db = await getDb();
 
                 for (const assessmentId of submittedAssessmentIds) {
                     try {
@@ -446,8 +520,8 @@ export const useNetworkSync = () => {
         } finally {
           isSyncing.current = false;
         }
-      } else if (timeSinceLastSync <= SYNC_CONFIG.COOLDOWN && wasOffline && isNowOnline) {
-        console.log(`⏳ [Smart Sync] Cooldown: ${Math.round((SYNC_CONFIG.COOLDOWN - timeSinceLastSync) / 1000)}s remaining`);
+      } else if (isNowOnline && timeSinceLastSync <= SYNC_CONFIG.COOLDOWN) {
+          console.log(`⏳ [Smart Sync] Cooldown: ${Math.round((SYNC_CONFIG.COOLDOWN - timeSinceLastSync) / 1000)}s remaining`);
       }
 
       previousConnectionState.current = isInternetReachable;
