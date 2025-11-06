@@ -11,7 +11,6 @@ import {
   getDb,
   getEnrolledCoursesFromDb,
   getOfflineTimeStatus,
-  initDb,
   resetTimeCheckData,
   saveCourseDetailsToDb,
   saveCourseToDb,
@@ -150,53 +149,57 @@ export default function HomeScreen() {
     if (!lastSync) return true;
     return Date.now() - new Date(lastSync).getTime() > maxAge;
   };
-
   useEffect(() => {
-  let isMounted = true;
-  const initialize = async () => {
-    try {
-      console.log('Initializing home screen...');
+    
+    setIsInitialized(true); 
+  }, []);
+
+//   useEffect(() => {
+//   let isMounted = true;
+//   const initialize = async () => {
+//     try {
+//       console.log('Initializing home screen...');
       
-      // Add retry logic for initialization
-      let retryCount = 0;
-      const maxRetries = 3;
+//       // Add retry logic for initialization
+//       let retryCount = 0;
+//       const maxRetries = 3;
       
-      while (retryCount < maxRetries && isMounted) {
-        try {
-          await initDb();
-          console.log('Home screen database initialized');
-          if (isMounted) {
-            setIsInitialized(true);
-          }
-          break; // Success, exit retry loop
-        } catch (initError) {
-          retryCount++;
-          console.error(`Home screen initialization error (attempt ${retryCount}):`, initError);
+//       while (retryCount < maxRetries && isMounted) {
+//         try {
+//           await initDb();
+//           console.log('Home screen database initialized');
+//           if (isMounted) {
+//             setIsInitialized(true);
+//           }
+//           break; // Success, exit retry loop
+//         } catch (initError) {
+//           retryCount++;
+//           console.error(`Home screen initialization error (attempt ${retryCount}):`, initError);
           
-          if (retryCount < maxRetries) {
-            // Wait before retrying
-            await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
-          } else {
-            throw initError;
-          }
-        }
-      }
-    } catch (error) {
-      console.error('Final home screen initialization error:', error);
-      if (isMounted) {
-        Alert.alert(
-          'Initialization Error',
-          'Failed to initialize the app. Please restart the application.',
-          [{ text: 'OK' }]
-        );
-      }
-    }
-  };
-  initialize();
-  return () => { 
-    isMounted = false;
-  };
-}, []);
+//           if (retryCount < maxRetries) {
+//             // Wait before retrying
+//             await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
+//           } else {
+//             throw initError;
+//           }
+//         }
+//       }
+//     } catch (error) {
+//       console.error('Final home screen initialization error:', error);
+//       if (isMounted) {
+//         Alert.alert(
+//           'Initialization Error',
+//           'Failed to initialize the app. Please restart the application.',
+//           [{ text: 'OK' }]
+//         );
+//       }
+//     }
+//   };
+//   initialize();
+//   return () => { 
+//     isMounted = false;
+//   };
+// }, []);
 
   useEffect(() => {
     const updateOfflineStatus = async () => {

@@ -121,7 +121,7 @@ export const initDb = async (): Promise<void> => {
           await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
         }
         
-        const db = await getDb();
+        const db = await openDatabase();
         
         console.log('📄 Creating database schema...');
         
