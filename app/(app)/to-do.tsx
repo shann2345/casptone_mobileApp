@@ -1,3 +1,4 @@
+// [REPLACE] to-do.tsx with this
 import { usePendingSyncNotification } from '@/hooks/usePendingSyncNotification';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
@@ -5,13 +6,22 @@ import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Dimensions, FlatList, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useNetworkStatus } from '../../context/NetworkContext';
-// MODIFIED: Added manualSync
-import { getUserData, manualSync } from '../../lib/api';
-import { getCompletedOfflineQuizzes, getDb, getOfflineAttemptCount, getUnsyncedSubmissions, initDb } from '../../lib/localDb';
+import api, { getUserData, manualSync } from '../../lib/api';
+// [MODIFIED] Import the new function
+import {
+  forceRefreshAllAssessmentStatuses // <-- ADDED
+  ,
+  getCompletedOfflineQuizzes,
+  getDb,
+  getOfflineAttemptCount,
+  getUnsyncedSubmissions,
+  initDb,
+  syncAllAssessmentDetails
+} from '../../lib/localDb';
 
-// ... (Interface, Constants, and other imports remain the same)
 const { width } = Dimensions.get('window');
 
+// ... (Interface, Constants, and other imports remain the same)
 interface TodoItem {
   id: string;
   title: string;
@@ -71,13 +81,13 @@ export default function TodoScreen() {
   
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  // NEW: State to manage our high-priority sync
   const [isSyncing, setIsSyncing] = useState(false);
   
   const [allTodoItems, setAllTodoItems] = useState<TodoItem[]>([]); 
   const [todoItems, setTodoItems] = useState<TodoItem[]>([]); 
   const [sortOption, setSortOption] = useState<'dueDate' | 'submissionDate'>('dueDate');
-  
+  const [isUpdating, setIsUpdating] = useState(false);
+
   const [categoryCounts, setCategoryCounts] = useState({
     unfinished: 0,
     missing: 0,
@@ -151,6 +161,109 @@ export default function TodoScreen() {
       setIsLoading(false);
       setIsRefreshing(false);
     }
+  };
+
+  // [MODIFIED] This function is now the "Smart Refresh"
+  // It handles both pull-to-refresh (smart) and button-click (force-refresh)
+  const runSmartRefresh = async (isManualUpdate = false) => {
+    if (isRefreshing || isSyncing || isUpdating) return;
+
+    if (isManualUpdate) {
+      setIsUpdating(true);
+    } else {
+      setIsRefreshing(true);
+    }
+
+    const userData = await getUserData();
+    if (!userData?.email) {
+      Alert.alert('Error', 'User data not found.');
+      setIsRefreshing(false);
+      setIsUpdating(false);
+      return;
+    }
+
+    if (isConnected) {
+      console.log(`🔄 [To-Do] Running ${isManualUpdate ? 'Manual Update (Force-Refresh)' : 'Smart Refresh (Pull-to-Refresh)'}...`);
+      try {
+        // Step 1: Run manualSync FIRST to submit any pending work
+        console.log('🔄 [To-Do] Step 1: Syncing pending work...');
+        const syncResult = await manualSync();
+        if (syncResult.success > 0) {
+          console.log(`✅ [To-Do] Submitted ${syncResult.success} pending items.`);
+        }
+        
+        // Step 2: Download fresh data from server
+        console.log('🔄 [To-Do] Step 2: Downloading fresh data from server...');
+        
+        let totalUpdated = 0;
+
+        if (isManualUpdate) {
+          // --- THIS IS YOUR REQUESTED FIX ---
+          // Manual "Update" button = Force-refresh *everything*
+          console.log('... (Manual Update) Force-refreshing all assessment statuses...');
+          const result = await forceRefreshAllAssessmentStatuses(
+            userData.email,
+            api,
+            (current, total) => {
+              console.log(`[To-Do Update] Force Refresh: ${current}/${total}`);
+            }
+          );
+          totalUpdated = result.success;
+        } else {
+          // --- THIS IS THE NORMAL PULL-TO-REFRESH ---
+          // Pull-to-refresh = Smart, fast sync (respects cooldowns)
+          console.log('... (Pull-to-Refresh) Smart-syncing stale assessments...');
+          const result = await syncAllAssessmentDetails(
+            userData.email,
+            api,
+            (current, total, type) => {
+              console.log(`[To-Do Refresh] ${type}: ${current}/${total}`);
+            }
+          );
+          totalUpdated = result.success + result.updated;
+        }
+        
+        console.log(`✅ [To-Do] Downloaded/Refreshed ${totalUpdated} records.`);
+
+        // Show success message for manual updates
+        if (isManualUpdate) {
+          Alert.alert(
+            'Update Complete',
+            `Successfully refreshed the status for ${totalUpdated} assessment${totalUpdated !== 1 ? 's' : ''}.`,
+            [{ text: 'OK' }]
+          );
+        }
+
+      } catch (syncError) {
+        console.error('❌ [To-Do] Smart Refresh failed:', syncError);
+        Alert.alert(
+          'Update Error', 
+          'Could not fully sync with the server. Please check your connection and try again.'
+        );
+      }
+    } else {
+      console.log('📡 [To-Do] Offline. Cannot update.');
+      if (isManualUpdate) {
+        Alert.alert('Offline', 'You must be online to update. Please connect and try again.');
+      }
+    }
+    
+    // Step 3 (WAS 4): Always reload the list from DB (with fresh data)
+    console.log('🔄 [To-Do] Step 3: Reloading list from local database...');
+    await loadTodoItems(false);
+    
+    setIsRefreshing(false);
+    setIsUpdating(false);
+    console.log(`✅ [To-Do] ${isManualUpdate ? 'Manual Update' : 'Smart Refresh'} finished.`);
+  };
+
+  // Update these handler functions
+  const handleRefresh = async () => {
+    await runSmartRefresh(false); // Pull-to-refresh (Smart)
+  };
+
+  const handleManualUpdate = async () => {
+    await runSmartRefresh(true); // Manual button click (Force-Refresh)
   };
 
   const getAllTodoItems = async (userEmail: string, forceRefresh = false): Promise<TodoItem[]> => {
@@ -276,20 +389,15 @@ export default function TodoScreen() {
     return items;
   };
 
-  // NEW: High-priority targeted sync function
   const runTargetedSync = async (isManualClick = false) => {
-    // Prevent duplicate syncs
+    // ... (This function remains unchanged)
     if (isSyncing) return;
-  
-    // Only run if we are online
     if (!isConnected) {
       if (isManualClick) {
         Alert.alert("Offline", "Please connect to the internet to sync your work.");
       }
       return;
     }
-  
-    // Check if there is anything to sync
     if (categoryCounts.to_sync === 0) {
       if (isManualClick) {
         Alert.alert("All Synced", "Your work is already up to date.");
@@ -320,7 +428,6 @@ export default function TodoScreen() {
         );
       }
       
-      // Refresh the to-do list *after* sync is complete
       await loadTodoItems(true);
   
     } catch (error) {
@@ -330,16 +437,6 @@ export default function TodoScreen() {
       console.log('✅ [Targeted Sync] Sync finished.');
       setIsSyncing(false);
     }
-  };
-
-
-  const handleRefresh = async () => {
-    setIsRefreshing(true);
-    await loadTodoItems(true);
-  };
-
-  const handleManualRefresh = async () => {
-    await loadTodoItems(true);
   };
 
   const showToSyncTip = () => {
@@ -540,17 +637,15 @@ export default function TodoScreen() {
     );
   };
   
-  // NEW: useEffect to trigger the high-priority sync
   useEffect(() => {
-    // Automatically run sync if we are connected and have items to sync
-    // We check !isLoading to make sure loadTodoItems has finished running
+    // ... (This useEffect remains unchanged)
     if (isConnected && categoryCounts.to_sync > 0 && !isLoading && !isSyncing) {
       runTargetedSync();
     }
   }, [isConnected, categoryCounts.to_sync, isLoading]);
 
   useFocusEffect(
-    // This hook now populates the categoryCounts, which triggers the sync hook above
+    // ... (This useFocusEffect remains unchanged)
      useCallback(() => {
       setTimeout(() => {
         loadTodoItems(true);
@@ -565,12 +660,33 @@ export default function TodoScreen() {
           <Text style={styles.headerTitle}>To-do</Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             
-            {/* MODIFIED: This button is now connected to runTargetedSync and isSyncing state */}
+            {/* Manual Update Button - [MODIFIED] Uses handleManualUpdate */}
+            {netInfo?.isInternetReachable && (
+              <TouchableOpacity 
+                style={styles.updateButton}
+                onPress={handleManualUpdate}
+                disabled={isUpdating || isRefreshing || isSyncing}
+              >
+                {isUpdating ? (
+                  <>
+                    <ActivityIndicator size="small" color="#1967d2" />
+                    <Text style={[styles.updateButtonText, { marginLeft: 8 }]}>Updating...</Text>
+                  </>
+                ) : (
+                  <>
+                    <Ionicons name="sync" size={18} color="#1967d2" />
+                    <Text style={styles.updateButtonText}>Update</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            )}
+            
+            {/* High-priority Sync Button - (Unchanged) */}
             {hasPendingSync && netInfo?.isInternetReachable && (
               <TouchableOpacity 
                 style={styles.syncIndicatorButton}
-                onPress={() => runTargetedSync(true)} // Pass true for manual click
-                disabled={isSyncing} 
+                onPress={() => runTargetedSync(true)}
+                disabled={isSyncing || isUpdating || isRefreshing}
               >
                 {isSyncing ? (
                   <>
@@ -579,23 +695,24 @@ export default function TodoScreen() {
                   </>
                 ) : (
                   <>
-                    <Ionicons name="cloud-upload" size={20} color="#e37400" />
+                    <Ionicons name="cloud-upload" size={18} color="#e37400" />
                     <Text style={styles.syncIndicatorText}>Sync</Text>
                   </>
                 )}
               </TouchableOpacity>
             )}
             
+            {/* Refresh Button - [MODIFIED] Uses handleRefresh */}
             <TouchableOpacity 
               style={styles.refreshButton} 
-              onPress={handleManualRefresh}
-              disabled={isLoading || isRefreshing || isSyncing} // Also disable on sync
+              onPress={handleRefresh}
+              disabled={isLoading || isRefreshing || isSyncing || isUpdating}
             >
               <Ionicons 
                 name="refresh" 
                 size={24} 
                 color="#5f6368" 
-                style={[(isLoading || isRefreshing || isSyncing) && { opacity: 0.5 }]}
+                style={[(isLoading || isRefreshing || isSyncing || isUpdating) && { opacity: 0.5 }]}
               />
             </TouchableOpacity>
           </View>
@@ -666,14 +783,15 @@ export default function TodoScreen() {
           </TouchableOpacity>
         </View>
       
-        {/* MODIFIED: Show loading indicator if *either* isLoading OR isSyncing is true */}
         {(isLoading && !isRefreshing) || (isSyncing && todoItems.length === 0) ? (
+          // ... (Loading container remains unchanged)
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#1967d2" />
             {isSyncing && <Text style={{ marginTop: 10, color: '#5f6368' }}>Syncing your work...</Text>}
           </View>
         ) : (
           <FlatList
+            // ... (FlatList remains unchanged)
             data={todoItems}
             keyExtractor={(item) => item.id}
             renderItem={renderTodoItem}
@@ -696,8 +814,8 @@ export default function TodoScreen() {
   );
 }
 
+// ... (All styles remain unchanged)
 const styles = StyleSheet.create({
-  // ... (all existing styles remain the same)
   container: {
     flex: 1,
     backgroundColor: '#fff',
@@ -733,6 +851,23 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e37400',
     minHeight: 34, // Added for consistent height
+  },
+  updateButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#e8f0fe',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#1967d2',
+    minHeight: 34,
+  },
+  updateButtonText: {
+    fontSize: 12,
+    color: '#1967d2',
+    fontWeight: '600',
+    marginLeft: 4,
   },
   syncIndicatorText: {
     fontSize: 12,

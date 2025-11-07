@@ -362,7 +362,21 @@ export default function AssessmentDetailsScreen() {
     if (!dateString) return 'N/A';
     const options: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' };
     
-    // Create the date object from the UTC string
+    // Create the date object from the string.
+    const date = new Date(dateString);
+    
+    // --- THIS LINE IS NOW REMOVED ---
+    // date.setHours(date.getHours() + 8);
+    
+    // Format the date in the user's local timezone
+    return date.toLocaleDateString(undefined, options);
+  };
+  
+  const formatUTCDate = (dateString?: string) => {
+    if (!dateString) return 'N/A';
+    const options: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+    
+    // Create the date object from the string
     const date = new Date(dateString);
     
     // Manually add 8 hours
@@ -946,7 +960,7 @@ export default function AssessmentDetailsScreen() {
                 </View>
               </View>
               {latestAssignmentSubmission.submitted_at && (
-                <Text style={styles.submissionDate}>Submitted: {formatDate(latestAssignmentSubmission.submitted_at)}</Text>
+                <Text style={styles.submissionDate}>Submitted: {formatUTCDate(latestAssignmentSubmission.submitted_at)}</Text>
               )}
               {latestAssignmentSubmission.submitted_file_url && (
                 <TouchableOpacity

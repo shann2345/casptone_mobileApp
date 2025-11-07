@@ -7,7 +7,7 @@ const packageName = 'com.shannarlly.mobileappolin';
 export default {
   "expo": {
     "name": "Olin",
-    "slug": "olin_app_4",
+    "slug": "mobile_app",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/splash-icon-dark.png",
@@ -94,9 +94,9 @@ export default {
       "router": {
         "origin": IS_PROD ? "https://olinlms.com" : undefined
       },
-      // "eas": {
-      //   "projectId": "824ee34b-3739-4280-82b8-dd7a8ba8e5ee"
-      // }
+      "eas": {
+        "projectId": "824ee34b-3739-4280-82b8-dd7a8ba8e5ee"
+      }
       // "eas": {
       //   "projectId": "3438c390-06db-4c15-a5ab-b41868009b2a"
       // }
@@ -109,9 +109,9 @@ export default {
       // "eas": {
       //   "projectId": "c02beff9-ba4a-4afb-91b0-b2fff90a38ab"
       // }
-      "eas": {
-        "projectId": "f1b3f445-d766-4b2b-8b1a-5e486cc41470"
-      }
+      // "eas": {
+      //   "projectId": "f1b3f445-d766-4b2b-8b1a-5e486cc41470"
+      // }
     }
   }
 };

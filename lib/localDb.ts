@@ -1124,6 +1124,92 @@ export const saveAssessmentSyncTimestamp = async (
   }
 };
 
+// [ADD THIS NEW FUNCTION] to localDb.ts
+
+export const forceRefreshAllAssessmentStatuses = async (
+  userEmail: string,
+  apiInstance: any,
+  onProgress?: (current: number, total: number) => void
+): Promise<{ success: number, failed: number }> => {
+  try {
+    await initDb();
+    const db = await getDb();
+    console.log('🔄 [Force Refresh] Starting force-refresh for all assessment statuses...');
+
+    // 1. Get ALL assessments, not just "stale" ones
+    const allAssessments = await db.getAllAsync(
+      `SELECT id, type FROM offline_assessments WHERE user_email = ?;`,
+      [userEmail]
+    );
+
+    if (allAssessments.length === 0) {
+      console.log('✅ [Force Refresh] No local assessments found to refresh.');
+      return { success: 0, failed: 0 };
+    }
+    
+    console.log(`[Force Refresh] Found ${allAssessments.length} assessments to check.`);
+
+    let successCount = 0;
+    let failedCount = 0;
+
+    // 2. Loop through every single one
+    for (let i = 0; i < allAssessments.length; i++) {
+      const assessment = allAssessments[i];
+      const assessmentId = assessment.id;
+      const assessmentType = assessment.type;
+
+      if (onProgress) {
+        onProgress(i + 1, allAssessments.length);
+      }
+
+      try {
+        // 3. Perform the exact logic from [assessmentId].tsx
+        let attemptStatus = null;
+        let latestSubmission = null;
+
+        if (assessmentType === 'quiz' || assessmentType === 'exam') {
+          // Check for quiz/exam status
+          try {
+            const attemptResponse = await apiInstance.get(`/assessments/${assessmentId}/attempt-status`);
+            if (attemptResponse.status === 200) {
+              attemptStatus = attemptResponse.data;
+            }
+          } catch (e) { /* ignore errors (e.g., 404) */ }
+        }
+
+        if (['assignment', 'activity', 'project'].includes(assessmentType)) {
+          // Check for assignment submission status
+          try {
+            const submissionResponse = await apiInstance.get(`/assessments/${assessmentId}/latest-assignment-submission`);
+            if (submissionResponse.status === 200) {
+              latestSubmission = submissionResponse.data;
+            }
+          } catch (e) { /* ignore errors (e.g., 404) */ }
+        }
+
+        // 4. Save the fresh data (or nulls) to the local DB
+        // This is the CRITICAL step that fixes the "Done" status
+        await saveAssessmentDetailsToDb(assessmentId, userEmail, attemptStatus, latestSubmission);
+        
+        // 5. Also update the sync timestamp so it's considered "fresh"
+        await saveAssessmentSyncTimestamp(assessmentId, userEmail, new Date().toISOString());
+
+        successCount++;
+      } catch (error) {
+        console.error(`❌ [Force Refresh] Failed to refresh status for assessment ${assessmentId}:`, error);
+        failedCount++;
+      }
+    }
+    
+    console.log(`✅ [Force Refresh] Complete. Success: ${successCount}, Failed: ${failedCount}`);
+    return { success: successCount, failed: failedCount };
+
+  } catch (error) {
+    console.error('❌ [Force Refresh] Batch force-refresh failed:', error);
+    throw error;
+  }
+};
+
 export const getAssessmentsNeedingSync = async (
   userEmail: string,
   apiInstance: any
