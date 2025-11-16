@@ -11,6 +11,13 @@ import api, { getUserData, manualSync } from '../../lib/api';
 import {
   forceRefreshAllAssessmentStatuses // <-- ADDED
   ,
+
+
+
+
+
+
+
   getCompletedOfflineQuizzes,
   getDb,
   getOfflineAttemptCount,
@@ -390,7 +397,6 @@ export default function TodoScreen() {
   };
 
   const runTargetedSync = async (isManualClick = false) => {
-    // ... (This function remains unchanged)
     if (isSyncing) return;
     if (!isConnected) {
       if (isManualClick) {
@@ -409,6 +415,15 @@ export default function TodoScreen() {
     setIsSyncing(true);
   
     try {
+      // --- START OF FIX ---
+      const userData = await getUserData();
+      if (!userData?.email) {
+        Alert.alert('Error', 'User data not found.');
+        setIsSyncing(false);
+        return;
+      }
+
+      // Step 1: Run manualSync FIRST to submit any pending work
       const { success, failed } = await manualSync();
   
       if (success > 0 && failed === 0) {
@@ -428,7 +443,23 @@ export default function TodoScreen() {
         );
       }
       
-      await loadTodoItems(true);
+      // Step 2: (NEW) If any sync was successful, force-refresh all statuses
+      // This is the logic from your "Update" button.
+      if (success > 0) {
+        console.log('🔄 [Targeted Sync] Sync successful. Now force-refreshing all statuses to move items to Done...');
+        await forceRefreshAllAssessmentStatuses(
+          userData.email,
+          api,
+          (current, total) => {
+            console.log(`[Targeted Sync Refresh] ${current}/${total}`);
+          }
+        );
+        console.log('✅ [Targeted Sync] Status refresh complete.');
+      }
+      
+      // Step 3: Reload the list from the DB (which now has the correct statuses)
+      await loadTodoItems(true); 
+      // --- END OF FIX ---
   
     } catch (error) {
       console.error('❌ [Targeted Sync] Critical error:', error);
@@ -439,14 +470,14 @@ export default function TodoScreen() {
     }
   };
 
-  const showToSyncTip = () => {
-    // ... (This function remains unchanged)
-     Alert.alert(
-      'Syncing Tip',
-      'If your submitted work remains in the "To sync" tab for a long time after reconnecting to the internet, please try **restarting the app** to initiate a manual sync.',
-      [{ text: 'Got it' }]
-    );
-  };
+  // const showToSyncTip = () => {
+  //   // ... (This function remains unchanged)
+  //    Alert.alert(
+  //     'Syncing Tip',
+  //     'If your submitted work remains in the "To sync" tab for a long time after reconnecting to the internet, please try **restarting the app** to initiate a manual sync.',
+  //     [{ text: 'Got it' }]
+  //   );
+  // };
 
   const handleCategoryPress = (categoryKey: string) => {
     // ... (This function remains unchanged)
@@ -458,9 +489,9 @@ export default function TodoScreen() {
     
     setSelectedCategory(categoryKey);
 
-    if (categoryKey === 'to_sync') {
-      showToSyncTip();
-    }
+    // if (categoryKey === 'to_sync') {
+    //   showToSyncTip();
+    // }
   };
 
 
@@ -637,12 +668,12 @@ export default function TodoScreen() {
     );
   };
   
-  useEffect(() => {
-    // ... (This useEffect remains unchanged)
-    if (isConnected && categoryCounts.to_sync > 0 && !isLoading && !isSyncing) {
-      runTargetedSync();
-    }
-  }, [isConnected, categoryCounts.to_sync, isLoading]);
+  // useEffect(() => {
+  //   // ... (This useEffect remains unchanged)
+  //   if (isConnected && categoryCounts.to_sync > 0 && !isLoading && !isSyncing) {
+  //     runTargetedSync();
+  //   }
+  // }, [isConnected, categoryCounts.to_sync, isLoading]);
 
   useFocusEffect(
     // ... (This useFocusEffect remains unchanged)
@@ -735,6 +766,7 @@ export default function TodoScreen() {
         >
           {TODO_CATEGORIES.map((category) => (
             <TouchableOpacity
+              testID={`todo-category-button-${category.key}`}
               key={category.key}
               style={[
                 styles.tab,

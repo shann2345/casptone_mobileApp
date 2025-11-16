@@ -127,18 +127,24 @@ export default function ReviewAnswerScreen() {
         else isQuestionCorrect = null;
         if (question.question_type === 'essay') isQuestionCorrect = null;
 
-        // Rebuild True/False options if necessary (no changes)
         let optionsToRender = question.submitted_options || [];
         if (question.question_type === 'true_false' && (optionsToRender.length === 0 || optionsToRender.length === 1 || optionsToRender.length === 2 && !optionsToRender.find(o => o.option_text === 'True'))) {
           const submittedAnswerText = question.submitted_answer; let selectedId: number | null = null;
-          if (submittedAnswerText === 'True') selectedId = 1; else if (submittedAnswerText === 'False') selectedId = 2;
+          
+          // --- MODIFICATION: Make comparison case-insensitive ---
+          if (submittedAnswerText?.toLowerCase() === 'true') {
+            selectedId = 1;
+          } else if (submittedAnswerText?.toLowerCase() === 'false') {
+            selectedId = 2;
+          }
+          // --- END MODIFICATION ---
+
           optionsToRender = [
             { id: question.id * 100 + 1, question_option_id: 1, option_text: 'True', is_selected: selectedId === 1, is_correct_option: false },
             { id: question.id * 100 + 2, question_option_id: 2, option_text: 'False', is_selected: selectedId === 2, is_correct_option: false }
           ];
         }
 
-        // --- MODIFIED: Find Correct Answer Text for ID, T/F, AND MC ---
         let correctAnswerText: string | null = null;
         const originalQ = question.question; // Shortcut for original question data
 
@@ -229,14 +235,12 @@ export default function ReviewAnswerScreen() {
               </View>
             )}
 
-            {/* ++ MODIFIED: Dedicated Correct Answer Box for ID, T/F, AND MC ++ */}
             {correctAnswerText && (question.question_type === 'identification' || question.question_type === 'true_false' || question.question_type === 'multiple_choice') && (
               <View style={styles.correctAnswerContainer}>
                 <Text style={styles.correctAnswerLabel}>Correct Answer:</Text>
                 <Text style={styles.correctAnswerText}>{correctAnswerText}</Text>
               </View>
             )}
-            {/* -- END MODIFIED -- */}
 
 
             {/* Score Display (no changes) */}

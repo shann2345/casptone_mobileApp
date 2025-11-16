@@ -479,40 +479,25 @@ export default function HomeScreen() {
   // // END MODIFICATION
 
   const fetchAndSaveCompleteCoursesData = async (courses: EnrolledCourse[], userEmail: string) => {
-    console.log('Starting to fetch complete course data for offline access...');
+    console.log('Starting to fetch complete course data in parallel...');
 
-    for (const course of courses) {
+    // Create an array of all fetch-and-save promises
+    const allPromises = courses.map(async (course) => {
       try {
-        console.log(`Fetching detailed data for course: ${course.title} (ID: ${course.id})`);
-        
         const courseId = typeof course.id === 'string' ? parseInt(course.id, 10) : course.id;
-        
+
         if (!courseId || isNaN(courseId) || courseId <= 0) {
-          console.error('⚠️ Invalid course ID detected:', {
-            originalId: course.id,
-            convertedId: courseId,
-            courseTitle: course.title
-          });
-          continue;
+          console.error('⚠️ Invalid course ID detected:', course.id);
+          return; // Skip this one
         }
-        
-        console.log(`Processing course with validated ID: ${courseId} (type: ${typeof courseId})`);
 
         const courseDetailResponse = await api.get(`/courses/${courseId}`);
         
         if (courseDetailResponse.status === 200) {
           const detailedCourse = courseDetailResponse.data.course;
-          
           if (!detailedCourse.id) {
             detailedCourse.id = courseId;
           }
-          
-          console.log(`Fetched detailed data for course ${courseId}:`, {
-            topics: detailedCourse.topics?.length || 0,
-            assessments: detailedCourse.assessments?.length || 0,
-            materials: detailedCourse.materials?.length || 0
-          });
-          
           await saveCourseDetailsToDb(detailedCourse, userEmail);
           console.log(`Successfully saved detailed data for course: ${detailedCourse.title}`);
         } else {
@@ -521,8 +506,12 @@ export default function HomeScreen() {
       } catch (saveError: any) {
         console.error(`Failed to fetch/save complete data for course ${course.title}:`, saveError.message || saveError);
       }
-    }
-    console.log('Completed fetching and saving all course data for offline access');
+    });
+
+    // Wait for all promises to either succeed or fail
+    await Promise.allSettled(allPromises);
+
+    console.log('Completed fetching and saving all course data in parallel.');
   };
 
   const fetchCourses = async () => {
@@ -825,8 +814,6 @@ export default function HomeScreen() {
     setIsEnrollModalVisible(true);
   };
   
-  // --- MODIFICATION START ---
-  // NEW: Function to handle the final enrollment submission
   const confirmEnrollment = async () => {
     if (!netInfo?.isInternetReachable) {
       Alert.alert('Offline', 'You must be connected to the internet to enroll in a course.');
@@ -876,42 +863,37 @@ export default function HomeScreen() {
       setSearchResults([]);
       setHasSearched(false);
 
+      const newCourse = response.data.course as EnrolledCourse;
+      if (newCourse) {
+        setEnrolledCourses(prevCourses => [newCourse, ...prevCourses]);
+      }
+
+      // 2. Surgically save and download data for *only* the new course
       try {
-        setIsLoadingEnrolledCourses(true);
-        
-        // Add status updates to give user feedback
-        setSyncStatus('Refreshing course list...');
-        
-        const updatedEnrolledCoursesResponse = await api.get('/my-courses');
-        const updatedCourses = updatedEnrolledCoursesResponse.data.courses || [];
-        setEnrolledCourses(updatedCourses);
-
         setSyncStatus('Saving new course data...');
-        // This will save basic info AND detailed info for all courses, including the new one
-        for (const course of updatedCourses) {
-          try {
-            await saveCourseToDb(course, userEmail);
-          } catch (saveError) {
-            console.error(' ❌ Failed to save basic course to DB:', saveError);
-          }
-        }
-        await fetchAndSaveCompleteCoursesData(updatedCourses, userEmail);
-        
-        setSyncStatus('Downloading assessment data...');
-        // This will download all assessment details and quiz questions
-        await autoDownloadAssessmentData(userEmail);
-        
-        setSyncStatus('✅ Enrollment complete!');
+        // Save the basic course info
+        await saveCourseToDb(newCourse, userEmail);
 
-      } catch (refreshError) {
-        console.error('Error refreshing enrolled courses after enrollment:', refreshError);
-        setSyncStatus('⚠️ Error syncing new course.');
-        try {
-          const offlineCourses = await getEnrolledCoursesFromDb(userEmail);
-          setEnrolledCourses(offlineCourses as EnrolledCourse[]);
-        } catch (localError) {
-          console.error('❌ Local DB fallback failed:', localError);
+        // Fetch and save details for *just* the new course
+        const detailResponse = await api.get(`/courses/${newCourse.id}`);
+        if (detailResponse.status === 200) {
+          await saveCourseDetailsToDb(detailResponse.data.course, userEmail);
         }
+
+        setSyncStatus('Downloading assessment data...');
+        // Manually trigger a download *only* for the new assessments
+        // (This assumes you have a function to do this, or you can just run the full sync)
+        
+        // For simplicity, running the full sync with "force" is also fine here,
+        // as your `autoDownloadAssessmentData` is smart and will only fetch what's missing.
+        await autoDownloadAssessmentData(userEmail, true); 
+
+        setSyncStatus('✅ Enrollment complete!');
+      } catch (syncError) {
+        console.error('Error syncing new course data:', syncError);
+        setSyncStatus('⚠️ Error syncing new course.');
+        // If this fails, just trigger a full refresh
+        await handleRefresh();
       } finally {
         setIsLoadingEnrolledCourses(false);
         // Clear status after a delay
@@ -919,12 +901,20 @@ export default function HomeScreen() {
       }
     } catch (error: any) {
       console.error('Enrollment error:', error.response?.data || error.message);
-      Alert.alert('Enrollment Failed', 'Invalid enrollment key');
+
+      // --- 💡 THIS IS THE FIX 💡 ---
+      // We read the specific message from the server's error response.
+      // This will now show "You are already enrolled in this course."
+      // or "Invalid enrollment key" correctly.
+      const errorMessage = error.response?.data?.message || 'Invalid enrollment key or an unknown error occurred.';
+      
+      Alert.alert('Enrollment Failed', errorMessage);
+      // --- END OF FIX ---
+      
     } finally {
       setIsEnrolling(false);
     }
   };
-  // --- MODIFICATION END ---
 
   const renderCourseItem = ({ item }: { item: Course }) => (
     <View style={styles.courseResultCard}>
@@ -934,6 +924,7 @@ export default function HomeScreen() {
       <Text style={styles.courseResultDetails}>Instructor: {item.instructor?.name || 'N/A'}</Text>
 
       <TouchableOpacity
+        testID={`search-enroll-button-${item.id}`}
         style={[
           styles.enrollButton,
           !netInfo?.isInternetReachable && styles.disabledButton
@@ -1068,7 +1059,7 @@ export default function HomeScreen() {
         <View style={styles.header}>
           <View style={styles.headerContent}>
             <Text style={styles.welcomeText}>Welcome</Text>
-            <Text style={styles.userNameText}>{userName}</Text>
+            <Text testID="dashboard-username" style={styles.userNameText}>{userName}</Text>
             <Text style={styles.subText}>Ready to continue your learning journey?</Text>
             
             {!netInfo?.isInternetReachable && (
@@ -1117,6 +1108,7 @@ export default function HomeScreen() {
 
         {/* LMS-Style Search Button */}
         <TouchableOpacity
+          testID="discover-courses-button"
           style={[
             styles.searchButton,
             !netInfo?.isInternetReachable && styles.disabledButton
@@ -1244,6 +1236,7 @@ export default function HomeScreen() {
               </TouchableOpacity>
               <Text style={styles.modalTitle}>Search Courses</Text>
               <TextInput
+                testID="search-modal-input"
                 style={styles.searchInput}
                 placeholder="Enter course title"
                 value={searchQuery}
@@ -1253,6 +1246,7 @@ export default function HomeScreen() {
                 editable={netInfo?.isInternetReachable ?? false}
               />
               <TouchableOpacity
+                testID="search-modal-button"
                 style={[
                   styles.modalSearchButton,
                   !netInfo?.isInternetReachable && styles.disabledButton
@@ -1323,6 +1317,7 @@ export default function HomeScreen() {
                 </>
               )}
               <TextInput
+                testID="enrollment-key-input"
                 style={styles.searchInput}
                 placeholder="Enter enrollment key"
                 value={enrollmentCode}
@@ -1330,6 +1325,7 @@ export default function HomeScreen() {
                 autoCapitalize="none"
               />
               <TouchableOpacity
+                testID="confirm-enroll-button"
                 style={[
                   styles.modalSearchButton,
                   isEnrolling && styles.disabledButton
@@ -1418,6 +1414,7 @@ export default function HomeScreen() {
                 </TouchableOpacity>
               ) : (
                 <TouchableOpacity 
+                  testID="tutorial-finish-button"
                   style={styles.tutorialButtonNext} 
                   onPress={handleTutorialFinish}
                 >

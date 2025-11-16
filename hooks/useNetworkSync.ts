@@ -90,7 +90,7 @@ const SYNC_CONFIG = {
  * Enhanced automatic sync hook with silent background updates
  */
 export const useNetworkSync = () => {
-  const { netInfo } = useNetworkStatus();
+  const { netInfo, isBackendReachable } = useNetworkStatus();
   const isInternetReachable = netInfo?.isInternetReachable;
   const previousConnectionState = useRef<boolean | null | undefined>(null);
   const isSyncing = useRef(false);
@@ -109,7 +109,7 @@ export const useNetworkSync = () => {
       // --- MODIFICATION END ---
       // =================================================================
       
-      const isNowOnline = isInternetReachable === true;
+      const isNowOnline = isBackendReachable === true;
 
       // Check cooldown
       const now = Date.now();
@@ -524,11 +524,11 @@ export const useNetworkSync = () => {
           console.log(`⏳ [Smart Sync] Cooldown: ${Math.round((SYNC_CONFIG.COOLDOWN - timeSinceLastSync) / 1000)}s remaining`);
       }
 
-      previousConnectionState.current = isInternetReachable;
+      previousConnectionState.current = isBackendReachable;
     };
 
     performSmartSync();
-  }, [isInternetReachable]);
+  }, [isBackendReachable]);
 };
 
 // ============================================

@@ -711,7 +711,7 @@ export default function MaterialDetailsScreen() {
               <Ionicons name={docInfo.icon as any} size={20} color={docInfo.color} />
               <Text style={styles.viewerTitle}>{docInfo.name}</Text>
             </View>
-            <TouchableOpacity style={styles.actionButton} onPress={handleDeleteDownload} disabled={isDeleting}>
+            <TouchableOpacity testID="delete-download-button" style={styles.actionButton} onPress={handleDeleteDownload} disabled={isDeleting}>
               {isDeleting ? <ActivityIndicator size="small" color="#d93025" /> : <Ionicons name="trash-outline" size={20} color="#d93025" />}
             </TouchableOpacity>
         </View>
@@ -721,7 +721,7 @@ export default function MaterialDetailsScreen() {
           </View>
           <Text style={styles.documentTitle}>{materialDetail?.title}</Text>
           <Text style={styles.documentSubtext}>This file is downloaded and ready to be opened in a compatible app.</Text>
-          <TouchableOpacity style={[styles.primaryDocumentButton, { backgroundColor: docInfo.color }]} onPress={handleOpenFile}>
+          <TouchableOpacity testID="open-in-app-button" style={[styles.primaryDocumentButton, { backgroundColor: docInfo.color }]} onPress={handleOpenFile}>
             <Ionicons name="open-outline" size={20} color="#fff" />
             <Text style={styles.primaryDocumentButtonText}>Open in...</Text>
           </TouchableOpacity>
@@ -745,7 +745,7 @@ export default function MaterialDetailsScreen() {
           <TouchableOpacity style={styles.actionButton} onPress={handleOpenFile}>
             <Ionicons name="open-outline" size={20} color="#4285f4" />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.actionButton} onPress={handleDeleteDownload} disabled={isDeleting}>
+          <TouchableOpacity testID="delete-download-button" style={styles.actionButton} onPress={handleDeleteDownload} disabled={isDeleting}>
               {isDeleting ? <ActivityIndicator size="small" color="#d93025" /> : <Ionicons name="trash-outline" size={20} color="#d93025" />}
           </TouchableOpacity>
         </View>
@@ -771,7 +771,7 @@ export default function MaterialDetailsScreen() {
           <TouchableOpacity style={styles.actionButton} onPress={handleOpenFile}>
             <Ionicons name="open-outline" size={20} color="#4285f4" />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.actionButton} onPress={handleDeleteDownload} disabled={isDeleting}>
+          <TouchableOpacity testID="delete-download-button" style={styles.actionButton} onPress={handleDeleteDownload} disabled={isDeleting}>
             {isDeleting ? <ActivityIndicator size="small" color="#d93025" /> : <Ionicons name="trash-outline" size={20} color="#d93025" />}
           </TouchableOpacity>
         </View>
@@ -809,7 +809,7 @@ export default function MaterialDetailsScreen() {
             <TouchableOpacity style={styles.actionButton} onPress={handleOpenFile}>
               <Ionicons name="open-outline" size={20} color="#4285f4" />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.actionButton} onPress={handleDeleteDownload} disabled={isDeleting}>
+            <TouchableOpacity testID="delete-download-button" style={styles.actionButton} onPress={handleDeleteDownload} disabled={isDeleting}>
               {isDeleting ? <ActivityIndicator size="small" color="#d93025" /> : <Ionicons name="trash-outline" size={20} color="#d93025" />}
             </TouchableOpacity>
           </View>
@@ -833,7 +833,7 @@ export default function MaterialDetailsScreen() {
     <View style={styles.inlineViewerContainer}>
       <View style={styles.viewerHeader}>
         <Text style={styles.viewerTitle}>File Downloaded</Text>
-        <TouchableOpacity style={styles.actionButton} onPress={handleDeleteDownload} disabled={isDeleting}>
+        <TouchableOpacity testID="delete-download-button" style={styles.actionButton} onPress={handleDeleteDownload} disabled={isDeleting}>
           {isDeleting ? <ActivityIndicator size="small" color="#d93025" /> : <Ionicons name="trash-outline" size={20} color="#d93025" />}
         </TouchableOpacity>
       </View>
@@ -866,7 +866,7 @@ export default function MaterialDetailsScreen() {
             <TouchableOpacity style={styles.actionButton} onPress={handleOpenFile}>
               <Ionicons name="open-outline" size={20} color="#4285f4" />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.actionButton} onPress={handleDeleteDownload} disabled={isDeleting}>
+            <TouchableOpacity testID="delete-download-button" style={styles.actionButton} onPress={handleDeleteDownload} disabled={isDeleting}>
               {isDeleting ? <ActivityIndicator size="small" color="#d93025" /> : <Ionicons name="trash-outline" size={20} color="#d93025" />}
             </TouchableOpacity>
           </View>
@@ -979,6 +979,7 @@ export default function MaterialDetailsScreen() {
             <View style={styles.actionButtonsGrid}>
               {!downloadedFileUri && !isDownloading && (
                 <TouchableOpacity 
+                  testID="download-for-offline-button"
                   style={[styles.actionCard, !netInfo?.isInternetReachable && styles.actionCardDisabled]} 
                   onPress={promptDownloadOptions} 
                   disabled={!netInfo?.isInternetReachable}
@@ -1000,7 +1001,7 @@ export default function MaterialDetailsScreen() {
               )}
               
               {netInfo?.isInternetReachable && (
-                <TouchableOpacity style={styles.actionCard} onPress={handleViewOnline}>
+                <TouchableOpacity testID="view-online-button" style={styles.actionCard} onPress={handleViewOnline}>
                   <View style={styles.actionCardContent}>
                     <View style={styles.actionCardIcon}>
                       <Ionicons name="globe-outline" size={24} color="#fff" />

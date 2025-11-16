@@ -246,9 +246,36 @@ export default function AssessmentDetailsScreen() {
           };
           setAssessmentDetail(offlineAssessment);
           setAttemptStatus(updatedAttemptStatus);
-          setLatestAssignmentSubmission(offlineAssessment.latestSubmission);
           setHasDetailedData(true);
           setHasOfflineAttempt(!!offlineAttempt);
+
+          // --- START OF FIX ---
+          //
+          // We check if a 'pendingOfflineAssignment' (from the 'offline_submissions' table)
+          // exists. This variable is already defined and fetched at the top of the
+          // 'fetchAssessmentDetailsAndAttemptStatus' function.
+          //
+          if (pendingOfflineAssignment) {
+            console.log('✅ Offline: Found pending assignment submission. Displaying it.');
+            
+            // If it exists, it's the "latest" version, so we
+            // manually build the 'latestAssignmentSubmission' object from it.
+            setLatestAssignmentSubmission({
+              has_submitted_file: true,
+              submitted_file_path: pendingOfflineAssignment.file_uri, // The local URI or link
+              submitted_file_url: null, // No online URL yet
+              submitted_file_name: pendingOfflineAssignment.original_filename,
+              original_filename: pendingOfflineAssignment.original_filename,
+              submitted_at: pendingOfflineAssignment.submitted_at,
+              status: 'to sync', // This will show the "TO SYNC" badge
+            });
+          } else {
+            // If no pending offline submission, we just use what's in the
+            // 'offline_assessment_data' table (which might be null or an old submission)
+            setLatestAssignmentSubmission(offlineAssessment.latestSubmission);
+          }
+          // --- END OF FIX ---
+
         } else {
           setError('Assessment details not available offline.');
           setHasDetailedData(false);
@@ -771,7 +798,11 @@ export default function AssessmentDetailsScreen() {
   
   // --- NEW VARS for Assignment Button ---
   const hasSubmittedAssignment = (latestAssignmentSubmission?.has_submitted_file || hasOfflineAssignment);
-  const assignmentButtonText = hasSubmittedAssignment ? 'Edit Submission' : 'Submit Assessment';
+  const assignmentButtonText = !isAssessmentCurrentlyOpen
+    ? 'Assessment Unavailable'
+    : hasSubmittedAssignment
+    ? 'Edit Submission'
+    : 'Submit Assessment';
   const assignmentButtonIcon = hasSubmittedAssignment ? 'create-outline' : 'add-circle';
 
   let quizButtonText = `Start ${assessmentTypeCapitalized}`;
@@ -960,7 +991,9 @@ export default function AssessmentDetailsScreen() {
                 </View>
               </View>
               {latestAssignmentSubmission.submitted_at && (
-                <Text style={styles.submissionDate}>Submitted: {formatUTCDate(latestAssignmentSubmission.submitted_at)}</Text>
+                <Text style={styles.submissionDate}>
+                  Submitted: {formatDate(latestAssignmentSubmission.submitted_at)}
+                </Text>
               )}
               {latestAssignmentSubmission.submitted_file_url && (
                 <TouchableOpacity
@@ -1014,7 +1047,8 @@ export default function AssessmentDetailsScreen() {
                 </View>
               ) : (
                 <TouchableOpacity
-                  style={styles.submitButton}
+                  testID="submit-assignment-button"
+                  style={[styles.submitButton, (!isAssessmentCurrentlyOpen || submissionLoading) && styles.submitButtonDisabled]}
                   onPress={() => setSubmissionModalVisible(true)}
                   disabled={!isAssessmentCurrentlyOpen || submissionLoading}
                 >
@@ -1024,6 +1058,7 @@ export default function AssessmentDetailsScreen() {
               )}
               {(submissionType === 'file' || submissionType === 'link') && (
                 <TouchableOpacity
+                  testID="submit-now-button"
                   style={[styles.submitButton, { marginTop: 12, backgroundColor: '#388e3c' }]}
                   onPress={handleSubmitAssignment}
                   disabled={!isAssessmentCurrentlyOpen || submissionLoading}
@@ -1043,6 +1078,7 @@ export default function AssessmentDetailsScreen() {
             <View>
               <Text style={styles.sectionHeader}>Take Assessment</Text>
               <TouchableOpacity
+                testID="start-quiz-button"
                 style={[styles.submitButton, isQuizAttemptButtonDisabled && styles.submitButtonDisabled]}
                 onPress={handleStartQuizAttempt}
                 disabled={isQuizAttemptButtonDisabled || isStartingAttempt}
@@ -1125,6 +1161,7 @@ export default function AssessmentDetailsScreen() {
           <View style={styles.modalContainer}>
             <Text style={styles.modalTitle}>Choose Submission Type</Text>
             <TouchableOpacity
+              testID="upload-file-button"
               style={styles.modalButton}
               onPress={() => {
                 setSubmissionModalVisible(false);
@@ -1136,6 +1173,7 @@ export default function AssessmentDetailsScreen() {
             </TouchableOpacity>
             <Text style={styles.modalHint}>Max file size: 50MB</Text>
             <TouchableOpacity
+              testID="submit-link-button"
               style={styles.modalButton}
               onPress={() => {
                 setSubmissionType('link');
@@ -1147,6 +1185,7 @@ export default function AssessmentDetailsScreen() {
             {submissionType === 'link' && (
               <View style={styles.linkInputContainer}>
                 <TextInput
+                  testID="link-input"
                   style={styles.linkInput}
                   placeholder="https://example.com/your-work"
                   placeholderTextColor="#9aa0a6"

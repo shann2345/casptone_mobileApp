@@ -18,12 +18,13 @@ interface UnsyncedSubmission {
 interface UnsyncedQuiz {
   assessment_id: number;
   answers: string;
-  started_at: string;
-  completed_at: string;
+  start_time: string;  
+  end_time: string;    
 }
 
 const api = axios.create({
   baseURL: API_BASE_URL,
+  timeout: 15000,
   headers: {
     'Accept': 'application/json',
     'Content-Type': 'application/json',
@@ -667,23 +668,28 @@ export const syncOfflineSubmission = async (assessmentId: number, fileUri: strin
       },
     });
 
-    // --- START OF FIX ---
-    // We check for a specific response from the backend, not just "200 OK".
-    // A captive portal will return 200, but response.data will be HTML,
-    // so response.data.submission_id will be undefined.
-    if (response.status === 200 && response.data.message) {
-      console.log(`✅ Sync successful for assessment ${assessmentId}. Server message: ${response.data.message}`);
-      return true; 
+    // --- START OF ROBUST FIX ---
+    //
+    // We change the check from `response.data.message` (which is too generic
+    // and can be triggered by a captive portal) to `response.data.submission_id`,
+    // which mirrors the robust check in `syncOfflineQuiz`.
+    //
+    // A captive portal will NEVER return a valid `submission_id`.
+    //
+    if (response.status === 200 && response.data.submission_id) {
+      console.log(`✅ Sync successful for assessment ${assessmentId}. Server message: ${response.data.message || 'Success'}. New submission ID: ${response.data.submission_id}`);
+      return true; // The sync was a confirmed success
     } else {
-      console.error(`❌ Sync failed for assessment ${assessmentId}: Unexpected response from server.`, response.data);
-      return false; // <-- This will now correctly fire on a bad WiFi
+      // This block will now correctly execute on a "bad" WiFi
+      console.error(`❌ Sync failed for assessment ${assessmentId}: Unexpected or invalid response from server (missing 'submission_id').`, response.data);
+      return false; // The sync failed, do NOT delete local data
     }
-    // --- END OF FIX ---
+    // --- END OF ROBUST FIX ---
 
   } catch (err: any) {
-    // This catch block will handle DNS errors, timeouts, and other network failures
+    // This block will handle network timeouts or complete connection failures
     console.error(`❌ Error syncing offline submission for assessment ${assessmentId}:`, err.response?.data || err.message);
-    return false;
+    return false; // The sync failed, do NOT delete local data
   }
 };
 
@@ -809,17 +815,14 @@ export const manualSync = async (): Promise<{ success: number; failed: number }>
     let successCount = 0;
     let failCount = 0;
     
-    // ... (sync file submissions logic remains the same)
-    
-    // Sync quiz attempts
     for (const quiz of unsyncedQuizzes) {
       try {
         console.log(`📤 Syncing quiz for assessment ${quiz.assessment_id}...`);
         const success = await syncOfflineQuiz(
           quiz.assessment_id,
           quiz.answers,
-          quiz.started_at,
-          quiz.completed_at
+          quiz.start_time,   
+          quiz.end_time      
         );
         
         if (success) {

@@ -399,6 +399,7 @@ export default function LoginScreen() {
             </View> */}
             
             <TouchableOpacity 
+              testID="google-login-button"
               style={[styles.googleButton, loading && styles.buttonDisabled]} 
               onPress={handleGoogleLogin}
               disabled={loading}

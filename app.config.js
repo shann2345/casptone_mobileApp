@@ -24,6 +24,7 @@ export default {
         "foregroundImage": "./assets/images/splash-icon-dark.png",
         "backgroundColor": "#ffffff"
       },
+      removeTestIds: false,
       "edgeToEdgeEnabled": true,
       "package": packageName, // Ensure package name is correct
       "googleServicesFile": process.env.GOOGLE_SERVICES_JSON,

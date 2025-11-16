@@ -20,6 +20,7 @@ import api, { getUserData } from '../../../lib/api';
 import {
   deleteCourseAndRelatedDataFromDb,
   getCompletedOfflineQuizzes,
+  getDb,
   getEnrolledCoursesFromDb, // Keep this import
   getUnsyncedSubmissions,
   initDb,
@@ -342,36 +343,98 @@ export default function CoursesScreen() {
     );
   };
 
-  // handleDeleteCourse - adjusted to use the comprehensive delete function
   const handleDeleteCourse = async (course: EnrolledCourse) => {
+    if (!currentUserEmail) {
+      Alert.alert('Error', 'User not identified. Cannot perform action.');
+      return;
+    }
+
+    let unsyncedCount = 0;
+    try {
+      // --- DYNAMIC CHECK ---
+      // 1. Get the local database
+      const db = await getDb();
+      
+      // 2. Find all assessment IDs for this specific course
+      const assessments = await db.getAllAsync<{ id: number }>(
+        `SELECT id FROM offline_assessments WHERE course_id = ? AND user_email = ?;`,
+        [course.id, currentUserEmail]
+      );
+      
+      if (assessments.length > 0) {
+        const assessmentIds = assessments.map(a => a.id);
+        const placeholders = assessmentIds.map(() => '?').join(',');
+
+        // 3. Check for any 'to sync' file submissions for these assessments
+        const subResult = await db.getFirstAsync<{ count: number }>(
+          `SELECT COUNT(*) as count FROM offline_submissions 
+           WHERE assessment_id IN (${placeholders}) AND user_email = ? AND submission_status = 'to sync';`,
+          [...assessmentIds, currentUserEmail]
+        );
+        unsyncedCount += subResult?.count || 0;
+
+        // 4. Check for any 'completed' (ready to sync) quiz attempts for these assessments
+        const quizResult = await db.getFirstAsync<{ count: number }>(
+          `SELECT COUNT(*) as count FROM offline_quiz_attempts 
+           WHERE assessment_id IN (${placeholders}) AND user_email = ? AND is_completed = 1;`,
+          [...assessmentIds, currentUserEmail]
+        );
+        unsyncedCount += quizResult?.count || 0;
+      }
+      // --- END OF CHECK ---
+
+    } catch (checkError) {
+      console.error("Failed to check for unsynced work:", checkError);
+      // Fallback to a generic but strong warning if the check fails
+      Alert.alert(
+        'Warning', 
+        'Could not check for unsynced work. Deleting this course may permanently remove submitted items that have not been synced. Proceed with caution.',
+        [{ text: 'Cancel', style: 'cancel' }]
+      );
+      return;
+    }
+
+    // --- DYNAMIC ALERT LOGIC ---
+    let title = 'Delete Course Data?';
+    let message = `Are you sure you want to delete all offline data for "${course.title}"?\n\nThis will remove:\n• Course details\n• Materials\n• Assessments\n• Quiz questions\n\nYou can re-download this data when online.`;
+    let destructiveButtonText = 'Delete';
+
+    if (unsyncedCount > 0) {
+      // If unsynced work exists, show the "robust" alert
+      title = '🚨 PERMANENT DATA LOSS 🚨';
+      message = `WARNING!\n\nYou have ${unsyncedCount} submitted assessment${unsyncedCount > 1 ? 's' : ''} for this course that ${unsyncedCount > 1 ? 'are' : 'is'} waiting to be synced.\n\nDeleting this course's data will **PERMANENTLY DELETE** this unsynced work.\n\nThis action cannot be undone.\n\nAre you absolutely sure you want to proceed?`;
+      destructiveButtonText = 'Delete Anyway'; // Make the user pause
+    }
+
+    // Show the appropriate alert
     Alert.alert(
-      'Delete Course Data',
-      `Are you sure you want to delete all offline data for "${course.title}"?\n\nThis will remove:\n• Course details\n• Materials\n• Assessments\n• Quiz questions\n\nYou can re-download this data when online.`,
+      title,
+      message,
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Delete',
+          text: destructiveButtonText,
           style: 'destructive',
           onPress: async () => {
             try {
-              if (!currentUserEmail) {
+              if (!currentUserEmail) { // Redundant check for safety
                 Alert.alert('Error', 'User email not found.');
                 return;
               }
 
               console.log(`🗑️ Deleting offline data for course: ${course.title} (ID: ${course.id})`);
 
-              // --- FIX: Use the comprehensive delete function ---
+              // The comprehensive delete function is correct
               await deleteCourseAndRelatedDataFromDb(course.id, currentUserEmail);
+              
               console.log(`✅ Successfully deleted all offline data for course: ${course.title}`);
-              // --- END OF FIX ---
 
               // Refresh the course list directly from DB as we are offline
               await fetchEnrolledCoursesFromDb();
 
               Alert.alert(
                 'Success',
-                `Offline data for "${course.title}" has been deleted. You can re-download it when online.`
+                `Offline data for "${course.title}" has been deleted.`
               );
             } catch (error) {
               console.error('❌ Error deleting course data:', error);

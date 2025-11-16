@@ -242,6 +242,7 @@ export default function VerificationNoticeScreen() {
           <View style={styles.codeInputContainer}>
             <Ionicons name="shield-checkmark-outline" size={20} color="#6c757d" style={styles.inputIcon} />
             <TextInput
+              testID="verification-code-input"
               style={styles.codeInput}
               placeholder="Enter 6-digit code"
               placeholderTextColor="#adb5bd"
@@ -254,6 +255,7 @@ export default function VerificationNoticeScreen() {
 
           {/* Verify Button */}
           <TouchableOpacity
+            testID="verify-code-button"
             style={[styles.primaryButton, loading && styles.disabledButton]}
             onPress={handleVerifyCode}
             disabled={loading}
