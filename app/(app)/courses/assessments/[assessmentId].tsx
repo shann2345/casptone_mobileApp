@@ -588,19 +588,19 @@ export default function AssessmentDetailsScreen() {
         const reviewData = reviewResponse.data.submitted_assessment;
 
         if (!reviewData.submitted_questions) {
-            throw new Error('Review data received from server is incomplete (missing questions).');
+            throw new Error('Your answer data received from server is incomplete (missing questions).');
         }
 
-        console.log(`✅ Review data fetched: ${reviewData.submitted_questions.length} questions`);
+        console.log(`✅ Answer data fetched: ${reviewData.submitted_questions.length} questions`);
 
         await saveAssessmentReviewToDb(assessmentDetail.id, userEmail, reviewData);
-        console.log(`💾 Review data saved to offline_assessment_reviews table`);
+        console.log(`💾 Answer data saved to offline_assessment_reviews table`);
 
         setHasLocalReview(true);
 
         Alert.alert(
           'Success',
-          'Review data downloaded successfully! You can now view your answers even when offline.',
+          'Your answer data is downloaded successfully! You can now view your answers even when offline.',
           [{ text: 'OK' }]
         );
 
@@ -992,7 +992,11 @@ export default function AssessmentDetailsScreen() {
               </View>
               {latestAssignmentSubmission.submitted_at && (
                 <Text style={styles.submissionDate}>
-                  Submitted: {formatDate(latestAssignmentSubmission.submitted_at)}
+                  Submitted: {
+                    latestAssignmentSubmission.status === 'to sync'
+                      ? formatDate(latestAssignmentSubmission.submitted_at)
+                      : formatUTCDate(latestAssignmentSubmission.submitted_at)
+                  }
                 </Text>
               )}
               {latestAssignmentSubmission.submitted_file_url && (
@@ -1116,16 +1120,16 @@ export default function AssessmentDetailsScreen() {
                     };
                   } else {
                     if (netInfo?.isInternetReachable) {
-                      buttonText = downloadingReview ? 'Downloading...' : 'Download Review Data';
+                      buttonText = downloadingReview ? 'Downloading...' : 'Download Your Answer';
                       isButtonDisabled = downloadingReview;
                       buttonAction = handleDownloadReviewData;
                     } else {
-                      buttonText = 'Connect to Download Review';
+                      buttonText = 'Connect to Download Your Answer';
                       isButtonDisabled = true;
                     }
                   }
                 } else {
-                  buttonText = !isReviewAllowed ? 'Review Disabled by Instructor' : 'Review Available After Due Date';
+                  buttonText = !isReviewAllowed ? 'View Answer is Disabled by Instructor' : 'View Answer is Available After Due Date';
                   isButtonDisabled = true;
                 }
 

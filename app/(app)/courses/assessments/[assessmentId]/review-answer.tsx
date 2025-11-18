@@ -235,12 +235,12 @@ export default function ReviewAnswerScreen() {
               </View>
             )}
 
-            {correctAnswerText && (question.question_type === 'identification' || question.question_type === 'true_false' || question.question_type === 'multiple_choice') && (
+            {/* {correctAnswerText && (question.question_type === 'identification' || question.question_type === 'true_false' || question.question_type === 'multiple_choice') && (
               <View style={styles.correctAnswerContainer}>
                 <Text style={styles.correctAnswerLabel}>Correct Answer:</Text>
                 <Text style={styles.correctAnswerText}>{correctAnswerText}</Text>
               </View>
-            )}
+            )} */}
 
 
             {/* Score Display (no changes) */}

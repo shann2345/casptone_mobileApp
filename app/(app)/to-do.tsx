@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Dimensions, FlatList, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Dimensions, FlatList, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useNetworkStatus } from '../../context/NetworkContext';
 import api, { getUserData, manualSync } from '../../lib/api';
 // [MODIFIED] Import the new function
@@ -18,12 +18,13 @@ import {
 
 
 
+
+
   getCompletedOfflineQuizzes,
   getDb,
   getOfflineAttemptCount,
   getUnsyncedSubmissions,
-  initDb,
-  syncAllAssessmentDetails
+  initDb
 } from '../../lib/localDb';
 
 const { width } = Dimensions.get('window');
@@ -78,16 +79,17 @@ const TODO_CATEGORIES = [
     bgColor: '#e6f4ea',
     description: 'Completed work'
   },
-];
+ ] as const;
+
+type TodoCategoryKey = typeof TODO_CATEGORIES[number]['key'];
 
 
 export default function TodoScreen() {
   const router = useRouter();
   const { isConnected, netInfo } = useNetworkStatus();
-  const [selectedCategory, setSelectedCategory] = useState<string>('unfinished');
+  const [selectedCategory, setSelectedCategory] = useState<TodoCategoryKey>('unfinished');
   
   const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   
   const [allTodoItems, setAllTodoItems] = useState<TodoItem[]>([]); 
@@ -95,7 +97,7 @@ export default function TodoScreen() {
   const [sortOption, setSortOption] = useState<'dueDate' | 'submissionDate'>('dueDate');
   const [isUpdating, setIsUpdating] = useState(false);
 
-  const [categoryCounts, setCategoryCounts] = useState({
+  const [categoryCounts, setCategoryCounts] = useState<Record<TodoCategoryKey, number>>({
     unfinished: 0,
     missing: 0,
     to_sync: 0,
@@ -137,7 +139,7 @@ export default function TodoScreen() {
   const loadTodoItems = async (forceRefresh = false) => {
     // ... (This function remains unchanged)
     try {
-      if (!isRefreshing && !isSyncing) setIsLoading(true); // Don't show loading indicator if we are syncing
+      if (!isSyncing) setIsLoading(true);
       await initDb();
       
       const userData = await getUserData();
@@ -166,31 +168,25 @@ export default function TodoScreen() {
       Alert.alert('Error', 'Failed to load assignments. Please try again.');
     } finally {
       setIsLoading(false);
-      setIsRefreshing(false);
     }
   };
 
   // [MODIFIED] This function is now the "Smart Refresh"
   // It handles both pull-to-refresh (smart) and button-click (force-refresh)
-  const runSmartRefresh = async (isManualUpdate = false) => {
-    if (isRefreshing || isSyncing || isUpdating) return;
+  const runSmartRefresh = async () => {
+    if (isSyncing || isUpdating) return;
 
-    if (isManualUpdate) {
-      setIsUpdating(true);
-    } else {
-      setIsRefreshing(true);
-    }
+    setIsUpdating(true);
 
     const userData = await getUserData();
     if (!userData?.email) {
       Alert.alert('Error', 'User data not found.');
-      setIsRefreshing(false);
       setIsUpdating(false);
       return;
     }
 
     if (isConnected) {
-      console.log(`🔄 [To-Do] Running ${isManualUpdate ? 'Manual Update (Force-Refresh)' : 'Smart Refresh (Pull-to-Refresh)'}...`);
+      console.log('🔄 [To-Do] Running Manual Update (Force-Refresh)...');
       try {
         // Step 1: Run manualSync FIRST to submit any pending work
         console.log('🔄 [To-Do] Step 1: Syncing pending work...');
@@ -204,42 +200,25 @@ export default function TodoScreen() {
         
         let totalUpdated = 0;
 
-        if (isManualUpdate) {
-          // --- THIS IS YOUR REQUESTED FIX ---
-          // Manual "Update" button = Force-refresh *everything*
-          console.log('... (Manual Update) Force-refreshing all assessment statuses...');
-          const result = await forceRefreshAllAssessmentStatuses(
-            userData.email,
-            api,
-            (current, total) => {
-              console.log(`[To-Do Update] Force Refresh: ${current}/${total}`);
-            }
-          );
-          totalUpdated = result.success;
-        } else {
-          // --- THIS IS THE NORMAL PULL-TO-REFRESH ---
-          // Pull-to-refresh = Smart, fast sync (respects cooldowns)
-          console.log('... (Pull-to-Refresh) Smart-syncing stale assessments...');
-          const result = await syncAllAssessmentDetails(
-            userData.email,
-            api,
-            (current, total, type) => {
-              console.log(`[To-Do Refresh] ${type}: ${current}/${total}`);
-            }
-          );
-          totalUpdated = result.success + result.updated;
-        }
+        // --- THIS IS YOUR REQUESTED FIX ---
+        // Manual "Update" button = Force-refresh *everything*
+        console.log('... (Manual Update) Force-refreshing all assessment statuses...');
+        const result = await forceRefreshAllAssessmentStatuses(
+          userData.email,
+          api,
+          (current, total) => {
+            console.log(`[To-Do Update] Force Refresh: ${current}/${total}`);
+          }
+        );
+        totalUpdated = result.success;
         
         console.log(`✅ [To-Do] Downloaded/Refreshed ${totalUpdated} records.`);
 
-        // Show success message for manual updates
-        if (isManualUpdate) {
-          Alert.alert(
-            'Update Complete',
-            `Successfully refreshed the status for ${totalUpdated} assessment${totalUpdated !== 1 ? 's' : ''}.`,
-            [{ text: 'OK' }]
-          );
-        }
+        Alert.alert(
+          'Update Complete',
+          `Successfully refreshed the status for ${totalUpdated} assessment${totalUpdated !== 1 ? 's' : ''}.`,
+          [{ text: 'OK' }]
+        );
 
       } catch (syncError) {
         console.error('❌ [To-Do] Smart Refresh failed:', syncError);
@@ -250,27 +229,19 @@ export default function TodoScreen() {
       }
     } else {
       console.log('📡 [To-Do] Offline. Cannot update.');
-      if (isManualUpdate) {
-        Alert.alert('Offline', 'You must be online to update. Please connect and try again.');
-      }
+      Alert.alert('Offline', 'You must be online to update. Please connect and try again.');
     }
     
     // Step 3 (WAS 4): Always reload the list from DB (with fresh data)
     console.log('🔄 [To-Do] Step 3: Reloading list from local database...');
     await loadTodoItems(false);
     
-    setIsRefreshing(false);
     setIsUpdating(false);
-    console.log(`✅ [To-Do] ${isManualUpdate ? 'Manual Update' : 'Smart Refresh'} finished.`);
-  };
-
-  // Update these handler functions
-  const handleRefresh = async () => {
-    await runSmartRefresh(false); // Pull-to-refresh (Smart)
+    console.log('✅ [To-Do] Manual Update finished.');
   };
 
   const handleManualUpdate = async () => {
-    await runSmartRefresh(true); // Manual button click (Force-Refresh)
+    await runSmartRefresh();
   };
 
   const getAllTodoItems = async (userEmail: string, forceRefresh = false): Promise<TodoItem[]> => {
@@ -283,28 +254,28 @@ export default function TodoScreen() {
         console.log('🔄 Force refreshing database queries...');
       }
 
-      const allAssessments = await db.getAllAsync(`
+      const allAssessments = (await db.getAllAsync(`
         SELECT a.*, c.title as course_name 
         FROM offline_assessments a
         LEFT JOIN offline_courses c ON a.course_id = c.id AND a.user_email = c.user_email
         WHERE a.user_email = ?
         ORDER BY a.unavailable_at ASC
-      `, [userEmail]);
+      `, [userEmail])) as any[];
 
-      const unsyncedSubmissions = await getUnsyncedSubmissions(userEmail);
-      const unsyncedAssessmentIds = new Set(unsyncedSubmissions.map(sub => sub.assessment_id));
+      const unsyncedSubmissions = (await getUnsyncedSubmissions(userEmail)) as any[];
+      const unsyncedAssessmentIds = new Set(unsyncedSubmissions.map((sub: any) => sub.assessment_id));
 
-      const completedOfflineQuizzes = await getCompletedOfflineQuizzes(userEmail);
-      const unsyncedQuizIds = new Set(completedOfflineQuizzes.map(quiz => quiz.assessment_id));
+      const completedOfflineQuizzes = (await getCompletedOfflineQuizzes(userEmail)) as any[];
+      const unsyncedQuizIds = new Set(completedOfflineQuizzes.map((quiz: any) => quiz.assessment_id));
 
       for (const assessment of allAssessments) {
         const now = new Date();
         const isOverdue = assessment.unavailable_at && new Date(assessment.unavailable_at) < now;
         
-        const assessmentData = await db.getFirstAsync(`
+        const assessmentData = (await db.getFirstAsync(`
           SELECT data FROM offline_assessment_data 
           WHERE assessment_id = ? AND user_email = ?
-        `, [assessment.id, userEmail]);
+        `, [assessment.id, userEmail])) as any;
 
         let hasServerSubmission = false;
         let hasServerAttempts = false;
@@ -479,7 +450,7 @@ export default function TodoScreen() {
   //   );
   // };
 
-  const handleCategoryPress = (categoryKey: string) => {
+  const handleCategoryPress = (categoryKey: TodoCategoryKey) => {
     // ... (This function remains unchanged)
     if (categoryKey === 'to_sync' || categoryKey === 'done') {
       setSortOption('submissionDate');
@@ -506,7 +477,7 @@ export default function TodoScreen() {
           scrollToAssessment: item.assessment_id.toString(),
           highlightAssessment: 'true'
         }
-      });
+      } as any);
     }, 100);
   };
 
@@ -650,11 +621,12 @@ export default function TodoScreen() {
       subtitle: 'Nothing to show here',
       icon: 'document-outline'
     };
+    const iconName = content.icon as React.ComponentProps<typeof Ionicons>['name'];
 
     return (
       <View style={styles.emptyState}>
         <Ionicons 
-          name={content.icon} 
+          name={iconName}
           size={72} 
           color="#dadce0" 
         />
@@ -696,7 +668,7 @@ export default function TodoScreen() {
               <TouchableOpacity 
                 style={styles.updateButton}
                 onPress={handleManualUpdate}
-                disabled={isUpdating || isRefreshing || isSyncing}
+                disabled={isUpdating || isSyncing}
               >
                 {isUpdating ? (
                   <>
@@ -717,7 +689,7 @@ export default function TodoScreen() {
               <TouchableOpacity 
                 style={styles.syncIndicatorButton}
                 onPress={() => runTargetedSync(true)}
-                disabled={isSyncing || isUpdating || isRefreshing}
+                disabled={isSyncing || isUpdating}
               >
                 {isSyncing ? (
                   <>
@@ -733,19 +705,6 @@ export default function TodoScreen() {
               </TouchableOpacity>
             )}
             
-            {/* Refresh Button - [MODIFIED] Uses handleRefresh */}
-            <TouchableOpacity 
-              style={styles.refreshButton} 
-              onPress={handleRefresh}
-              disabled={isLoading || isRefreshing || isSyncing || isUpdating}
-            >
-              <Ionicons 
-                name="refresh" 
-                size={24} 
-                color="#5f6368" 
-                style={[(isLoading || isRefreshing || isSyncing || isUpdating) && { opacity: 0.5 }]}
-              />
-            </TouchableOpacity>
           </View>
         </View>
         
@@ -815,7 +774,7 @@ export default function TodoScreen() {
           </TouchableOpacity>
         </View>
       
-        {(isLoading && !isRefreshing) || (isSyncing && todoItems.length === 0) ? (
+        {(isLoading) || (isSyncing && todoItems.length === 0) ? (
           // ... (Loading container remains unchanged)
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#1967d2" />
@@ -828,14 +787,6 @@ export default function TodoScreen() {
             keyExtractor={(item) => item.id}
             renderItem={renderTodoItem}
             ListEmptyComponent={renderEmptyState}
-            refreshControl={
-              <RefreshControl
-                refreshing={isRefreshing}
-                onRefresh={handleRefresh}
-                tintColor="#1967d2"
-                colors={['#1967d2']}
-              />
-            }
             contentContainerStyle={styles.listContent}
             showsVerticalScrollIndicator={false}
             ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
@@ -869,9 +820,6 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: '500',
     color: '#202124',
-  },
-  refreshButton: {
-    padding: 8,
   },
   syncIndicatorButton: {
     flexDirection: 'row',

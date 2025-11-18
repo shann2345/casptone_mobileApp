@@ -71,7 +71,7 @@ export default function SettingsScreen() {
   const [notificationSettings, setNotificationSettings] = useState({
     pushNotifications: false,
     emailNotifications: false,
-    courseUpdates: false,
+    courseUpdates: true,
     assignmentReminders: true,
     gradeNotifications: false,
     materialReminders: true,
