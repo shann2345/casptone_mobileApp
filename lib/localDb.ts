@@ -1,9 +1,38 @@
+import CryptoJS from 'crypto-js';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as SQLite from 'expo-sqlite';
 import { Platform } from 'react-native';
 
 const DB_NAME = 'multiuser.db';
 const dbDirectory = `${FileSystem.documentDirectory}SQLite`;
+
+
+const part1 = 'olin-lms';
+const part2 = '-super-secure';
+const part3 = '-offline-key';
+const year = 2025;
+const SECRET_KEY = `${part1}${part2}${part3}-${year}`;
+
+const encryptData = (data: string): string => {
+  try {
+    return CryptoJS.AES.encrypt(data, SECRET_KEY).toString();
+  } catch (e) {
+    console.error('Encryption failed:', e);
+    return data; // Fallback (risky, but prevents crash)
+  }
+};
+
+// Helper to Decrypt
+const decryptData = (ciphertext: string): string => {
+  try {
+    const bytes = CryptoJS.AES.decrypt(ciphertext, SECRET_KEY);
+    const originalText = bytes.toString(CryptoJS.enc.Utf8);
+    return originalText || ciphertext; // Return decrypted or original if failed
+  } catch (e) {
+    console.error('Decryption failed:', e);
+    return ciphertext;
+  }
+};
 
 type TimeCheckRecord = {
   user_email: string;
@@ -433,10 +462,12 @@ export const saveCourseDetailsToDb = async (course: any, userEmail: string): Pro
     console.log('💾 Saving detailed course data for user:', userEmail, ' and course:', courseId);
     console.log(`📋 Validated - Course ID: ${courseId} (type: ${typeof courseId}), User: "${userEmail}"`);
 
-    // Save the main course data
+    const courseDataString = JSON.stringify(course);
+    const encryptedCourseData = encryptData(courseDataString);
+
     await db.runAsync(
       `INSERT OR REPLACE INTO offline_course_details (course_id, user_email, course_data) VALUES (?, ?, ?);`,
-      [courseId, userEmail, JSON.stringify(course)]
+      [courseId, userEmail, encryptedCourseData] 
     );
 
     // Separate and save materials and assessments from topics
@@ -508,22 +539,21 @@ export const getCourseDetailsFromDb = async (courseId: number, userEmail: string
     await initDb();
     const db = await getDb();
 
-    console.log('ðŸ” Retrieving course details from local DB for course ID:', courseId);
-
     const result = await db.getAllAsync(
       `SELECT course_data FROM offline_course_details WHERE course_id = ? AND user_email = ?;`,
       [courseId, userEmail]
     );
     
     if (result && result.length > 0) {
-      console.log('âœ… Course details found in local DB.');
-      return JSON.parse(result[0].course_data);
+      // --- MODIFIED: Decrypt the data before parsing ---
+      const encryptedData = result[0].course_data;
+      const decryptedData = decryptData(encryptedData);
+      return JSON.parse(decryptedData);
     }
     
-    console.log('âŒ Course details not found in local DB.');
     return null;
   } catch (error) {
-    console.error('âŒ Failed to get course details from local DB:', error);
+    console.error('❌ Failed to get course details:', error);
     return null;
   }
 };
@@ -667,11 +697,11 @@ export const saveMaterialsToDb = async (materials: any[], courseId: number, user
   await db.withTransactionAsync(async () => {
     for (const material of materials) {
       try {
-        // FIXED: Validate material ID
-        if (!material.id || material.id === 0) {
-          console.error('❌ Invalid material ID:', material.id, 'for material:', material.title);
-          continue; // Skip this material
-        }
+        if (!material.id) continue;
+
+        // 🔒 SECURITY FIX: Encrypt sensitive fields
+        const encryptedFilePath = material.file_path ? encryptData(material.file_path) : '';
+        const encryptedContent = material.content ? encryptData(material.content) : '';
 
         await db.runAsync(
           `INSERT OR REPLACE INTO offline_materials 
@@ -680,32 +710,22 @@ export const saveMaterialsToDb = async (materials: any[], courseId: number, user
           [
             material.id,
             userEmail,
-            courseId, // FIXED: Use the courseId parameter
-            material.title || 'Untitled Material',
-            material.file_path || '',
-            material.content || '',
+            courseId,
+            material.title || 'Untitled', // Titles are usually fine in plain text for UI lists
+            encryptedFilePath, // ✅ Now Encrypted
+            encryptedContent,  // ✅ Now Encrypted
             material.type || 'document',
             material.created_at || new Date().toISOString(),
             material.available_at || null,
             material.unavailable_at || null
           ]
         );
-        
-        console.log(`✅ Saved material: ${material.title} (ID: ${material.id}) for course: ${courseId}`);
       } catch (materialError) {
-        console.error('❌ Failed to save individual material:', material?.id || 'unknown', materialError);
-        console.error('Material data:', {
-          id: material?.id,
-          title: material?.title,
-          courseId: courseId,
-          userEmail: userEmail
-        });
-        // Continue with other materials
+        console.error('❌ Failed to save material:', materialError);
       }
     }
   });
-  
-  console.log(`✅ Saved ${materials.length} materials for course ${courseId}`);
+  console.log(`✅ Saved materials for course ${courseId}`);
 };
 
 export const getMaterialDetailsFromDb = async (materialId: number, userEmail: string): Promise<any | null> => {
@@ -715,9 +735,18 @@ export const getMaterialDetailsFromDb = async (materialId: number, userEmail: st
       `SELECT * FROM offline_materials WHERE id = ? AND user_email = ?;`,
       [materialId, userEmail]
     );
-    return result || null;
+    
+    if (result) {
+      // 🔓 Decrypt fields before returning to UI
+      return {
+        ...result,
+        file_path: result.file_path ? decryptData(result.file_path) : '',
+        content: result.content ? decryptData(result.content) : ''
+      };
+    }
+    return null;
   } catch (error) {
-    console.error(`âŒ Failed to get material ${materialId} from DB:`, error);
+    console.error(`❌ Failed to get material ${materialId}:`, error);
     return null;
   }
 };
@@ -847,21 +876,24 @@ export const saveAssessmentDetailsToDb = async (
   try {
     await initDb();
     const db = await getDb();
-    console.log('ðŸ’¾ Saving detailed assessment data for user:', userEmail, ' and assessment:', assessmentId);
 
     const assessmentData = {
       attemptStatus: attemptStatus || null,
       latestSubmission: latestSubmission || null,
     };
 
+    // --- MODIFIED: Encrypt data ---
+    const dataString = JSON.stringify(assessmentData);
+    const encryptedData = encryptData(dataString);
+
     await db.runAsync(
       `INSERT OR REPLACE INTO offline_assessment_data (assessment_id, user_email, data) VALUES (?, ?, ?);`,
-      [assessmentId, userEmail, JSON.stringify(assessmentData)]
+      [assessmentId, userEmail, encryptedData] // <-- Saved encrypted
     );
 
-    console.log('âœ… Detailed assessment data saved successfully.');
+    console.log('✅ Detailed assessment data saved successfully.');
   } catch (error) {
-    console.error('âŒ Failed to save detailed assessment data:', error);
+    console.error('❌ Failed to save detailed assessment data:', error);
     throw error;
   }
 };
@@ -1058,7 +1090,8 @@ export const getAssessmentDetailsFromDb = async (assessmentId: number | string, 
     };
 
     if (dataResult && dataResult.data) {
-      additionalData = JSON.parse(dataResult.data);
+      const decryptedData = decryptData(dataResult.data);
+      additionalData = JSON.parse(decryptedData);
     }
 
     // Combine the two results
@@ -1091,11 +1124,11 @@ export const saveOfflineSubmission = async (
       finalSubmittedAt = serverTime || new Date().toISOString();
     }
     
-    console.log('ðŸ’¾ Saving offline submission to local DB with timestamp:', finalSubmittedAt);
+    const encryptedUri = encryptData(fileUri);
 
     await db.runAsync(
       `INSERT OR REPLACE INTO offline_submissions (user_email, assessment_id, file_uri, original_filename, submission_status, submitted_at) VALUES (?, ?, ?, ?, ?, ?);`,
-      [userEmail, assessmentId, fileUri, originalFilename, 'to sync', finalSubmittedAt]
+      [userEmail, assessmentId, encryptedUri, originalFilename, 'to sync', finalSubmittedAt]
     );
 
     console.log('âœ… Offline submission saved successfully.');
@@ -1272,9 +1305,11 @@ export const saveAssessmentReviewToDb = async (assessmentId: number, userEmail: 
     await initDb();
     const db = await getDb();
     console.log(`💾 Saving review data for assessment ${assessmentId}`);
+    const encryptedReview = encryptData(JSON.stringify(reviewData));
+
     await db.runAsync(
       `INSERT OR REPLACE INTO offline_assessment_reviews (assessment_id, user_email, review_data) VALUES (?, ?, ?);`,
-      [assessmentId, userEmail, JSON.stringify(reviewData)]
+      [assessmentId, userEmail, encryptedReview]
     );
     console.log(`✅ Review data for assessment ${assessmentId} saved successfully.`);
   } catch (error) {
@@ -1291,8 +1326,9 @@ export const getAssessmentReviewFromDb = async (assessmentId: number, userEmail:
       [assessmentId, userEmail]
     );
     if (result && result.review_data) {
-      console.log(`✅ Found offline review data for assessment ${assessmentId}`);
-      return JSON.parse(result.review_data);
+      // --- MODIFIED: Decrypt ---
+      const decryptedData = decryptData(result.review_data);
+      return JSON.parse(decryptedData);
     }
     console.log(`⚠️ No offline review data found for assessment ${assessmentId}`);
     return null;
@@ -1534,19 +1570,19 @@ export const saveQuizQuestionsToDb = async (
 
         await db.runAsync(
           `INSERT INTO offline_quiz_questions 
-           (id, user_email, assessment_id, question_text, question_type, options, correct_answer, points, order_index, question_data) 
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+          (id, user_email, assessment_id, question_text, question_type, options, correct_answer, points, order_index, question_data) 
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
           [
             questionId,
             userEmail,
             assessmentId,
-            question.question || question.question_text || '',
+            'Encrypted Question', // 🔒 Hide the text
             question.type || question.question_type || 'text',
-            optionsToSave,
-            question.correct_answer || null,
+            null,                 // 🔒 Hide the options (they are inside question_data)
+            null,                 // 🔒 Hide the correct answer!
             question.points || question.point_value || 1,
             i + 1,
-            JSON.stringify(enhancedQuestionData) // Use enhanced data with duration
+            encryptData(JSON.stringify(enhancedQuestionData)) // This contains everything safely
           ]
         );
       }
@@ -1592,7 +1628,8 @@ export const getQuizQuestionsFromDb = async (
     
     return result.map((row: any) => {
       try {
-        const questionData = JSON.parse(row.question_data);
+        const decryptedString = decryptData(row.question_data);
+        const questionData = JSON.parse(decryptedString);
         
         // Ensure options are properly formatted for the UI
         if (questionData.options) {
@@ -1707,6 +1744,7 @@ export const startOfflineQuiz = async (assessmentId: number, userEmail: string, 
         return;
       }
 
+      const encryptedEmptyAnswers = encryptData(JSON.stringify({}));
       // Create new attempt
       await db.runAsync(
         `INSERT INTO offline_quiz_attempts (assessment_id, user_email, start_time, answers, is_completed, shuffled_order)
@@ -1715,7 +1753,7 @@ export const startOfflineQuiz = async (assessmentId: number, userEmail: string, 
           assessmentId,
           userEmail,
           new Date().toISOString(),
-          JSON.stringify({}),
+          encryptedEmptyAnswers,
           0,
           JSON.stringify(shuffledOrder) // <-- ADDED ORDER VALUE
         ]
@@ -1736,7 +1774,6 @@ export const getOfflineAttemptCount = async (assessmentId: number, userEmail: st
   try {
     const db = await getDb();
     
-    // First get the attempt status from assessment_data
     const assessmentData = await db.getFirstAsync(
       `SELECT data FROM offline_assessment_data 
        WHERE assessment_id = ? AND user_email = ?;`,
@@ -1745,8 +1782,14 @@ export const getOfflineAttemptCount = async (assessmentId: number, userEmail: st
 
     let storedAttemptStatus = null;
     if (assessmentData?.data) {
-      const parsed = JSON.parse(assessmentData.data);
-      storedAttemptStatus = parsed.attemptStatus;
+      try {
+        // ✅ FIX: Decrypt first!
+        const decryptedData = decryptData(assessmentData.data);
+        const parsed = JSON.parse(decryptedData);
+        storedAttemptStatus = parsed.attemptStatus;
+      } catch (e) {
+        console.warn('Failed to decrypt attempt status in getOfflineAttemptCount', e);
+      }
     }
 
     // Get completed attempts count from offline_quiz_attempts
@@ -1780,6 +1823,8 @@ export const getOfflineAttemptCount = async (assessmentId: number, userEmail: st
   }
 };
 
+// localDb.ts
+
 export const getOfflineQuizAnswers = async (assessmentId: number, userEmail: string): Promise < any > => {
   try {
     await initDb();
@@ -1789,7 +1834,9 @@ export const getOfflineQuizAnswers = async (assessmentId: number, userEmail: str
       [assessmentId, userEmail]
     );
     if (result && result.answers) {
-      return JSON.parse(result.answers);
+      // CHANGE: Decrypt before parsing
+      const decryptedAnswers = decryptData(result.answers);
+      return JSON.parse(decryptedAnswers);
     }
     return {};
   } catch (error) {
@@ -1802,10 +1849,15 @@ export const updateOfflineQuizAnswers = async (assessmentId: number, userEmail: 
   try {
     await initDb();
     const db = await getDb();
+    
+    // CHANGE: Encrypt the JSON string before saving
+    const answersString = JSON.stringify(answers);
+    const encryptedAnswers = encryptData(answersString);
+
     await db.runAsync(
       `UPDATE offline_quiz_attempts SET answers = ? WHERE assessment_id = ? AND user_email = ?;`,
       [
-        JSON.stringify(answers),
+        encryptedAnswers, // Save encrypted data
         assessmentId,
         userEmail
       ]
@@ -1840,34 +1892,39 @@ export const getOfflineQuizAttemptStatus = async (assessmentId: number, userEmai
 
 export const submitOfflineQuiz = async (assessmentId: number, userEmail: string, answers: StudentAnswers): Promise<void> => {
   try {
-    await initDb(); // Ensure DB is initialized
+    await initDb(); 
     const db = await getDb();
     const now = new Date().toISOString();
     
     console.log(`📝 Submitting offline quiz for assessment ${assessmentId}`);
     
     await db.withTransactionAsync(async () => {
-      // 1. Get all original questions for this quiz from the local DB
+      // 1. Get all original questions for this quiz
       const questions = await getQuizQuestionsFromDb(assessmentId, userEmail);
       const questionsMap: Record<number, any> = {};
       questions.forEach(q => {
-        // The question data is already parsed by getQuizQuestionsFromDb
         questionsMap[q.id] = q;
       });
       
+      const encryptedAnswers = encryptData(JSON.stringify(answers));
+
       // 2. Create the main attempt record
       const attemptResult = await db.runAsync(
         `INSERT INTO offline_quiz_attempts (assessment_id, user_email, start_time, end_time, answers, is_completed) VALUES (?, ?, ?, ?, ?, ?);`,
-        [assessmentId, userEmail, now, now, JSON.stringify(answers), 1]
+        [
+          assessmentId,
+          userEmail,
+          now,
+          now,
+          encryptedAnswers, // ✅ CORRECT: Encrypted
+          1
+        ]
       );
       const attemptId = attemptResult.lastInsertRowId;
 
-      if (!attemptId) {
-        throw new Error("Failed to create quiz attempt record.");
-      }
-      console.log(`Created offline attempt with ID: ${attemptId}`);
+      if (!attemptId) throw new Error("Failed to create quiz attempt record.");
       
-      // 3. Loop through the student's answers and save each one
+      // 3. Loop through answers
       for (const questionIdStr in answers) {
         if (!answers.hasOwnProperty(questionIdStr)) continue;
         
@@ -1875,48 +1932,47 @@ export const submitOfflineQuiz = async (assessmentId: number, userEmail: string,
         const studentAnswer = answers[questionId];
         const originalQuestion = questionsMap[questionId];
         
-        if (!originalQuestion) {
-          console.warn(`Original question data not found for question ID: ${questionId}. Skipping.`);
-          continue;
-        }
+        if (!originalQuestion) continue;
         
-        // Ensure max_points has a valid value, defaulting to 1
         const maxPoints = originalQuestion.points ?? originalQuestion.max_points ?? 1;
-        
-        // 4. Insert the submission for the question
+        const encryptedStudentAnswer = encryptData(JSON.stringify(studentAnswer.answer));
+
         const questionSubmissionResult = await db.runAsync(
           `INSERT INTO offline_quiz_question_submissions (attempt_id, question_id, submitted_answer, max_points) VALUES (?, ?, ?, ?);`,
           [
             attemptId, 
             questionId, 
-            JSON.stringify(studentAnswer.answer), // Store the raw answer
+            encryptedStudentAnswer, // ✅ CORRECT: Encrypted
             maxPoints
           ]
         );
         const submissionId = questionSubmissionResult.lastInsertRowId;
 
-        if (!submissionId) {
-          throw new Error(`Failed to create submission record for question ${questionId}.`);
-        }
+        if (!submissionId) throw new Error(`Failed to create submission record.`);
         
-        // 5. If it's a multiple-choice or true/false, save the state of ALL options
+        // 5. Securely save option selections
         if (studentAnswer.type === 'multiple_choice' || studentAnswer.type === 'true_false') {
           const selectedOptionIds = Array.isArray(studentAnswer.answer) ? studentAnswer.answer : [studentAnswer.answer];
           const originalOptions = originalQuestion.options || [];
           
           for (const option of originalOptions) {
             const isSelected = selectedOptionIds.includes(option.id);
-            // Ensure is_correct_option has a value (0 or 1)
-            const isCorrect = option.is_correct ? 1 : 0;
+            
+            // 🔒 SECURITY FIX: Encrypt option text
+            const encryptedOptionText = encryptData(option.option_text || '');
+
+            // 🔒 SECURITY FIX: NEVER save 'isCorrect' as 1 in a plain text table.
+            // We save 0. Correctness should be derived from the encrypted Question Data during review.
+            const isCorrectSafe = 0; 
             
             await db.runAsync(
               `INSERT INTO offline_quiz_option_selections (submission_id, option_id, option_text, is_selected, is_correct_option) VALUES (?, ?, ?, ?, ?);`,
               [
                 submissionId, 
                 option.id, 
-                option.option_text || '', 
+                encryptedOptionText, // ✅ Now Encrypted
                 isSelected ? 1 : 0, 
-                isCorrect
+                isCorrectSafe // ✅ Always 0 to prevent cheating
               ]
             );
           }
@@ -1949,8 +2005,21 @@ export const getCompletedOfflineQuizzes = async (userEmail: string): Promise<any
       [userEmail]
     );
     
+    const decryptedAttempts = quizAttempts.map((attempt: any) => {
+      // 1. Decrypt the 'answers' string
+      const decryptedAnswersJson = decryptData(attempt.answers);
+      
+      // 2. Return a new object with the decrypted answers
+      // Note: We don't need to JSON.parse here because syncOfflineQuiz in api.ts 
+      // expects a string and handles parsing itself via 'formatAnswersForSync'.
+      return {
+        ...attempt,
+        answers: decryptedAnswersJson 
+      };
+    });
+
     console.log(`📊 Found ${quizAttempts.length} completed offline quizzes ready for sync`);
-    return quizAttempts;
+    return decryptedAttempts;
   } catch (error) {
     console.error('❌ Failed to get completed offline quizzes:', error);
     return [];
@@ -1964,10 +2033,24 @@ export const getOfflineQuizAttempt = async (
   try {
     const db = await getDb();
     const result = await db.getFirstAsync(
-      // <-- MODIFIED SQL to select shuffled_order
       `SELECT *, shuffled_order FROM offline_quiz_attempts WHERE assessment_id = ? AND user_email = ? AND is_completed = 0;`, 
       [assessmentId, userEmail]
     );
+
+    // 🔍 FIX START: Decrypt the answers if they exist
+    if (result && (result as any).answers) {
+      const decryptedAnswers = decryptData((result as any).answers);
+      
+      // We usually parse it here so the UI gets a clean Object
+      try {
+        (result as any).answers = JSON.parse(decryptedAnswers);
+      } catch (e) {
+        console.warn("⚠️ Could not parse decrypted answers JSON, returning as string.");
+        (result as any).answers = decryptedAnswers;
+      }
+    }
+    // 🔍 FIX END
+
     return result || null;
   } catch (error) {
     console.error('Error checking for offline quiz attempt:', error);
@@ -2101,14 +2184,21 @@ export const getUnsyncedSubmissions = async (userEmail: string) => {
   try {
     await initDb();
     const db = await getDb();
-    const result = await db.getAllAsync(
+    const results = await db.getAllAsync(
       `SELECT * FROM offline_submissions WHERE user_email = ? AND submission_status = 'to sync';`,
       [userEmail]
     );
-    console.log(`ðŸ” Found ${result.length} unsynced submissions for user ${userEmail}`);
-    return result;
+
+    // CHANGE: Decrypt the file_uri for every row
+    const decryptedResults = results.map((row: any) => ({
+      ...row,
+      file_uri: decryptData(row.file_uri)
+    }));
+
+    console.log(`🔍 Found ${decryptedResults.length} unsynced submissions`);
+    return decryptedResults;
   } catch (error) {
-    console.error('âŒ Failed to get unsynced submissions:', error);
+    console.error('❌ Failed to get unsynced submissions:', error);
     return [];
   }
 };
