@@ -133,6 +133,9 @@ export default function HomeScreen() {
   const [isEnrolling, setIsEnrolling] = useState<boolean>(false);
   const [syncStatus, setSyncStatus] = useState<string>('');
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
+  const [isSyncModalVisible, setSyncModalVisible] = useState(false);
+  const [syncProgressValue, setSyncProgressValue] = useState(0);
+  const [syncMessage, setSyncMessage] = useState('');
 
   // Utility function for retry logic with exponential backoff
   const retryWithBackoff = async (fn: Function, maxRetries = 3, baseDelay = 1000) => {
@@ -339,77 +342,100 @@ export default function HomeScreen() {
   useEffect(() => {
     const syncSubmissions = async () => {
       if (!isInitialized) return;
-
       const hasRealInternet = netInfo?.isInternetReachable === true;
+      
       if (hasRealInternet) {
-        console.log('Network is back online. Checking for unsynced submissions...');
-        const user = await getUserData();
-        if (!user || !user.email) {
-          console.log('User not found. Cannot sync submissions.');
+        const user = await getUserData(); 
+        if (!user || !user.email) return;
+
+        const unsyncedAssignments = await getUnsyncedSubmissions(user.email); 
+        const completedOfflineQuizzes = await getCompletedOfflineQuizzes(user.email); 
+
+        if (unsyncedAssignments.length === 0 && completedOfflineQuizzes.length === 0) {
           return;
         }
 
-        // Check and sync for assignment submissions
-        const unsyncedAssignments = await getUnsyncedSubmissions(user.email);
-        if (unsyncedAssignments.length > 0) {
-          Alert.alert(
-            'Synchronization',
-            `Found ${unsyncedAssignments.length} offline assignment submission(s) to sync.`,
-            [{ text: 'OK' }]
-          );
-          for (const submission of unsyncedAssignments) {
-            console.log(`Attempting to sync assignment for assessment ID: ${submission.assessment_id}`);
-            const success = await syncOfflineSubmission(
-              submission.assessment_id,
-              submission.file_uri,
-              submission.original_filename,
-              submission.submitted_at
-            );
-            if (success) {
-              await deleteOfflineSubmission(submission.id);
-              console.log(`Successfully synced and deleted local record for assignment ${submission.assessment_id}`);
-            } else {
-              console.warn(`Failed to sync assignment for assessment ${submission.assessment_id}`);
-            }
-          }
-        }
+        // 🟢 START SYNC UI
+        setSyncModalVisible(true);
+        setSyncProgressValue(0);
+        setSyncMessage('Preparing to sync...');
+
+        let syncedCount = 0; 
+        let failedCount = 0;
         
-        // Check and sync for quiz attempts
-        const completedOfflineQuizzes = await getCompletedOfflineQuizzes(user.email);
-        if (completedOfflineQuizzes.length > 0) {
-          Alert.alert(
-            'Synchronization',
-            `Found ${completedOfflineQuizzes.length} offline quiz attempt(s) to sync.`,
-            [{ text: 'OK' }]
+        // 1. Calculate TRUE total (Assignments + Quizzes)
+        const totalItems = unsyncedAssignments.length + completedOfflineQuizzes.length;
+        let currentItemIndex = 0;
+
+        // --- A. Sync Assignments ---
+        for (let i = 0; i < unsyncedAssignments.length; i++) {
+          const submission = unsyncedAssignments[i];
+          currentItemIndex++; // Increment total counter
+          
+          setSyncMessage(`Syncing item ${currentItemIndex} of ${totalItems}\n(Uploading File...)`);
+          setSyncProgressValue(0); 
+
+          const success = await syncOfflineSubmission(
+            submission.assessment_id,
+            submission.file_uri,
+            submission.original_filename,
+            submission.submitted_at,
+            (percent) => {
+                // FIX: Clamp to 100% to prevent 200% bug
+                const safePercent = Math.min(percent, 100);
+                setSyncProgressValue(safePercent);
+            }
           );
 
-          for (const quizAttempt of completedOfflineQuizzes) {
-            console.log(`Attempting to sync quiz for assessment ID: ${quizAttempt.assessment_id}`);
-            
-            if (!quizAttempt.answers || !quizAttempt.start_time || !quizAttempt.end_time) {
-              console.warn(`Skipping sync for quiz ${quizAttempt.assessment_id} - missing required data`);
-              continue;
-            }
-
-            const success = await syncOfflineQuiz(
-              quizAttempt.assessment_id,
-              quizAttempt.answers,
-              quizAttempt.start_time,
-              quizAttempt.end_time
-            );
-            if (success) {
-              await deleteOfflineQuizAttempt(quizAttempt.assessment_id, user.email);
-              console.log(`Successfully synced and deleted local record for quiz attempt ${quizAttempt.assessment_id}`);
-            } else {
-              console.warn(`Failed to sync quiz attempt ${quizAttempt.assessment_id}`);
-            }
+          if (success) {
+            await deleteOfflineSubmission(submission.id);
+            syncedCount++;
+          } else {
+            failedCount++;
           }
         }
-        
-        // After attempting to sync, refresh the course list to get updated submission statuses
-        fetchCourses();
+
+        // --- B. Sync Quizzes ---
+        for (const quizAttempt of completedOfflineQuizzes) {
+          if (!quizAttempt.answers || !quizAttempt.start_time || !quizAttempt.end_time) continue;
+          
+          currentItemIndex++; // Increment total counter
+          setSyncMessage(`Syncing item ${currentItemIndex} of ${totalItems}\n(Uploading Quiz...)`);
+          setSyncProgressValue(100); // Quizzes are fast, just show full
+
+          const success = await syncOfflineQuiz(
+            quizAttempt.assessment_id,
+            quizAttempt.answers,
+            quizAttempt.start_time,
+            quizAttempt.end_time
+          );
+          if (success) {
+            await deleteOfflineQuizAttempt(quizAttempt.assessment_id, user.email);
+            syncedCount++;
+          } else {
+            failedCount++;
+          }
+        }
+
+        // 🔴 END SYNC UI
+        setSyncModalVisible(false);
+
+        // Unified Alert Logic
+        if (syncedCount > 0) {
+          let message = `Successfully uploaded ${syncedCount} assessment${syncedCount !== 1 ? 's' : ''}.`;
+          
+          if (failedCount > 0) {
+             message += `\n\n⚠️ ${failedCount} item(s) failed (large files or connection issues). They are saved offline.`;
+          }
+
+          Alert.alert('Sync Complete', message, [{ text: 'OK' }]);
+          fetchCourses();
+        } else if (failedCount > 0) {
+          Alert.alert('Sync Failed', `Could not upload ${failedCount} item(s) due to connection issues. Your work is safe offline.`, [{ text: 'OK' }]);
+        }
       }
     };
+
     syncSubmissions();
   }, [netInfo?.isInternetReachable, isInitialized]);
 
@@ -1425,6 +1451,28 @@ export default function HomeScreen() {
           </Animated.View>
         </View>
       </Modal>
+      <Modal
+        transparent={true}
+        animationType="fade"
+        visible={isSyncModalVisible}
+        onRequestClose={() => {}} // Prevent closing by back button
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.syncModalContent}>
+            <ActivityIndicator size="large" color="#1967d2" />
+            <Text style={styles.syncModalTitle}>Syncing Offline Work</Text>
+            <Text style={styles.syncModalText}>{syncMessage}</Text>
+            
+            {/* Simple Progress Bar */}
+            <View style={styles.progressBarContainer}>
+              <View style={[styles.progressBarFill, { width: `${syncProgressValue}%` }]} />
+            </View>
+            <Text style={styles.progressText}>{syncProgressValue}%</Text>
+            
+            <Text style={styles.syncWarningText}>Please do not close the app.</Text>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1979,4 +2027,47 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '500',
   },
+  syncModalContent: {
+    width: width * 0.8,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 24,
+    alignItems: 'center',
+    elevation: 10,
+  },
+  syncModalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  syncModalText: {
+    fontSize: 14,
+    color: '#5f6368',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  progressBarContainer: {
+    width: '100%',
+    height: 8,
+    backgroundColor: '#e0e0e0',
+    borderRadius: 4,
+    overflow: 'hidden',
+    marginBottom: 8,
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: '#1967d2',
+  },
+  progressText: {
+    fontSize: 12,
+    color: '#1967d2',
+    fontWeight: '600',
+    marginBottom: 16,
+  },
+  syncWarningText: {
+    fontSize: 12,
+    color: '#d93025',
+    fontStyle: 'italic',
+  }
 });

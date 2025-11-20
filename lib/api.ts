@@ -642,7 +642,24 @@ export const googleAuth = async (googleUser: {
   }
 };
 
-export const syncOfflineSubmission = async (assessmentId: number, fileUri: string, originalFilename: string, submittedAt: string) => {
+const activeUploads = new Set<number>();
+
+export const syncOfflineSubmission = async (
+  assessmentId: number, 
+  fileUri: string, 
+  originalFilename: string, 
+  submittedAt: string,
+  onProgress?: (percentage: number) => void 
+) => {
+  // 1. Check Lock
+  if (activeUploads.has(assessmentId)) {
+    console.log(`⚠️ Assessment ${assessmentId} is already uploading. Skipping duplicate request.`);
+    return false; 
+  }
+
+  // 2. Set Lock
+  activeUploads.add(assessmentId);
+
   try {
     const formData = new FormData();
     
@@ -660,36 +677,38 @@ export const syncOfflineSubmission = async (assessmentId: number, fileUri: strin
     
     formData.append('submitted_at', submittedAt);
 
-    console.log(`🔄 Attempting to sync offline submission for assessment ${assessmentId} with original timestamp: ${submittedAt}`);
+    console.log(`🔄 Attempting to sync offline submission for assessment ${assessmentId}...`);
 
     const response = await api.post(`/assessments/${assessmentId}/submit-assignment`, formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
+      timeout: 180000, 
+      onUploadProgress: (progressEvent) => {
+        if (onProgress && progressEvent.total) {
+          let percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+          // FIX: Clamp to 100% here too
+          if (percentCompleted > 100) percentCompleted = 100;
+          onProgress(percentCompleted);
+        }
+      },
     });
 
-    // --- START OF ROBUST FIX ---
-    //
-    // We change the check from `response.data.message` (which is too generic
-    // and can be triggered by a captive portal) to `response.data.submission_id`,
-    // which mirrors the robust check in `syncOfflineQuiz`.
-    //
-    // A captive portal will NEVER return a valid `submission_id`.
-    //
+    // STRICT VALIDATION
     if (response.status === 200 && response.data.submission_id) {
-      console.log(`✅ Sync successful for assessment ${assessmentId}. Server message: ${response.data.message || 'Success'}. New submission ID: ${response.data.submission_id}`);
-      return true; // The sync was a confirmed success
+      console.log(`✅ Sync successful. ID: ${response.data.submission_id}`);
+      return true; 
     } else {
-      // This block will now correctly execute on a "bad" WiFi
-      console.error(`❌ Sync failed for assessment ${assessmentId}: Unexpected or invalid response from server (missing 'submission_id').`, response.data);
-      return false; // The sync failed, do NOT delete local data
+      console.error(`❌ Sync failed: Missing submission_id. Data preserved.`);
+      return false; 
     }
-    // --- END OF ROBUST FIX ---
 
   } catch (err: any) {
-    // This block will handle network timeouts or complete connection failures
-    console.error(`❌ Error syncing offline submission for assessment ${assessmentId}:`, err.response?.data || err.message);
-    return false; // The sync failed, do NOT delete local data
+    console.error(`❌ Network Error syncing assessment ${assessmentId}:`, err.message);
+    return false; 
+  } finally {
+    // 3. Release Lock (Always runs, success or fail)
+    activeUploads.delete(assessmentId);
   }
 };
 
@@ -792,7 +811,6 @@ const formatAnswersForSync = (answersJson: string): any[] => {
   }
 };
 
-// Export manual sync function for explicit calls
 export const manualSync = async (): Promise<{ success: number; failed: number }> => {
   try {
     const userData = await getUserData();
@@ -803,8 +821,7 @@ export const manualSync = async (): Promise<{ success: number; failed: number }>
 
     console.log('🔄 Starting manual offline sync...');
     
-    // --- MODIFICATION: Add deleteCompletedOfflineQuizAttempt to import ---
-    const { getUnsyncedSubmissions, getCompletedOfflineQuizzes, deleteOfflineSubmission, getDb, deleteCompletedOfflineQuizAttempt } = await import('./localDb');
+    const { getUnsyncedSubmissions, getCompletedOfflineQuizzes, deleteOfflineSubmission, deleteCompletedOfflineQuizAttempt } = await import('./localDb');
     
     // Get unsynced items
     const unsyncedSubmissions = await getUnsyncedSubmissions(userData.email) as UnsyncedSubmission[];
@@ -815,6 +832,36 @@ export const manualSync = async (): Promise<{ success: number; failed: number }>
     let successCount = 0;
     let failCount = 0;
     
+    // 1. SYNC ASSIGNMENTS (This was missing)
+    for (const submission of unsyncedSubmissions) {
+      try {
+        console.log(`📤 Syncing submission for assessment ${submission.assessment_id}...`);
+        
+        // We don't pass a progress callback here because manualSync is usually 
+        // run when the user clicks "Update", and we might not want a specific modal for every file,
+        // or we just want it to happen in the background of the button press.
+        const success = await syncOfflineSubmission(
+          submission.assessment_id,
+          submission.file_uri,
+          submission.original_filename,
+          submission.submitted_at
+        );
+        
+        if (success) {
+          await deleteOfflineSubmission(submission.id);
+          successCount++;
+          console.log(`✅ Successfully synced and deleted submission ${submission.id}`);
+        } else {
+          failCount++;
+          console.log(`❌ Sync returned false for submission ${submission.id}`);
+        }
+      } catch (error) {
+        console.error(`❌ Failed to sync submission ${submission.assessment_id}:`, error);
+        failCount++;
+      }
+    }
+
+    // 2. SYNC QUIZZES
     for (const quiz of unsyncedQuizzes) {
       try {
         console.log(`📤 Syncing quiz for assessment ${quiz.assessment_id}...`);
@@ -826,7 +873,6 @@ export const manualSync = async (): Promise<{ success: number; failed: number }>
         );
         
         if (success) {
-          // --- MODIFICATION: Use the new delete function and remove the old 'synced = 1' logic ---
           await deleteCompletedOfflineQuizAttempt(quiz.assessment_id, userData.email);
           successCount++;
           console.log(`✅ Successfully synced and deleted quiz ${quiz.assessment_id} from localDb`);

@@ -36,8 +36,9 @@ export default function AppLayout() {
   const appState = useRef(AppState.currentState);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<number>(0);
+  const [isBackgroundSyncing, setIsBackgroundSyncing] = useState(false);
 
-  useNetworkSync();
+  useNetworkSync(setIsBackgroundSyncing);
 
   useEffect(() => {
     // This listener checks if the app is coming from the background
@@ -568,6 +569,15 @@ export default function AppLayout() {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      {isBackgroundSyncing && (
+        <View style={styles.syncIndicatorContainer}>
+          <View style={styles.syncIndicatorContent}>
+            <ActivityIndicator size="small" color="#fff" />
+            <Text style={styles.syncIndicatorText}>Syncing your work...</Text>
+          </View>
+        </View>
+      )}
     </>
   );
 }
@@ -607,4 +617,32 @@ const styles = StyleSheet.create({
   downloadButtonDisabled: { backgroundColor: '#f1f3f4' },
   progressContainer: { width: 38, height: 38, justifyContent: 'center', alignItems: 'center', gap: 2 },
   progressText: { fontSize: 10, color: '#007bff' },
+  syncIndicatorContainer: {
+    position: 'absolute',
+    bottom: 70, // Above the tab bar
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    zIndex: 9999, // Ensure it sits on top of everything
+    pointerEvents: 'none', // Let clicks pass through to content behind it if needed
+  },
+  syncIndicatorContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(25, 103, 210, 0.9)', // Brand blue with slight transparency
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 24,
+    gap: 8,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  syncIndicatorText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+  },
 });

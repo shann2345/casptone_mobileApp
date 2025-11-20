@@ -89,7 +89,7 @@ const SYNC_CONFIG = {
 /**
  * Enhanced automatic sync hook with silent background updates
  */
-export const useNetworkSync = () => {
+export const useNetworkSync = (onSyncStateChange?: (isSyncing: boolean) => void) => {
   const { netInfo, isBackendReachable } = useNetworkStatus();
   const isInternetReachable = netInfo?.isInternetReachable;
   const previousConnectionState = useRef<boolean | null | undefined>(null);
@@ -98,57 +98,28 @@ export const useNetworkSync = () => {
 
   useEffect(() => {
     const performSmartSync = async () => {
-      // =================================================================
-      // --- MODIFICATION START ---
-      //
-      // We no longer need to check if we *were* offline. We only
-      // care if we *are* online right now.
-      //
-      // REMOVED: const wasOffline = previousConnectionState.current !== true;
-      //
-      // --- MODIFICATION END ---
-      // =================================================================
-      
       const isNowOnline = isBackendReachable === true;
-
-      // Check cooldown
       const now = Date.now();
       const timeSinceLastSync = now - lastSyncAttempt.current;
 
-      // =================================================================
-      // --- MODIFICATION START ---
-      //
-      // REMOVED: The `wasOffline` check from the if statement.
-      //
-      // Old condition:
-      // if (wasOffline && isNowOnline && !isSyncing.current && timeSinceLastSync > SYNC_CONFIG.COOLDOWN) {
-      //
-      // New condition:
       if (isNowOnline && !isSyncing.current && timeSinceLastSync > SYNC_CONFIG.COOLDOWN) {
-        //
-        // --- MODIFICATION END ---
-        // =================================================================
         
-        // --- MODIFICATION START ---
-        // Changed log message to be more general.
         console.log('🔄 [Smart Sync] Online. Analyzing what needs updating...');
-        // --- MODIFICATION END ---
-        
         isSyncing.current = true;
         lastSyncAttempt.current = now;
+        
+        // 🟢 NOTIFY LAYOUT: SYNC STARTED
+        if (onSyncStateChange) onSyncStateChange(true);
 
         try {
-          // Get user data
           const userData = await getUserData();
           if (!userData?.email) {
-            console.log('⚠️ [Smart Sync] No user data found');
             isSyncing.current = false;
+            if (onSyncStateChange) onSyncStateChange(false);
             return;
           }
 
           const userEmail = userData.email;
-          
-          // Get sync metadata to check staleness
           const syncMeta = await getSyncMetadata(userEmail);
           
           let syncResults = {
@@ -453,60 +424,30 @@ export const useNetworkSync = () => {
             console.log(`⏭️ [Smart Sync] Quiz questions are fresh, skipping (silent)`);
           }
 
-          // ============================================
-          // PHASE 6: SMART ALERT LOGIC (Only When Necessary!)
-          // ============================================
           console.log('📊 [Smart Sync] Completed:', syncResults);
           
-          // CRITICAL: Only show alerts for student work or errors
-          const hasStudentWork = syncResults.assessmentsSubmitted > 0 || syncResults.quizzesSynced > 0;
+          const totalSynced = syncResults.assessmentsSubmitted + syncResults.quizzesSynced;
           const hasCriticalErrors = syncResults.errors.length > 0;
           
-          if (hasStudentWork && hasCriticalErrors) {
-            // Student work synced but with some errors
-            let message = '⚠️ Partial Sync Complete\n\n';
+          if (totalSynced > 0) {
+            // UNIFIED ALERT LOGIC
+            const title = hasCriticalErrors ? 'Partial Sync Complete' : 'Work Submitted';
             
-            if (syncResults.assessmentsSubmitted > 0) {
-              message += `✅ ${syncResults.assessmentsSubmitted} assignment${syncResults.assessmentsSubmitted > 1 ? 's' : ''} submitted\n`;
+            // Combine counts into one "Assessment" number
+            let message = `Your offline work has been uploaded:\n\n• ${totalSynced} Assessment${totalSynced !== 1 ? 's' : ''} synced`;
+
+            if (hasCriticalErrors) {
+              message += `\n\n⚠️ ${syncResults.errors.length} item(s) failed to sync. They are saved offline.`;
             }
-            if (syncResults.quizzesSynced > 0) {
-              message += `✅ ${syncResults.quizzesSynced} quiz${syncResults.quizzesSynced > 1 ? 'zes' : ''} synced\n`;
-            }
+
+            Alert.alert(title, message, [{ text: 'OK' }]);
             
-            message += `\n⚠️ ${syncResults.errors.length} item${syncResults.errors.length > 1 ? 's' : ''} failed to sync`;
-            
-            Alert.alert('Sync Status', message, [{ text: 'OK' }]);
-            
-          } else if (hasStudentWork && !hasCriticalErrors) {
-            // Student work synced successfully - show success alert
-            let message = '✅ Your work has been submitted!\n\n';
-            
-            if (syncResults.assessmentsSubmitted > 0) {
-              message += `📤 ${syncResults.assessmentsSubmitted} assignment${syncResults.assessmentsSubmitted > 1 ? 's' : ''} uploaded\n`;
-            }
-            if (syncResults.quizzesSynced > 0) {
-              message += `📝 ${syncResults.quizzesSynced} quiz${syncResults.quizzesSynced > 1 ? 'zes' : ''} submitted\n`;
-            }
-            
-            Alert.alert('Work Submitted', message, [{ text: 'OK' }]);
-            
-          } else if (!hasStudentWork && hasCriticalErrors) {
-            // No student work but sync errors occurred
-            Alert.alert(
-              'Sync Issues',
-              `⚠️ ${syncResults.errors.length} background sync issue${syncResults.errors.length > 1 ? 's' : ''} occurred. Your offline data is preserved. Please check your connection and try again.`,
+          } else if (hasCriticalErrors) {
+             Alert.alert(
+              'Sync Issue',
+              `We couldn't sync some data (${syncResults.errors.length} errors). Your offline work is safe.`,
               [{ text: 'OK' }]
             );
-            
-          } else {
-            // Everything synced silently in background - no alert needed!
-            console.log('✅ [Smart Sync] All updates completed silently in background');
-            console.log('📊 [Smart Sync] Summary:', {
-              coursesUpdated: syncResults.coursesUpdated,
-              assessmentsUpdated: syncResults.assessmentDetailsUpdated,
-              quizzesDownloaded: syncResults.quizQuestionsDownloaded,
-              userNotified: false
-            });
           }
 
         } catch (error) {
@@ -519,6 +460,7 @@ export const useNetworkSync = () => {
           );
         } finally {
           isSyncing.current = false;
+          if (onSyncStateChange) onSyncStateChange(false);
         }
       } else if (isNowOnline && timeSinceLastSync <= SYNC_CONFIG.COOLDOWN) {
           console.log(`⏳ [Smart Sync] Cooldown: ${Math.round((SYNC_CONFIG.COOLDOWN - timeSinceLastSync) / 1000)}s remaining`);

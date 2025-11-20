@@ -131,7 +131,7 @@ export default function AssessmentDetailsScreen() {
   const [submissionType, setSubmissionType] = useState<'file' | 'link' | null>(null);
   const [selectedFile, setSelectedFile] = useState<DocumentPicker.DocumentPickerAsset | null>(null);
   const [submissionLink, setSubmissionLink] = useState('');
-
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [hasLocalReview, setHasLocalReview] = useState(false);
   const [downloadingReview, setDownloadingReview] = useState(false);
 
@@ -655,13 +655,18 @@ export default function AssessmentDetailsScreen() {
       Alert.alert('Assessment Unavailable', `This assessment is not currently available.`);
       return;
     }
+    
     const hasFile = selectedFile !== null;
     const hasLink = submissionLink.trim() !== '';
+    
     if (!hasFile && !hasLink) {
       Alert.alert(`No Submission`, `Please select a file or enter a link to submit.`);
       return;
     }
+
     setSubmissionLoading(true);
+    setUploadProgress(0); // Reset progress
+
     try {
       if (netInfo?.isInternetReachable) {
         const formData = new FormData();
@@ -674,9 +679,24 @@ export default function AssessmentDetailsScreen() {
             type: selectedFile.mimeType || 'application/octet-stream',
           } as any);
         }
+
         const response = await api.post(`/assessments/${assessmentDetail.id}/submit-assignment`, formData, {
           headers: { 'Content-Type': 'multipart/form-data' },
+          timeout: 180000, // 3 minutes timeout
+          onUploadProgress: (progressEvent) => {
+            if (progressEvent.total) {
+              let percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+              
+              // --- FIX START --- 
+              // Clamp the value to 100% to prevent it from showing 200% or higher
+              if (percent > 100) percent = 100;
+              // --- FIX END ---
+
+              setUploadProgress(percent);
+            }
+          },
         });
+
         if (response.status === 200) {
           Alert.alert('Success', response.data.message || 'Submission successful!');
           setSelectedFile(null);
@@ -687,6 +707,7 @@ export default function AssessmentDetailsScreen() {
           Alert.alert('Error', response.data.message || 'Failed to submit.');
         }
       } else {
+        // Offline logic (Unchanged)
         const user = await getUserData();
         if (user && user.email) {
           let submissionUri = '';
@@ -725,10 +746,15 @@ export default function AssessmentDetailsScreen() {
       }
     } catch (err: any) {
       console.error('Error submitting assignment:', err.response?.data || err.message);
-      Alert.alert('Submission Error', err.response?.data?.message || 'Failed to submit due to a network error.');
+      if (err.code === 'ECONNABORTED') {
+        Alert.alert('Timeout Error', 'The upload took too long. Your internet connection might be too slow for this file size.');
+      } else {
+        Alert.alert('Submission Error', err.response?.data?.message || 'Failed to submit due to a network error.');
+      }
     } finally {
       setSubmissionLoading(false);
       setSubmissionModalVisible(false);
+      setUploadProgress(0);
     }
   };
 
@@ -861,6 +887,38 @@ export default function AssessmentDetailsScreen() {
     }
   }
 
+  const resolveGradeAndStatus = () => {
+    let displayStatus = 'not_started';
+    let displayScore = '-';
+    const totalPoints = assessmentDetail?.total_points || 0;
+
+    // 1. Determine Status
+    if (submittedAssessment && submittedAssessment.status) {
+      displayStatus = submittedAssessment.status;
+    } else if (latestAssignmentSubmission && latestAssignmentSubmission.status) {
+      displayStatus = latestAssignmentSubmission.status;
+    }
+
+    // 2. Determine Score Display
+    if (displayStatus === 'not_started') {
+      displayScore = 'Not yet taken';
+    } else if (displayStatus === 'in_progress') {
+      displayScore = 'Pending';
+    } else if (displayStatus === 'submitted' || displayStatus === 'to sync') {
+      // Submitted but not yet graded (Assignments/Essays)
+      displayScore = '?'; 
+    } else if (displayStatus === 'completed' || displayStatus === 'graded') {
+      // Quizzes (auto-graded) or Graded Assignments
+      
+      // --- CHANGED HERE: Added Math.round() to force whole number ---
+      const score = Math.round(submittedAssessment?.score ?? 0);
+      displayScore = `${score} / ${totalPoints}`;
+    }
+
+    return { displayStatus, displayScore };
+  };
+
+  const { displayStatus, displayScore } = resolveGradeAndStatus();
 
   return (
     <View style={styles.container}>
@@ -886,6 +944,36 @@ export default function AssessmentDetailsScreen() {
             </View>
           )}
         </View>
+
+        {netInfo?.isInternetReachable && (
+          <View style={styles.sectionContainer}>
+            <Text style={styles.sectionHeader}>Grade & Status</Text>
+            <View style={styles.gradeCard}>
+              <View style={styles.gradeRow}>
+                <Text style={styles.gradeLabel}>Current Status</Text>
+                <View style={[styles.statusBadge, { backgroundColor: getStatusColor(displayStatus) }]}>
+                  <Text style={styles.statusText}>
+                    {displayStatus === 'not_started' ? 'NOT TAKEN' : displayStatus.replace('_', ' ').toUpperCase()}
+                  </Text>
+                </View>
+              </View>
+              
+              <View style={styles.divider} />
+
+              <View style={styles.gradeRow}>
+                <Text style={styles.gradeLabel}>Grade</Text>
+                <Text style={[
+                  styles.gradeValue, 
+                  displayStatus === 'not_started' && { fontSize: 14, color: '#5f6368' },
+                  displayScore === '?' && { color: '#f39c12', fontWeight: 'bold' }
+                ]}>
+                  {displayScore}
+                </Text>
+              </View>
+            </View>
+          </View>
+        )}
+
         <View style={styles.sectionContainer}>
           <Text style={styles.sectionHeader}>Assessment Details</Text>
           <View style={styles.detailsGrid}>
@@ -1068,7 +1156,15 @@ export default function AssessmentDetailsScreen() {
                   disabled={!isAssessmentCurrentlyOpen || submissionLoading}
                 >
                   {submissionLoading ? (
-                    <ActivityIndicator color="#fff" />
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <ActivityIndicator color="#fff" style={{ marginRight: 10 }} />
+                      <Text style={styles.submitButtonText}>
+                        {/* Show percentage if uploading a file, otherwise just "Processing" */}
+                        {submissionType === 'file' && uploadProgress > 0 
+                          ? `Uploading ${uploadProgress}%` 
+                          : 'Processing...'}
+                      </Text>
+                    </View>
                   ) : (
                     <>
                       <Ionicons name="cloud-upload" size={24} color="#fff" style={{ marginRight: 8 }} />
@@ -1397,4 +1493,32 @@ const styles = StyleSheet.create({
   linkSubmitButtonText: { color: '#fff', fontWeight: '500' },
   modalCancelButton: { marginTop: 8, padding: 12, alignItems: 'center' },
   modalCancelButtonText: { fontSize: 16, color: '#5f6368' },
+  gradeCard: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 8,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  gradeRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  gradeLabel: {
+    fontSize: 16,
+    color: '#5f6368',
+    fontWeight: '500',
+  },
+  gradeValue: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#202124',
+  },
+  divider: {
+    height: 1,
+    backgroundColor: '#e0e0e0',
+    marginVertical: 12,
+  },
 });

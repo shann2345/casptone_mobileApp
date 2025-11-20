@@ -20,6 +20,11 @@ import {
 
 
 
+
+
+
+
+
   getCompletedOfflineQuizzes,
   getDb,
   getOfflineAttemptCount,
@@ -110,8 +115,38 @@ export default function TodoScreen() {
   );
 
   useEffect(() => {
-    loadTodoItems();
-  }, []);
+    const initializeData = async () => {
+      const userData = await getUserData();
+      if (!userData?.email) return;
+      
+      if (isConnected) {
+        console.log('🔄 [To-Do Init] Running full refresh on initial load...');
+        setIsLoading(true);
+        try {
+          // ADD THIS: Step 1 - Sync any pending work first
+          const syncResult = await manualSync();
+          if (syncResult.success > 0) {
+            console.log(`✅ [To-Do Init] Submitted ${syncResult.success} pending items.`);
+          }
+          
+          // Step 2 - Force-refresh all statuses
+          await forceRefreshAllAssessmentStatuses(
+            userData.email,
+            api,
+            (current, total) => {
+              console.log(`[To-Do Init Refresh] ${current}/${total}`);
+            }
+          );
+        } catch (error) {
+          console.error('❌ [To-Do Init] Failed to refresh:', error);
+        }
+      }
+      
+      await loadTodoItems(false);
+    };
+    
+    initializeData();
+  }, [isConnected]);
   
   useEffect(() => {
     // ... (This sorting useEffect remains unchanged)
@@ -648,12 +683,26 @@ export default function TodoScreen() {
   // }, [isConnected, categoryCounts.to_sync, isLoading]);
 
   useFocusEffect(
-    // ... (This useFocusEffect remains unchanged)
-     useCallback(() => {
-      setTimeout(() => {
-        loadTodoItems(true);
+    useCallback(() => {
+      setTimeout(async () => {
+        const userData = await getUserData();
+        if (!userData?.email) return;
+        
+        // Only force-refresh if online
+        if (isConnected) {
+          console.log('🔄 [To-Do Focus] Force-refreshing on screen focus...');
+          await forceRefreshAllAssessmentStatuses(
+            userData.email,
+            api,
+            (current, total) => {
+              console.log(`[To-Do Focus Refresh] ${current}/${total}`);
+            }
+          );
+        }
+        
+        await loadTodoItems(false);
       }, 200);
-    }, [])
+    }, [isConnected])
   );
 
   return (

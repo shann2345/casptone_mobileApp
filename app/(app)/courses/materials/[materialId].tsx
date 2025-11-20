@@ -194,6 +194,8 @@ export default function MaterialDetailsScreen() {
   const [onlinePreviewUri, setOnlinePreviewUri] = useState<string | null>(null);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [previewFailed, setPreviewFailed] = useState(false);
+  const [imageError, setImageError] = useState(false);
+
   const [showFallback, setShowFallback] = useState(false);
 
   useEffect(() => {
@@ -240,6 +242,7 @@ export default function MaterialDetailsScreen() {
     setPreviewFailed(false); // Reset preview state
     setOnlinePreviewUri(null); // Reset preview URI
     setShowFallback(false); // Reset fallback state
+    setImageError(false);
     
     const user = await getUserData();
     const userEmail = user?.email;
@@ -321,46 +324,42 @@ export default function MaterialDetailsScreen() {
     if (!material.file_path || !material.id || !netInfo?.isInternetReachable) return;
     
     const fileType = getFileType(material.file_path);
-    // Only attempt preview for supported types
     const previewableTypes: FileType[] = ['image', 'video', 'audio', 'pdf', 'code'];
+    
     if (!previewableTypes.includes(fileType)) {
-      setPreviewFailed(true);
+      setPreviewFailed(true); // This will trigger the fallback UI
       return;
     }
 
     setIsLoadingPreview(true);
     setPreviewFailed(false);
+    setShowFallback(false); // Force hide fallback
+    setOnlinePreviewUri(null);
 
     try {
       const fileUrl = await getAuthenticatedFileUrl();
+      
       if (!fileUrl) {
         setPreviewFailed(true);
         return;
       }
 
-      // FIXED: Always set onlinePreviewUri first
-      setOnlinePreviewUri(fileUrl);
-
-      // For code files, also fetch the content
+      // For code, we must fetch text content.
+      // For Media (Image/Video/Audio), we just set the URI. 
+      // The Backend Fix (Storage::response) makes this URI valid for streaming.
       if (fileType === 'code') {
-        try {
-          const response = await fetch(fileUrl);
-          if (response.ok) {
-            const text = await response.text();
-            setCodeContent(text);
-          } else {
-            // Even if content fetch fails, we have the URL
-            console.log('Could not fetch code content, but URL is available');
-          }
-        } catch (error) {
-          console.log('Error fetching code content:', error);
-          // Don't set previewFailed here - we still have the URL
+        const response = await fetch(fileUrl);
+        if (response.ok) {
+          const text = await response.text();
+          setCodeContent(text);
         }
       }
+      
+      setOnlinePreviewUri(fileUrl);
+
     } catch (error) {
-      console.log('Online preview failed, will show download option:', error);
+      console.error('Online preview setup failed:', error);
       setPreviewFailed(true);
-      setOnlinePreviewUri(null); // ADDED: Clear the URI on failure
     } finally {
       setIsLoadingPreview(false);
     }
@@ -408,30 +407,25 @@ export default function MaterialDetailsScreen() {
     if (!materialDetail?.id) return null;
 
     try {
-      // 1. Get the full authorization header (e.g., "Bearer 123|abc...")
       const authHeader = getAuthorizationHeader();
-
-      if (!authHeader) {
-        console.error('Failed to get auth header for view URL');
+      
+      // Safety check: ensure authHeader is a string
+      if (!authHeader || typeof authHeader !== 'string') {
+        console.error('Invalid auth header format');
         return null;
       }
 
-      // 2. Extract just the token part (e.g., "123|abc...")
-      // Your PHP `findToken` method is smart enough to handle this "id|token" format.
-      if (typeof authHeader !== 'string') {
-        console.error('Authorization header is not a string:', authHeader);
-        return null;
-      }
-      const token = authHeader.split(' ')[1];
+      // Robust token extraction
+      const token = authHeader.replace('Bearer ', '').trim();
 
       if (!token) {
-        console.error('Failed to parse auth token from header');
+        console.error('Empty token extracted');
         return null;
       }
 
-      // 3. Build the URL to the 'view' endpoint (the one downloads use)
-      //    and pass the token as a query parameter.
-      const url = `${api.defaults.baseURL}/materials/${materialDetail.id}/view?token=${encodeURIComponent(token)}`;
+      // Append a timestamp to prevent aggressive caching of broken attempts
+      const timestamp = new Date().getTime();
+      const url = `${api.defaults.baseURL}/materials/${materialDetail.id}/view?token=${encodeURIComponent(token)}&t=${timestamp}`;
 
       return url;
     } catch (error) {
@@ -791,6 +785,7 @@ export default function MaterialDetailsScreen() {
       return;
     }
     setIsRefreshing(true);
+    setImageError(false); // ADD THIS LINE
     try {
       await fetchMaterialDetails();
     } catch (error) {
@@ -847,6 +842,8 @@ export default function MaterialDetailsScreen() {
           return renderOnlineAudioViewer();
         case 'code':
           return renderOnlineCodeViewer();
+        case 'pdf':  
+          return renderOnlinePdfViewer();
         default:
           break;
       }
@@ -895,39 +892,62 @@ export default function MaterialDetailsScreen() {
     );
   };
 
-  const renderOnlineImageViewer = () => (
-    <View style={styles.inlineViewerContainer}>
-      <View style={styles.viewerHeader}>
-        <Text style={styles.viewerTitle}>Image Preview (Online)</Text>
-        <View style={styles.viewerActions}>
-          <TouchableOpacity style={styles.actionButton} onPress={() => setIsFullScreen(true)}>
-            <Ionicons name="expand" size={20} color="#4285f4" />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.actionButton} onPress={promptDownloadOptions}>
-            <Ionicons name="download" size={20} color="#4285f4" />
-          </TouchableOpacity>
+  const renderOnlineImageViewer = () => {
+    if (imageError) {
+      return (
+        <View style={styles.downloadPromptContainer}>
+          <View style={styles.downloadPromptContent}>
+            <Ionicons name="image" size={48} color="#5f6368" />
+            <Text style={styles.downloadPromptTitle}>Preview Unavailable</Text>
+            <Text style={styles.downloadPromptText}>
+              Unable to load image preview. Please download to view.
+            </Text>
+            <TouchableOpacity
+              style={styles.downloadPromptButton}
+              onPress={promptDownloadOptions}
+            >
+              <Ionicons name="download" size={20} color="#fff" />
+              <Text style={styles.downloadPromptButtonText}>Download File</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      );
+    }
+
+    return (
+      <View style={styles.inlineViewerContainer}>
+        <View style={styles.viewerHeader}>
+          <Text style={styles.viewerTitle}>Image Preview (Online)</Text>
+          <View style={styles.viewerActions}>
+            <TouchableOpacity style={styles.actionButton} onPress={() => setIsFullScreen(true)}>
+              <Ionicons name="expand" size={20} color="#4285f4" />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.actionButton} onPress={promptDownloadOptions}>
+              <Ionicons name="download" size={20} color="#4285f4" />
+            </TouchableOpacity>
+          </View>
+        </View>
+        <TouchableOpacity onPress={() => setIsFullScreen(true)}>
+          <Image
+            source={{ uri: onlinePreviewUri! }}
+            style={styles.imagePreview}
+            resizeMode="contain"
+            onError={(error) => {
+              console.log('Image failed to load:', error.nativeEvent.error);
+              setImageError(true);
+              setPreviewFailed(true);
+            }}
+          />
+        </TouchableOpacity>
+        <View style={[styles.downloadedIndicator, { backgroundColor: '#e8f0fe' }]}>
+          <Ionicons name="cloud" size={16} color="#1967d2" />
+          <Text style={[styles.downloadedText, { color: '#1967d2' }]}>
+            Viewing online • Download for offline access
+          </Text>
         </View>
       </View>
-      <TouchableOpacity onPress={() => setIsFullScreen(true)}>
-        <Image
-          source={{ uri: onlinePreviewUri! }}
-          style={styles.imagePreview}
-          resizeMode="contain"
-          onError={() => {
-            console.log('Image failed to load');
-            setPreviewFailed(true);
-            
-          }}
-        />
-      </TouchableOpacity>
-      <View style={[styles.downloadedIndicator, { backgroundColor: '#e8f0fe' }]}>
-        <Ionicons name="cloud" size={16} color="#1967d2" />
-        <Text style={[styles.downloadedText, { color: '#1967d2' }]}>
-          Viewing online • Download for offline access
-        </Text>
-      </View>
-    </View>
-  );
+    );
+  };
 
   const renderOnlineVideoViewer = () => (
     <View style={styles.inlineViewerContainer}>
@@ -1123,6 +1143,47 @@ export default function MaterialDetailsScreen() {
       </View>
     </View>
   );
+
+  const renderOnlinePdfViewer = () => (
+  <View style={styles.inlineViewerContainer}>
+    <View style={styles.viewerHeader}>
+      <View style={styles.documentHeaderInfo}>
+        <Ionicons name="document-text" size={20} color="#ea4335" />
+        <Text style={styles.viewerTitle}>PDF Viewer (Online)</Text>
+      </View>
+      <View style={styles.viewerActions}>
+        <TouchableOpacity style={styles.actionButton} onPress={handleViewOnline}>
+          <Ionicons name="open-outline" size={20} color="#4285f4" />
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.actionButton} onPress={promptDownloadOptions}>
+          <Ionicons name="download" size={20} color="#4285f4" />
+        </TouchableOpacity>
+      </View>
+    </View>
+    <View style={styles.documentContainer}>
+      <View style={[styles.documentIconContainer, { backgroundColor: '#ea433520' }]}>
+        <Ionicons name="document-text" size={64} color="#ea4335" />
+      </View>
+      <Text style={styles.documentTitle}>{materialDetail?.title}</Text>
+      <Text style={styles.documentSubtext}>
+        PDF files can be viewed online using Google Docs Viewer or downloaded for offline viewing.
+      </Text>
+      <TouchableOpacity
+        style={[styles.primaryDocumentButton, { backgroundColor: '#ea4335' }]}
+        onPress={handleViewOnline}
+      >
+        <Ionicons name="open-outline" size={20} color="#fff" />
+        <Text style={styles.primaryDocumentButtonText}>Open in Viewer</Text>
+      </TouchableOpacity>
+    </View>
+    <View style={[styles.downloadedIndicator, { backgroundColor: '#e8f0fe' }]}>
+      <Ionicons name="cloud" size={16} color="#1967d2" />
+      <Text style={[styles.downloadedText, { color: '#1967d2' }]}>
+        Available online • Download for offline access
+      </Text>
+    </View>
+  </View>
+);
 
   const renderVideoViewer = () => (
     <View style={styles.inlineViewerContainer}>
